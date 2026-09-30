@@ -1,6 +1,7 @@
 extends SceneTree
-## Simulation smoke test (M2): loads the real editor scene and drives the sim
-## through the calls the sim bar, spawner tool, inspector and car picking make.
+## Simulation smoke test (M2, M3): loads the real editor scene and drives the
+## sim through the calls the sim bar, the tools, the inspector and car picking
+## make.
 ## Run headless:
 ##   godot --headless --path game --script res://tests/sim_smoke_test.gd
 
@@ -25,7 +26,7 @@ func _frames(n: int) -> void:
 func _first_car(road) -> Dictionary:
 	for id in range(1, 20000):
 		var info: Dictionary = road.sim_car_info(id)
-		if not info.is_empty():
+		if not info.is_empty() and info.route.size() >= 2:
 			return info
 	return {}
 
@@ -146,10 +147,12 @@ func _run() -> void:
 	ed.undo()
 	_check(road.get_node(centre).control == "right_hand", "undo restores the junction control")
 
-	# Save -> load keeps spawn points and controls (map format v3).
+	# Save -> load keeps spawn points and controls (map format v4).
 	var text: String = road.save_json()
 	var r: Dictionary = road.load_json(text)
-	_check(r.ok and road.save_json() == text and text.contains("\"version\": 3"), "v3 save -> load -> save is identical")
+	_check(r.ok and road.save_json() == text and text.contains("\"version\": 4"), "v4 save -> load -> save is identical")
+
+	await _m3(ed, road)
 
 	# Errors block Play.
 	road.new_map()
@@ -160,3 +163,108 @@ func _run() -> void:
 
 	print("%d check(s) failed" % _failures)
 	quit(_failures)
+
+
+## M3: the showcase (signals, roundabout, buses, coaches, bikes, parking) and
+## the new tools and inspector sections.
+func _m3(ed: MapEditor, road) -> void:
+	ed.load_demo("showcase")
+	await _frames(2)
+	var st: Dictionary = road.get_stats()
+	_check(st.errors == 0, "showcase loads without errors")
+	var stops: Array = road.get_stops()
+	var depots: Array = road.get_depots()
+	_check(stops.size() == 6 and depots.size() == 1 and depots[0].routes.size() == 2, "showcase: %d stops, %d depot with %d routes" % [stops.size(), depots.size(), depots[0].routes.size() if depots.size() > 0 else 0])
+	_check(road.get_bays(0).size() > 20, "parking bays: %d" % road.get_bays(0).size())
+	var heads: Array = road.sim_signal_heads(0)
+	_check(heads.size() >= 4, "signal heads before playing: %d" % heads.size())
+	ed.sim.reset()
+	road.sim_step(6000) # 10 sim minutes
+	var s: Dictionary = road.sim_stats()
+	_check(int(s.buses) >= 1 and int(s.bikes) >= 1 and int(s.parked) >= 1, "after 10 min: %d buses, %d bikes, %d parked, %d taxis" % [s.buses, s.bikes, s.parked, s.taxis])
+	_check(int(s.bus_stops_served) >= 1 and int(s.removed_stuck) == 0, "%d stops served, nobody stuck" % s.bus_stops_served)
+	var lights := {}
+	for h in road.sim_signal_heads(0):
+		lights[String(h.light)] = true
+	_check(lights.has("red") and (lights.has("green") or lights.has("yield") or lights.has("amber")), "signal heads show %s" % str(lights.keys()))
+	var sig_node := 0
+	var ring_node := 0
+	for id in road.node_ids():
+		var n: Dictionary = road.get_node(id)
+		if n.control == "signal":
+			sig_node = id
+		if n.roundabout.enabled:
+			ring_node = id
+	var ss: Dictionary = road.sim_signal_state(sig_node)
+	_check(float(ss.get("cycle", 0.0)) > 20.0 and ss.phases.size() == 2, "signal cycle %.0f s in %d phases" % [ss.get("cycle", 0.0), ss.get("phases", []).size()])
+	var rs: Array = road.sim_route_stats()
+	_check(rs.size() == 2 and int(rs[0].fleet) >= 1, "route stats: fleet %d, round trip %.0f s" % [rs[0].fleet if rs.size() > 0 else 0, rs[0].round_trip if rs.size() > 0 else 0.0])
+	var bus := {}
+	for id in range(1, 5000):
+		var info: Dictionary = road.sim_car_info(id)
+		if not info.is_empty() and info.kind == "bus":
+			bus = info
+			break
+	_check(not bus.is_empty() and String(bus.route_name) != "", "a bus knows its route (%s, next stop %s)" % [bus.get("route_name", ""), bus.get("next_stop", "")])
+	var buf: PackedFloat32Array = road.sim_car_buffer(0, 1.0)
+	_check(buf.size() == road.sim_car_count(0) * 12, "render buffer covers every vehicle kind")
+
+	# Inspector: the signal plan editor.
+	ed.select("nodes", sig_node, false)
+	await _frames(1)
+	var insp: Inspector = ed.ui.inspector
+	_check(insp._signal_box.visible and insp._phases_box.get_child_count() >= 4, "inspector shows the phase editor")
+	insp._plan.phases[0]["green"] = 33.0
+	insp._send_plan()
+	_check(is_equal_approx(float(road.get_node(sig_node).signal.phases[0].green), 33.0), "phase green time edited")
+	ed.undo()
+	_check(not is_equal_approx(float(road.get_node(sig_node).signal.phases[0].green), 33.0), "undo restores the plan")
+	# Roundabout section.
+	ed.select("nodes", ring_node, false)
+	await _frames(1)
+	_check(insp._ring_box.visible and insp._ring_on.button_pressed, "inspector shows the roundabout")
+	insp._ring_radius.value = 30.0
+	_check(is_equal_approx(float(road.get_node(ring_node).roundabout.radius), 30.0), "roundabout radius edited")
+	ed.undo()
+	# Depot section.
+	ed.select("nodes", int(depots[0].node), false)
+	await _frames(1)
+	_check(insp._depot_box.visible and insp._routes_box.get_child_count() > 0, "inspector shows the depot and its routes")
+	ed.clear_selection()
+
+	# Tools: stop, depot, route and roundabout on the T junction.
+	ed.load_demo("t_junction")
+	await _frames(2)
+	var centre := 0
+	var ends: Array = []
+	for id in road.node_ids():
+		var n: Dictionary = road.get_node(id)
+		if n.junction:
+			centre = id
+		if n.road_end:
+			ends.append(id)
+	var rt: RoundaboutTool = ed.tools["roundabout"]
+	_check(rt._junction_at(road.get_node(centre).pos) == centre, "roundabout tool finds the junction")
+	road.set_roundabout(centre, {"enabled": true, "radius": 20.0, "lanes": 1})
+	await _frames(1)
+	_check(road.get_node(centre).roundabout.enabled and int(road.get_stats().errors) == 0, "junction turned into a roundabout")
+	var seg: int = road.get_node(ends[0]).segments[0]
+	# Every arm ends at the map edge: buses reach a stop on the outbound side.
+	var outbound := "forward" if int(road.get_segment(seg).to) == int(ends[0]) else "backward"
+	var inbound := "backward" if outbound == "forward" else "forward"
+	var a: int = road.add_stop(seg, 0.5, outbound, "kerbside", "A")
+	var b: int = road.add_stop(seg, 0.5, inbound, "bay", "B")
+	_check(a != 0 and b != 0 and road.get_segment(seg).stops.size() == 2, "two stops added")
+	var dt: DepotTool = ed.tools["depot"]
+	_check(dt._end_at(road.get_node(ends[1]).pos) == ends[1], "depot tool finds a road end")
+	road.set_depot(ends[1], {"enabled": true, "name": "Test depot", "capacity": 5, "routes": [
+		{"id": 0, "name": "T1", "color": 0xd83f3f, "stops": [a], "headway": 120.0, "loop": false}]})
+	var dp: Dictionary = road.get_node(ends[1]).depot
+	_check(dp.enabled and dp.routes.size() == 1 and int(dp.routes[0].id) != 0, "depot with a route (id %d)" % dp.routes[0].id)
+	ed.sim.reset()
+	road.sim_step(3000)
+	var s2: Dictionary = road.sim_stats()
+	_check(int(s2.bus_stops_served) >= 1, "buses serve the new stops (%d served, %d buses, %d unroutable, %d bus runs)" % [s2.bus_stops_served, s2.buses, s2.unroutable, s2.bus_runs])
+	var text: String = road.save_json()
+	var r: Dictionary = road.load_json(text)
+	_check(r.ok and road.save_json() == text, "M3 objects survive save -> load -> save")

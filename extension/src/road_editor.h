@@ -30,7 +30,7 @@ public:
 	void new_map();
 	void load_demo_town();
 	void load_test_grid(int cols, int rows, double spacing);
-	// "town", "grid", "t_junction", "lane_drop", "one_way_pair". False if unknown.
+	// "town", "grid", "t_junction", "lane_drop", "one_way_pair", "showcase". False if unknown.
 	bool load_example(const String &name);
 	String save_json() const;
 	// {ok: bool, error: String, migrated_from: int}
@@ -71,10 +71,32 @@ public:
 	void set_segment_name(int64_t seg, const String &name);
 	void set_level(int64_t seg, int level);
 	void set_no_change(int64_t seg, int edge, double u0, double u1, bool block_l2r, bool block_r2l);
-	// control: "right_hand" | "priority_road" | "all_way_stop"; priority: main-road segment IDs
+	// control: "right_hand" | "priority_road" | "all_way_stop" | "signal"; priority: main-road segment IDs
 	void set_junction_control(int64_t node, const String &control, const PackedInt64Array &priority);
-	// spawner: {enabled, rate (veh/h), sink, od: [{to, weight}]}
+	// spawner: {enabled, rate (veh/h), sink, od: [{to, weight}], bikes (per h), coaches: [{id, exit, per_hour, dwell}]}
 	void set_spawner(int64_t node, const Dictionary &spawner);
+
+	// --- M3: roundabouts, signals, stops, depots --------------------------------
+	// {enabled, radius, lanes, turbo, slip: [segment ids]}
+	void set_roundabout(int64_t node, const Dictionary &r);
+	// {phases: [{green, moves: [{from, to, permissive}]}], amber, all_red, offset, right_on_red: [segment ids]}
+	Dictionary default_signal_plan(int64_t node) const;
+	void set_signal_plan(int64_t node, const Dictionary &plan);
+	// side: "forward" | "backward"; kind: "kerbside" | "bay" | "main_station". Returns the stop id.
+	int64_t add_stop(int64_t seg, double u, const String &side, const String &kind, const String &name);
+	void set_stop(int64_t seg, const Dictionary &stop); // {id, u, side, kind, name, bays}
+	void remove_stop(int64_t seg, int64_t stop);
+	// {enabled, name, capacity, routes: [{id, name, color, stops: [ids], headway, loop}]}
+	void set_depot(int64_t node, const Dictionary &depot);
+	Array get_stops(); // [{id, segment, u, side, kind, name, bays, pos, dir, level}]
+	Array get_depots(); // [{node, pos, level, name, capacity, routes: [{id, name, color, headway, loop, stops, path}]}]
+	Array get_bays(int level); // [{pos, dir, style}] parking bays, for drawing
+	// Signal heads at each signalized approach lane: [{node, pos, dir, light}] with light
+	// "red" | "amber" | "green" | "yield"; uses the running sim's clock.
+	Array sim_signal_heads(int level);
+	// {phase, into, cycle, phases: [{green, amber, all_red}]} for the signal timeline.
+	Dictionary sim_signal_state(int64_t node);
+	Array sim_route_stats(); // [{id, active, runs, round_trip, fleet}]
 
 	// --- Profiles --------------------------------------------------------------
 	Array presets() const; // [{name, params}]
@@ -134,6 +156,7 @@ private:
 	void ensure_network(); // compiled for the problems panel (no cars)
 	void sync_sim();
 	tsim::Profile road_profile(const Dictionary &road);
+	PackedVector2Array route_path(const tsim::NetDepot &d, const tsim::BusRoute &r);
 
 	tsim::Document doc_;
 	tsim::RoadGeometry geom_;

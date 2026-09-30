@@ -9,6 +9,10 @@ const TOOLS := [
 	["curve", "Curve road", "C"],
 	["lane", "Lane paint", "L"],
 	["spawner", "Spawn point", "N"],
+	["roundabout", "Roundabout", "O"],
+	["stop", "Bus stop", "K"],
+	["depot", "Bus depot", "D"],
+	["route", "Bus route", "U"],
 ]
 const PANEL_BG := Color(0.08, 0.09, 0.1, 0.92)
 
@@ -167,6 +171,7 @@ func _build_palette(root: Control) -> void:
 	demos.get_popup().add_item("T junction (priority road)", 3)
 	demos.get_popup().add_item("Lane drop", 4)
 	demos.get_popup().add_item("One-way pair", 5)
+	demos.get_popup().add_item("Showcase (M3: signals, roundabout, buses, bikes, parking)", 6)
 	demos.get_popup().add_separator()
 	demos.get_popup().add_item("POC ring benchmark", 2)
 	demos.get_popup().id_pressed.connect(_on_example)
@@ -193,6 +198,8 @@ func _on_example(id: int) -> void:
 			editor.load_demo("lane_drop")
 		5:
 			editor.load_demo("one_way_pair")
+		6:
+			editor.load_demo("showcase")
 
 
 func _confirm_new() -> void:
@@ -389,8 +396,17 @@ static func clock(seconds: float) -> String:
 func refresh_sim(st: Dictionary) -> void:
 	if _sim_label == null or st.is_empty():
 		return
-	var text := "%s · %d cars · %d trips · %.0f km/h · %d stopped" % [
+	var text := "%s · %d vehicles · %d trips · %.0f km/h · %d stopped" % [
 		clock(st.sim_time), st.vehicles, st.arrived, st.mean_speed_kmh, st.stopped]
+	var extra: Array = []
+	if int(st.buses) + int(st.coaches) > 0:
+		extra.append("%d bus%s" % [int(st.buses) + int(st.coaches), "" if int(st.buses) + int(st.coaches) == 1 else "es"])
+	if int(st.bikes) > 0:
+		extra.append("%d bike%s" % [st.bikes, "" if int(st.bikes) == 1 else "s"])
+	if int(st.parked) > 0:
+		extra.append("%d parked" % st.parked)
+	if not extra.is_empty():
+		text += " (" + ", ".join(extra) + ")"
 	if int(st.waiting_to_enter) > 0:
 		text += " · %d waiting to enter" % st.waiting_to_enter
 	if editor.sim.playing:
@@ -398,8 +414,10 @@ func refresh_sim(st: Dictionary) -> void:
 		if st.behind:
 			text += " (CPU-limited)"
 	_sim_label.text = text
-	_sim_label.tooltip_text = "Sim %.0f µs per tick, %.1f ms per frame · %d lane changes · %d re-routes · longest stop %.0f s · %d cars taken off (stuck)" % [
-		st.tick_us, st.frame_sim_ms, st.lane_changes, st.reroutes, st.max_stopped, st.removed_stuck]
+	_sim_label.tooltip_text = "Sim %.0f µs per tick, %.1f ms per frame · %d lane changes · %d re-routes · longest stop %.0f s · %d cars taken off (stuck)\n%d cars, %d taxis, %d buses, %d coaches, %d bikes · %d bus runs, %d stops served, %d coach calls · %d parkings (%d found no bay) · %d right turns on red" % [
+		st.tick_us, st.frame_sim_ms, st.lane_changes, st.reroutes, st.max_stopped, st.removed_stuck,
+		st.cars, st.taxis, st.buses, st.coaches, st.bikes, st.bus_runs, st.bus_stops_served, st.coach_calls,
+		st.parkings, st.parking_failed, st.right_on_red]
 
 
 func _build_problems(root: Control) -> void:

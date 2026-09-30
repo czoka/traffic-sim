@@ -49,6 +49,45 @@ void speed_color(double ratio, float out[4]) {
 
 constexpr int kFloatsPerCar = 12;
 
+void rgb(uint32_t c, float out[4]) {
+	out[0] = static_cast<float>((c >> 16) & 0xff) / 255.0f;
+	out[1] = static_cast<float>((c >> 8) & 0xff) / 255.0f;
+	out[2] = static_cast<float>(c & 0xff) / 255.0f;
+	out[3] = 1.0f;
+}
+
+// Cars by speed; taxis yellow; buses in their route's colour; coaches purple;
+// bikes teal; parked cars grey.
+void kind_color(const Vehicle &v, const Network *net, float out[4]) {
+	switch (v.kind) {
+		case VehicleKind::Taxi:
+			rgb(0xf2c417, out);
+			return;
+		case VehicleKind::Bus:
+			rgb(0x2f7fd8, out);
+			for (const NetDepot &d : net->depots) {
+				for (const NetRoute &r : d.routes) {
+					if (r.id == v.bus_route) rgb(r.color, out);
+				}
+			}
+			return;
+		case VehicleKind::Coach:
+			rgb(0x8a4fc9, out);
+			return;
+		case VehicleKind::Bike:
+			rgb(0x17a6a0, out);
+			return;
+		case VehicleKind::Car:
+			break;
+	}
+	if (v.off_lane || v.phase != 0) {
+		rgb(0x8c9096, out);
+		return;
+	}
+	const NetLane &l = net->lanes[static_cast<size_t>(v.lane)];
+	speed_color(v.v / std::max(1.0, l.speed_limit * v.drv.speed_factor), out);
+}
+
 } // namespace
 
 void RoadEditor::sync_sim() {
@@ -138,16 +177,16 @@ PackedFloat32Array RoadEditor::sim_car_buffer(int level, double car_scale) {
 		// Transform2D layout: x.x, y.x, pad, origin.x, x.y, y.y, pad, origin.y.
 		// The quad is car-sized; its x axis is the heading.
 		const double len = v.drv.length / 4.5;
+		const double wid = v.drv.width / 1.8;
 		o[0] = static_cast<float>(p.dir.x * k * len);
-		o[1] = static_cast<float>(-p.dir.y * k);
+		o[1] = static_cast<float>(-p.dir.y * k * wid);
 		o[2] = 0.0f;
 		o[3] = static_cast<float>(p.pos.x);
 		o[4] = static_cast<float>(p.dir.y * k * len);
-		o[5] = static_cast<float>(p.dir.x * k);
+		o[5] = static_cast<float>(p.dir.x * k * wid);
 		o[6] = 0.0f;
 		o[7] = static_cast<float>(p.pos.y);
-		const NetLane &l = net->lanes[static_cast<size_t>(v.lane)];
-		speed_color(v.v / std::max(1.0, l.speed_limit * v.drv.speed_factor), o + 8);
+		kind_color(v, net, o + 8);
 		++out;
 	}
 	return car_buffer_;
@@ -212,6 +251,21 @@ Dictionary RoadEditor::sim_car_info(int64_t id) {
 	Vector2 *w = route.ptrw();
 	for (size_t k = 0; k < info.route.size(); ++k) w[k] = gv(info.route[k]);
 	d["route"] = route;
+	d["kind"] = vehicle_kind_name(info.kind);
+	d["bus_route"] = static_cast<int64_t>(info.bus_route);
+	d["coach_line"] = static_cast<int64_t>(info.coach_line);
+	d["stops_left"] = static_cast<int64_t>(info.stops_left);
+	d["parks"] = info.parks;
+	String next_stop;
+	if (info.next_stop >= 0) next_stop = gs(net->stops[static_cast<size_t>(info.next_stop)].name);
+	d["next_stop"] = next_stop;
+	String route_name;
+	for (const NetDepot &dp : net->depots) {
+		for (const NetRoute &r : dp.routes) {
+			if (r.id == info.bus_route && info.bus_route != 0) route_name = gs(r.name);
+		}
+	}
+	d["route_name"] = route_name;
 	return d;
 }
 
@@ -237,6 +291,21 @@ Dictionary RoadEditor::sim_stats() {
 	d["lane_changes"] = static_cast<int64_t>(st.lane_changes);
 	d["reroutes"] = static_cast<int64_t>(st.reroutes);
 	d["forced_grants"] = static_cast<int64_t>(st.forced_grants);
+	d["cars"] = static_cast<int64_t>(st.by_kind[0]);
+	d["taxis"] = static_cast<int64_t>(st.by_kind[1]);
+	d["buses"] = static_cast<int64_t>(st.by_kind[2]);
+	d["coaches"] = static_cast<int64_t>(st.by_kind[3]);
+	d["bikes"] = static_cast<int64_t>(st.by_kind[4]);
+	d["parked"] = static_cast<int64_t>(st.parked);
+	d["parkings"] = static_cast<int64_t>(st.parkings);
+	d["parking_failed"] = static_cast<int64_t>(st.parking_failed);
+	d["bus_runs"] = static_cast<int64_t>(st.bus_runs);
+	d["bus_stops_served"] = static_cast<int64_t>(st.bus_stops_served);
+	d["coach_calls"] = static_cast<int64_t>(st.coach_calls);
+	d["bikes_arrived"] = static_cast<int64_t>(st.bikes_arrived);
+	d["bus_lane_misuse"] = st.bus_lane_misuse;
+	d["red_light_waits"] = static_cast<int64_t>(st.red_light_waits);
+	d["right_on_red"] = static_cast<int64_t>(st.right_on_red);
 	d["tick_us"] = tick_us_ema_;
 	d["frame_sim_ms"] = frame_sim_ms_ema_;
 	d["behind"] = behind_;

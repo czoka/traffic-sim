@@ -78,7 +78,7 @@ std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom) {
 	for (const auto &kv : geom.nodes()) {
 		const NodeGeom &g = kv.second;
 		const RoadNode *rn = map.node(g.id);
-		const bool spawn_point = rn && rn->spawner.enabled;
+		const bool spawn_point = rn && (rn->spawner.enabled || rn->depot.enabled);
 		if (g.kind == NodeKind::End && spawn_point) {
 			// Traffic enters and leaves the map here.
 		} else if (g.kind == NodeKind::End && !g.dead_lanes.empty()) {

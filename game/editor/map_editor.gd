@@ -72,6 +72,10 @@ func _ready() -> void:
 		"curve": CurveDrawTool.new(self),
 		"lane": LanePaintTool.new(self),
 		"spawner": SpawnerTool.new(self),
+		"roundabout": RoundaboutTool.new(self),
+		"stop": StopTool.new(self),
+		"depot": DepotTool.new(self),
+		"route": RouteTool.new(self),
 	}
 	_load_user_presets()
 	ui = EditorUI.new()
@@ -493,6 +497,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			set_tool("lane")
 		KEY_N:
 			set_tool("spawner")
+		KEY_O:
+			set_tool("roundabout")
+		KEY_K:
+			set_tool("stop")
+		KEY_D:
+			set_tool("depot")
+		KEY_U:
+			set_tool("route")
 		KEY_SPACE:
 			sim.toggle()
 		KEY_PERIOD:

@@ -1,4 +1,5 @@
 #include "road_editor.h"
+#include "m3_dicts.h"
 
 #include "tsim/demo_maps.h"
 #include "tsim/road_map_json.h"
@@ -13,6 +14,7 @@
 #include <cmath>
 
 namespace godot {
+using namespace m3;
 
 using namespace tsim;
 
@@ -67,6 +69,7 @@ Dictionary params_dict(const ProfileParams &p) {
 	d["bike_right"] = p.bike_right;
 	d["bus_left"] = p.bus_left;
 	d["bus_right"] = p.bus_right;
+	d["parking_style"] = parking_style_name(p.parking_style);
 	return d;
 }
 
@@ -86,6 +89,7 @@ ProfileParams params_from(const Dictionary &d) {
 	p.bike_right = d.get("bike_right", p.bike_right);
 	p.bus_left = d.get("bus_left", p.bus_left);
 	p.bus_right = d.get("bus_right", p.bus_right);
+	parking_style_from_name(ss(d.get("parking_style", "parallel")), p.parking_style);
 	return p;
 }
 
@@ -286,6 +290,17 @@ void RoadEditor::set_spawner(int64_t node, const Dictionary &d) {
 		ow.weight = static_cast<double>(w.get("weight", 1.0));
 		sp.od.push_back(ow);
 	}
+	sp.bikes = static_cast<double>(d.get("bikes", 0.0));
+	const Array coaches = d.get("coaches", Array());
+	for (int64_t i = 0; i < coaches.size(); ++i) {
+		const Dictionary c = coaches[i];
+		CoachLine cl;
+		cl.id = static_cast<uint32_t>(static_cast<int64_t>(c.get("id", 0)));
+		cl.exit = static_cast<NodeId>(static_cast<int64_t>(c.get("exit", 0)));
+		cl.per_hour = static_cast<double>(c.get("per_hour", cl.per_hour));
+		cl.dwell = static_cast<double>(c.get("dwell", cl.dwell));
+		sp.coaches.push_back(cl);
+	}
 	doc_.set_spawner(static_cast<NodeId>(node), sp);
 }
 
@@ -378,7 +393,21 @@ Dictionary RoadEditor::get_node(int64_t id) {
 		od.push_back(wd);
 	}
 	sp["od"] = od;
+	sp["bikes"] = n->spawner.bikes;
+	Array coaches;
+	for (const CoachLine &c : n->spawner.coaches) {
+		Dictionary cd;
+		cd["id"] = static_cast<int64_t>(c.id);
+		cd["exit"] = static_cast<int64_t>(c.exit);
+		cd["per_hour"] = c.per_hour;
+		cd["dwell"] = c.dwell;
+		coaches.push_back(cd);
+	}
+	sp["coaches"] = coaches;
 	d["spawner"] = sp;
+	d["roundabout"] = roundabout_dict(n->roundabout);
+	d["signal"] = signal_dict(n->signal);
+	d["depot"] = depot_dict(n->depot);
 	return d;
 }
 
@@ -431,6 +460,9 @@ Dictionary RoadEditor::get_segment(int64_t id) {
 		zones.push_back(zd);
 	}
 	d["no_change"] = zones;
+	Array stops;
+	for (const BusStop &st : s->stops) stops.push_back(stop_dict(st));
+	d["stops"] = stops;
 	return d;
 }
 
@@ -771,6 +803,19 @@ void RoadEditor::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_junction_control", "node", "control", "priority"), &RoadEditor::set_junction_control);
 	ClassDB::bind_method(D_METHOD("set_spawner", "node", "spawner"), &RoadEditor::set_spawner);
+	ClassDB::bind_method(D_METHOD("set_roundabout", "node", "roundabout"), &RoadEditor::set_roundabout);
+	ClassDB::bind_method(D_METHOD("default_signal_plan", "node"), &RoadEditor::default_signal_plan);
+	ClassDB::bind_method(D_METHOD("set_signal_plan", "node", "plan"), &RoadEditor::set_signal_plan);
+	ClassDB::bind_method(D_METHOD("add_stop", "segment", "u", "side", "kind", "name"), &RoadEditor::add_stop);
+	ClassDB::bind_method(D_METHOD("set_stop", "segment", "stop"), &RoadEditor::set_stop);
+	ClassDB::bind_method(D_METHOD("remove_stop", "segment", "stop"), &RoadEditor::remove_stop);
+	ClassDB::bind_method(D_METHOD("set_depot", "node", "depot"), &RoadEditor::set_depot);
+	ClassDB::bind_method(D_METHOD("get_stops"), &RoadEditor::get_stops);
+	ClassDB::bind_method(D_METHOD("get_depots"), &RoadEditor::get_depots);
+	ClassDB::bind_method(D_METHOD("get_bays", "level"), &RoadEditor::get_bays);
+	ClassDB::bind_method(D_METHOD("sim_signal_heads", "level"), &RoadEditor::sim_signal_heads);
+	ClassDB::bind_method(D_METHOD("sim_signal_state", "node"), &RoadEditor::sim_signal_state);
+	ClassDB::bind_method(D_METHOD("sim_route_stats"), &RoadEditor::sim_route_stats);
 
 	ClassDB::bind_method(D_METHOD("presets"), &RoadEditor::presets);
 	ClassDB::bind_method(D_METHOD("params_of_profile", "profile"), &RoadEditor::params_of_profile);

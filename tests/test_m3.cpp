@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <map>
 #include <set>
+#include <string>
 
 using namespace tsim;
 
@@ -601,4 +602,43 @@ TEST_CASE("M3 gate: the showcase runs a full sim day") {
 	CHECK(st.coach_calls >= 60);
 	CHECK(st.bikes_arrived >= 1000);
 	CHECK(st.parkings >= 100);
+}
+
+TEST_CASE("transit problems: unserved stops, broken routes, coach lines without a station") {
+	World w;
+	const Cross x = cross_roads(w.doc);
+	// A one-way road out of the east arm: a stop against its direction has no lane.
+	const SegmentId one_way = w.doc.add_road({ node_point(w.doc, x.e), free_point(300, 0) }, preset("One-way 2 lanes"), 0, 13.9).front();
+	const NodeId far_end = w.doc.map().segment(one_way)->to;
+	w.doc.set_spawner(far_end, spawner(0.0));
+	const uint32_t bad = w.doc.add_stop(one_way, 0.5, LaneDir::Backward, StopKind::Kerbside, "Wrong side");
+	const uint32_t ok = w.doc.add_stop(x.sw, 0.5, LaneDir::Forward, StopKind::Kerbside, "Fine");
+	REQUIRE(bad != 0);
+	REQUIRE(ok != 0);
+	// A depot at the north end whose route needs to go west-bound on the west arm first... from the north it
+	// can only reach the west arm heading west (out of the map), so "Fine" (eastbound) is unreachable.
+	Depot d;
+	d.enabled = true;
+	d.name = "North";
+	BusRoute r;
+	r.name = "Nowhere";
+	r.stops = { ok };
+	d.routes = { r };
+	w.doc.set_spawner(x.n, Spawner{});
+	w.doc.set_depot(x.n, d);
+	Spawner with_coach = spawner(100.0);
+	CoachLine c;
+	c.exit = x.s;
+	with_coach.coaches = { c };
+	w.doc.set_spawner(x.w, with_coach);
+	w.sync();
+	std::set<std::string> codes;
+	for (const NetProblem &p : network_problems(w.doc.map(), w.net())) codes.insert(p.code);
+	CHECK(codes.count("stop_no_lane") == 1);
+	CHECK(codes.count("route_broken") == 1);
+	CHECK(codes.count("no_main_station") == 1);
+	CHECK(codes.count("depot_not_at_end") == 0);
+	// A depot is a proper road end: no "road ends here" warning.
+	w.geom.build(w.doc.map());
+	for (const Problem &p : validate(w.doc.map(), w.geom)) CHECK(p.code != "road_end");
 }

@@ -987,8 +987,117 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 
 // --- Problems -----------------------------------------------------------------------
 
+namespace {
+
+// Lanes reachable from `starts` on the lane graph (connectors and lane changes).
+std::vector<char> reachable(const Network &net, const std::vector<int32_t> &starts) {
+	std::vector<char> seen(net.lanes.size(), 0);
+	std::vector<int32_t> stack;
+	for (int32_t l : starts) {
+		if (l >= 0 && !seen[static_cast<size_t>(l)]) {
+			seen[static_cast<size_t>(l)] = 1;
+			stack.push_back(l);
+		}
+	}
+	while (!stack.empty()) {
+		const int32_t l = stack.back();
+		stack.pop_back();
+		const NetLane &lane = net.lanes[static_cast<size_t>(l)];
+		std::vector<int32_t> nb = lane.next;
+		if (lane.left >= 0 && !lane.change_left.empty()) nb.push_back(lane.left);
+		if (lane.right >= 0 && !lane.change_right.empty()) nb.push_back(lane.right);
+		for (int32_t n : nb) {
+			if (net.lanes[static_cast<size_t>(n)].type == LaneType::Bike) continue; // buses and coaches
+			if (!seen[static_cast<size_t>(n)]) {
+				seen[static_cast<size_t>(n)] = 1;
+				stack.push_back(n);
+			}
+		}
+	}
+	return seen;
+}
+
+void transit_problems(const RoadMap &map, const Network &net, std::vector<NetProblem> &out) {
+	auto add = [&](const char *code, const std::string &msg, Vec2 pos, int level, NodeId node) {
+		NetProblem p;
+		p.code = code;
+		p.message = msg;
+		p.pos = pos;
+		p.level = level;
+		p.node = node;
+		out.push_back(p);
+	};
+	auto stop_pos = [&](const RoadSegment &seg, double u) {
+		const RoadNode *a = map.node(seg.from);
+		const RoadNode *b = map.node(seg.to);
+		return a && b ? a->pos + (b->pos - a->pos) * u : Vec2{};
+	};
+	int main_stations = 0;
+	for (const auto &kv : map.segments()) {
+		const RoadSegment &seg = kv.second;
+		for (const BusStop &st : seg.stops) {
+			if (st.kind == StopKind::MainStation) ++main_stations;
+			if (net.stop_index(st.id) < 0) {
+				add("stop_no_lane", "Stop \"" + st.name + "\" has no lane for buses going that way. Put it on the other side, or on a road with traffic in that direction.",
+						stop_pos(seg, st.u), seg.level, kNoId);
+			}
+		}
+	}
+	if (main_stations > 1) add("main_stations", "More than one main station: coaches only use the first.", Vec2{}, 0, kNoId);
+	for (const auto &kv : map.nodes()) {
+		const RoadNode &n = kv.second;
+		if (!n.depot.enabled) continue;
+		const NetDepot *d = nullptr;
+		for (const NetDepot &x : net.depots) {
+			if (x.node == n.id) d = &x;
+		}
+		if (!d) {
+			add("depot_not_at_end", "Depot is not on a road end, so no buses leave it. Move it to the end of a road.", n.pos, n.level, n.id);
+			continue;
+		}
+		for (const NetRoute &r : d->routes) {
+			// Depot -> each stop in order -> depot, on lanes a bus may use.
+			std::vector<int32_t> from = d->spawn_lanes;
+			std::vector<int32_t> seq = r.stops;
+			if (r.loop && seq.size() > 1) seq.push_back(seq.front());
+			std::string broken;
+			for (int32_t si : seq) {
+				const NetStop &st = net.stops[static_cast<size_t>(si)];
+				if (!reachable(net, from)[static_cast<size_t>(st.lane)]) {
+					broken = "can't reach stop \"" + st.name + "\"";
+					break;
+				}
+				from = { st.lane };
+			}
+			if (broken.empty() && !d->sink_lanes.empty()) {
+				const std::vector<char> seen = reachable(net, from);
+				bool back = false;
+				for (int32_t l : d->sink_lanes) back |= seen[static_cast<size_t>(l)] != 0;
+				if (!back) broken = "can't get back to the depot after its last stop";
+			}
+			if (r.stops.empty()) broken = "has no stops";
+			if (!broken.empty()) add("route_broken", "Bus route \"" + r.name + "\" " + broken + ".", n.pos, n.level, n.id);
+		}
+	}
+	for (const NetCoachLine &c : net.coach_lines) {
+		const NetSpawner *sp = net.spawner_at(c.exit);
+		const NetSpawner *in = net.spawner_at(c.entry);
+		if (!sp || !sp->config.sink) {
+			add("coach_exit", "A coach line from here has no exit: pick a spawn point where vehicles may leave.", in ? in->pos : Vec2{},
+					in ? in->level : 0, c.entry);
+		}
+		if (net.main_station < 0) {
+			add("no_main_station", "Coach lines need a main station (a stop of kind main station): coaches will drive straight through.",
+					in ? in->pos : Vec2{}, in ? in->level : 0, c.entry);
+		}
+	}
+}
+
+} // namespace
+
 std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net) {
 	std::vector<NetProblem> out;
+	transit_problems(map, net, out);
 	for (const auto &kv : map.nodes()) {
 		const RoadNode &n = kv.second;
 		if (n.spawner.enabled && !net.spawner_at(n.id)) {
