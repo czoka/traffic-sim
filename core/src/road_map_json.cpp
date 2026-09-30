@@ -251,7 +251,87 @@ bool migrate_v1(const json &root, RoadMap &map, std::string &err) {
 	return true;
 }
 
-// --- v2 ----------------------------------------------------------------------------
+// --- v3 node extras: junction control and spawn points ------------------------------
+
+bool parse_node_extras(const json &jn, RoadNode &n, std::string &err) {
+	const std::string where = "node " + std::to_string(n.id) + ": ";
+	auto ctl = jn.find("control");
+	if (ctl != jn.end()) {
+		std::string type;
+		if (!ctl->is_object() || !str(*ctl, "type", type) || !junction_control_from_name(type, n.control)) {
+			err = where + "invalid junction control";
+			return false;
+		}
+		auto pr = ctl->find("priority");
+		if (pr != ctl->end()) {
+			if (!pr->is_array()) {
+				err = where + "priority must be an array of segment ids";
+				return false;
+			}
+			for (const json &v : *pr) {
+				if (!v.is_number_unsigned() || v.get<uint64_t>() == 0 || v.get<uint64_t>() > 0xFFFFFFFFull) {
+					err = where + "invalid priority segment id";
+					return false;
+				}
+				n.priority.push_back(static_cast<SegmentId>(v.get<uint64_t>()));
+			}
+		}
+	}
+	auto sp = jn.find("spawner");
+	if (sp != jn.end()) {
+		Spawner &s = n.spawner;
+		s.enabled = true;
+		if (!sp->is_object() || !num(*sp, "rate", s.rate) || s.rate < 0.0) {
+			err = where + "spawner needs a rate (vehicles per hour)";
+			return false;
+		}
+		auto sink = sp->find("sink");
+		if (sink != sp->end()) {
+			if (!sink->is_boolean()) {
+				err = where + "spawner sink must be true or false";
+				return false;
+			}
+			s.sink = sink->get<bool>();
+		}
+		auto od = sp->find("od");
+		if (od != sp->end()) {
+			if (!od->is_array()) {
+				err = where + "spawner od must be an array";
+				return false;
+			}
+			for (const json &jw : *od) {
+				OdWeight w;
+				if (!jw.is_object() || !id(jw, "to", w.to) || !num(jw, "weight", w.weight) || w.weight < 0.0) {
+					err = where + "invalid od weight";
+					return false;
+				}
+				s.od.push_back(w);
+			}
+		}
+	}
+	return true;
+}
+
+ojson node_json(const RoadNode &n) {
+	ojson o{ { "id", n.id }, { "x", n.pos.x }, { "y", n.pos.y }, { "level", n.level } };
+	if (n.control != JunctionControl::RightHand || !n.priority.empty()) {
+		ojson c{ { "type", junction_control_name(n.control) } };
+		if (!n.priority.empty()) c["priority"] = n.priority;
+		o["control"] = std::move(c);
+	}
+	if (n.spawner.enabled) {
+		ojson s{ { "rate", n.spawner.rate }, { "sink", n.spawner.sink } };
+		if (!n.spawner.od.empty()) {
+			ojson od = ojson::array();
+			for (const OdWeight &w : n.spawner.od) od.push_back(ojson{ { "to", w.to }, { "weight", w.weight } });
+			s["od"] = std::move(od);
+		}
+		o["spawner"] = std::move(s);
+	}
+	return o;
+}
+
+// --- v2 and v3 ---------------------------------------------------------------------
 
 bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 	auto nodes = root.find("nodes");
@@ -265,6 +345,9 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 		if (!jn.is_object() || !id(jn, "id", n.id) || n.id == kNoId || !num(jn, "x", n.pos.x) ||
 				!num(jn, "y", n.pos.y) || !integer(jn, "level", n.level)) {
 			err = "invalid node";
+			return false;
+		}
+		if (!parse_node_extras(jn, n, err)) {
 			return false;
 		}
 		if (map.node(n.id)) {
@@ -404,7 +487,7 @@ std::string road_map_to_json(const RoadMap &map) {
 	ojson nodes = ojson::array();
 	for (const auto &kv : map.nodes()) {
 		const RoadNode &n = kv.second;
-		nodes.push_back(ojson{ { "id", n.id }, { "x", n.pos.x }, { "y", n.pos.y }, { "level", n.level } });
+		nodes.push_back(node_json(n));
 	}
 	root["nodes"] = std::move(nodes);
 

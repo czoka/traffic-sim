@@ -1,0 +1,189 @@
+// Sim network (M2): the editable map compiled into a lane graph.
+//
+// Road lanes (one per drawn travel lane, turn pockets included) and connectors
+// (paths through nodes) are both "lanes" here: a polyline with a length that
+// vehicles drive along. Each junction gets a conflict matrix: which connector
+// pairs cross or merge, where along each path, and who has priority.
+//
+// Determinism: geometry is built with trig, which can differ in the last bit
+// between platforms. Everything the simulation reads is snapped to a 1/1024 m
+// grid first, and lengths are then summed with sqrt only, so the compiled
+// network is bit-identical everywhere.
+//
+// Incremental: NetworkCompiler keeps the compiled data of every segment and
+// node with a signature of its inputs. After an edit only the segments and
+// junctions whose inputs changed are compiled again; the result is identical
+// to a full compile.
+#pragma once
+
+#include "tsim/road_geometry.h"
+#include "tsim/road_map.h"
+
+#include <map>
+#include <vector>
+
+namespace tsim {
+
+enum class NetLaneKind : uint8_t {
+	Road = 0,
+	Connector = 1,
+};
+
+// Stable identity of a lane across recompiles: a road lane by its LaneId, a
+// connector by the pair of road lanes it joins.
+struct LaneKey {
+	NetLaneKind kind = NetLaneKind::Road;
+	uint32_t a = 0; // road: lane id; connector: from lane
+	uint32_t b = 0; // connector: to lane
+	bool operator<(const LaneKey &o) const {
+		return kind != o.kind ? kind < o.kind : a != o.a ? a < o.a : b < o.b;
+	}
+	bool operator==(const LaneKey &o) const { return kind == o.kind && a == o.a && b == o.b; }
+};
+
+// A crossing or merging pair of connectors at one junction.
+struct Conflict {
+	int32_t other = -1; // dense lane index of the other connector
+	double s_self = 0.0; // conflict point along this connector
+	double s_other = 0.0; // and along the other one
+	int8_t priority = 0; // +1 this connector goes first, -1 the other, 0 first come first served
+	bool merge = false; // both end in the same lane
+};
+
+struct NetLane {
+	NetLaneKind kind = NetLaneKind::Road;
+	LaneKey key;
+	LaneType type = LaneType::General;
+	int level = 0;
+	double length = 0.0;
+	double speed_limit = 13.9; // m/s; connectors: also limited by curvature
+	std::vector<Vec2> pts; // travel direction
+	std::vector<double> cum; // distance along the lane at each point
+
+	// Road lanes
+	SegmentId segment = kNoId;
+	LaneDir dir = LaneDir::Forward;
+	bool pocket = false;
+	int32_t first_sample = 0; // index of pts[0] in the segment's samples, counted in travel order
+	int32_t left = -1, right = -1; // same-direction neighbours, in the sense of travel
+	// Where a lane change out of this lane is allowed, as [from, to] ranges of s.
+	std::vector<std::pair<double, double>> change_left, change_right;
+	NodeId start_node = kNoId;
+	NodeId end_node = kNoId;
+	bool sink = false; // ends at a spawn point that accepts vehicles
+	int32_t approach_of = -1; // junction this lane ends at (if it controls entry)
+	bool merge_end = false; // lane ends by merging into its neighbour (lane drop)
+
+	// Connectors
+	NodeId node = kNoId;
+	int32_t junction = -1;
+	int32_t from = -1, to = -1; // road lanes
+	TurnKind turn = TurnKind::Straight;
+	int leg = -1; // index of the incoming leg at the node
+	std::vector<Conflict> conflicts;
+
+	// Graph: road lane -> its connectors; connector -> its road lane.
+	std::vector<int32_t> next;
+	std::vector<int32_t> prev;
+};
+
+struct NetJunction {
+	NodeId node = kNoId;
+	int level = 0;
+	Vec2 pos;
+	JunctionControl control = JunctionControl::RightHand;
+	std::vector<int32_t> connectors;
+	std::vector<int32_t> approaches; // road lanes that end here
+	bool arbitrated = false; // some connectors conflict: entry needs a grant
+	bool joint = false; // two roads joined end to end (continuation or taper)
+};
+
+struct NetSpawner {
+	NodeId node = kNoId;
+	Vec2 pos;
+	int level = 0;
+	Spawner config;
+	std::vector<int32_t> spawn_lanes; // road lanes leaving the map edge
+	std::vector<int32_t> sink_lanes; // road lanes arriving at it
+};
+
+class Network {
+public:
+	std::vector<NetLane> lanes;
+	std::vector<NetJunction> junctions; // ascending node id
+	std::vector<NetSpawner> spawners; // ascending node id, enabled road ends only
+	double max_speed = 13.9; // fastest speed limit, for the routing heuristic
+
+	int32_t find(const LaneKey &k) const;
+	int32_t junction_at(NodeId node) const;
+	const NetSpawner *spawner_at(NodeId node) const;
+
+	// Position and heading at distance s along a lane (s is clamped).
+	Pose pose(int32_t lane, double s) const;
+	// Distance along road lane `to` level with distance s along its neighbour
+	// `from` (same segment and direction), or -1 when `to` doesn't exist there.
+	double map_across(int32_t from, double s, int32_t to) const;
+	bool can_change(int32_t lane, bool to_left, double s) const;
+
+	// Hash of everything the simulation reads (used by tests).
+	uint64_t hash() const;
+	void clear();
+
+	friend class NetworkCompiler;
+
+private:
+	std::map<LaneKey, int32_t> index_;
+	std::map<NodeId, int32_t> junction_index_;
+};
+
+struct CompileStats {
+	int segments = 0;
+	int junctions = 0;
+	int segments_compiled = 0; // compiled this time (the rest came from the cache)
+	int junctions_compiled = 0;
+	double ms = 0.0;
+};
+
+class NetworkCompiler {
+public:
+	// Compiles `map` (whose geometry is `geom`) into `out`, reusing cached
+	// segments and junctions whose inputs did not change.
+	void compile(const RoadMap &map, const RoadGeometry &geom, Network &out);
+	void clear_cache();
+	const CompileStats &stats() const { return stats_; }
+
+	// Tunables.
+	double lateral_accel = 2.0; // m/s^2, sets turn speeds on connectors
+	double conflict_distance = 1.6; // paths closer than this (m) conflict
+
+private:
+	struct SegmentPart {
+		uint64_t sig = 0;
+		std::vector<NetLane> lanes; // left/right are local indices
+	};
+	struct NodePart {
+		uint64_t sig = 0;
+		std::vector<NetLane> connectors; // conflicts[].other and leg are local
+		bool arbitrated = false;
+		bool joint = false;
+	};
+	std::map<SegmentId, SegmentPart> segments_;
+	std::map<NodeId, NodePart> nodes_;
+	CompileStats stats_;
+};
+
+// Checks that need the compiled network: spawn points that are not on a road
+// end, and origin-destination pairs with no route.
+struct NetProblem {
+	std::string code;
+	std::string message;
+	Vec2 pos;
+	int level = 0;
+	NodeId node = kNoId;
+};
+std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net);
+
+// Snaps a coordinate to the 1/1024 m grid.
+double quantize(double v);
+
+} // namespace tsim

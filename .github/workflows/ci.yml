@@ -51,14 +51,17 @@ jobs:
         run: scons platform=${{ matrix.platform }} target=template_debug
       - name: Extension (release)
         run: scons platform=${{ matrix.platform }} target=template_release
-      - name: Godot smoke tests + quick benchmark (headless, Linux only)
+      - name: Godot smoke tests (editor, sim, POC) + quick benchmark (headless, Linux only)
         if: matrix.platform == 'linux'
         run: |
           curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
           unzip -q godot.zip
           GODOT="./Godot_v${GODOT_VERSION}-stable_linux.x86_64"
-          "$GODOT" --headless --path game --import
+          # Godot 4.7.2 aborts on exit after a headless import, once the import is
+          # done. The smoke tests below fail if the import really went wrong.
+          "$GODOT" --headless --path game --import || echo "import exited with $?"
           "$GODOT" --headless --path game --script res://tests/editor_smoke_test.gd
+          "$GODOT" --headless --path game --script res://tests/sim_smoke_test.gd
           "$GODOT" --headless --path game --script res://tests/poc_smoke_test.gd
           "$GODOT" --headless --path game -- --bench-quick
       - uses: actions/upload-artifact@v4

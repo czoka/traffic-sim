@@ -15,7 +15,7 @@ var _handle_index := -1
 
 
 func hint() -> String:
-	return "Click to select · Shift-click to add · Drag to move · Drag handles to bend · Delete removes"
+	return "Click to select (cars too) · Shift-click to add · Drag to move · Drag handles to bend · Delete removes"
 
 
 func deactivate() -> void:
@@ -46,6 +46,13 @@ func input(event: InputEvent) -> bool:
 			editor.road.begin("Bend road")
 			_drag = "handle"
 			return true
+		if editor.sim.has_cars():
+			# Cars first: click a car to see its route and state.
+			var car: int = editor.road.sim_pick_car(mouse, maxf(1.5, editor.pick_radius() * 0.6), editor.level)
+			if car != 0:
+				editor.clear_selection()
+				editor.sim.select_car(car)
+				return true
 		var hit: Dictionary = editor.road.pick(mouse, editor.pick_radius(), editor.level)
 		if hit.type == "none":
 			if not mb.shift_pressed:

@@ -1,5 +1,6 @@
 #include "tsim/demo_maps.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace tsim {
@@ -99,6 +100,142 @@ void build_test_grid(Document &doc, int cols, int rows, double spacing) {
 			}
 		}
 	}
+	// M2: roads out of the grid with spawn / sink points at their ends. One-way
+	// columns only feed traffic in or out, in their own direction.
+	const double stub = 80.0;
+	auto edge = [&](NodeId inner, Vec2 dir, const Profile &p, int flow, double kmh) {
+		// flow: 0 two-way, +1 traffic leaves the grid, -1 traffic enters it.
+		const Vec2 at = doc.map().node(inner)->pos + dir * stub;
+		const NodeId outer = doc.add_node(at, 0);
+		if (flow < 0) {
+			road(doc, outer, inner, p, kmh);
+		} else {
+			road(doc, inner, outer, p, kmh);
+		}
+		Spawner sp;
+		sp.enabled = true;
+		sp.rate = flow > 0 ? 0.0 : 300.0;
+		sp.sink = flow >= 0;
+		doc.set_spawner(outer, sp);
+	};
+	for (int j = 0; j < rows; ++j) {
+		const bool is_avenue = j % 3 == 1;
+		const Profile &p = is_avenue ? (j % 2 == 1 ? bus : avenue) : street;
+		edge(id(0, j), Vec2{ -1.0, 0.0 }, p, 0, is_avenue ? 60.0 : 50.0);
+		edge(id(cols - 1, j), Vec2{ 1.0, 0.0 }, p, 0, is_avenue ? 60.0 : 50.0);
+	}
+	for (int i = 0; i < cols; ++i) {
+		if (i % 2 == 1) {
+			const bool up = i % 4 == 1; // traffic runs towards row 0
+			edge(id(i, 0), Vec2{ 0.0, -1.0 }, oneway, up ? 1 : -1, 50.0);
+			edge(id(i, rows - 1), Vec2{ 0.0, 1.0 }, oneway, up ? -1 : 1, 50.0);
+		} else {
+			edge(id(i, 0), Vec2{ 0.0, -1.0 }, parking, 0, 50.0);
+			edge(id(i, rows - 1), Vec2{ 0.0, 1.0 }, parking, 0, 50.0);
+		}
+	}
+	// Junction control: avenues are priority roads, a few streets get all-way
+	// stops, the rest keep the right-hand rule.
+	for (int j = 0; j < rows; ++j) {
+		for (int i = 0; i < cols; ++i) {
+			const NodeId n = id(i, j);
+			if (j % 3 == 1) {
+				std::vector<SegmentId> main;
+				for (SegmentId s : doc.map().segments_at(n)) {
+					const RoadSegment *seg = doc.map().segment(s);
+					const Vec2 a = doc.map().node(seg->from)->pos;
+					const Vec2 b = doc.map().node(seg->to)->pos;
+					if (std::fabs(a.y - b.y) < 1.0) main.push_back(s); // east-west legs
+				}
+				doc.set_junction_control(n, JunctionControl::PriorityRoad, main);
+			} else if (i > 0 && i + 1 < cols && j > 0 && j + 1 < rows && (i + j) % 5 == 0) {
+				doc.set_junction_control(n, JunctionControl::AllWayStop, {});
+			}
+		}
+	}
+	doc.commit();
+}
+
+// --- M2 test maps ----------------------------------------------------------------
+
+namespace {
+
+void spawn_at(Document &doc, NodeId n, double rate, bool sink = true) {
+	Spawner sp;
+	sp.enabled = true;
+	sp.rate = rate;
+	sp.sink = sink;
+	doc.set_spawner(n, sp);
+}
+
+} // namespace
+
+void build_t_junction(Document &doc) {
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	doc.begin("T junction");
+	const NodeId w = doc.add_node(Vec2{ -200, 0 }, 0), c = doc.add_node(Vec2{ 0, 0 }, 0),
+				 e = doc.add_node(Vec2{ 200, 0 }, 0), s = doc.add_node(Vec2{ 0, 200 }, 0);
+	const SegmentId a = road(doc, w, c, street, 50);
+	const SegmentId b = road(doc, c, e, street, 50);
+	road(doc, s, c, street, 50);
+	doc.set_junction_control(c, JunctionControl::PriorityRoad, { a, b });
+	spawn_at(doc, w, 400);
+	spawn_at(doc, e, 400);
+	spawn_at(doc, s, 300);
+	doc.commit();
+}
+
+void build_lane_drop(Document &doc) {
+	RoadMap scratch;
+	ProfileParams two;
+	two.backward = 0;
+	two.forward = 2;
+	two.sidewalk_left = two.sidewalk_right = true;
+	ProfileParams one = two;
+	one.forward = 1;
+	const Profile p2 = build_profile(two, nullptr, scratch);
+	const Profile p1 = build_profile(one, nullptr, scratch);
+	doc.begin("Lane drop");
+	const NodeId a = doc.add_node(Vec2{ -300, 0 }, 0), b = doc.add_node(Vec2{ 0, 0 }, 0),
+				 c = doc.add_node(Vec2{ 300, 0 }, 0);
+	road(doc, a, b, p2, 50);
+	road(doc, b, c, p1, 50);
+	spawn_at(doc, a, 900, false);
+	spawn_at(doc, c, 0, true);
+	doc.commit();
+}
+
+void build_one_way_pair(Document &doc) {
+	RoadMap scratch;
+	const Profile oneway = preset_profile("One-way 2 lanes", scratch);
+	const Profile street = preset_profile("Street 1+1", scratch);
+	doc.begin("One-way pair");
+	// Two parallel one-way streets 100 m apart (east- and westbound), joined
+	// by two two-way cross streets that run out to spawn points.
+	const NodeId n_w = doc.add_node(Vec2{ -300, 0 }, 0), n1 = doc.add_node(Vec2{ -100, 0 }, 0),
+				 n2 = doc.add_node(Vec2{ 100, 0 }, 0), n_e = doc.add_node(Vec2{ 300, 0 }, 0);
+	const NodeId s_w = doc.add_node(Vec2{ -300, 100 }, 0), s1 = doc.add_node(Vec2{ -100, 100 }, 0),
+				 s2 = doc.add_node(Vec2{ 100, 100 }, 0), s_e = doc.add_node(Vec2{ 300, 100 }, 0);
+	road(doc, n_w, n1, oneway, 50);
+	road(doc, n1, n2, oneway, 50);
+	road(doc, n2, n_e, oneway, 50);
+	road(doc, s_e, s2, oneway, 50);
+	road(doc, s2, s1, oneway, 50);
+	road(doc, s1, s_w, oneway, 50);
+	const NodeId t1 = doc.add_node(Vec2{ -100, -150 }, 0), t2 = doc.add_node(Vec2{ 100, -150 }, 0);
+	const NodeId b1 = doc.add_node(Vec2{ -100, 250 }, 0), b2 = doc.add_node(Vec2{ 100, 250 }, 0);
+	road(doc, t1, n1, street, 50);
+	road(doc, n1, s1, street, 50);
+	road(doc, s1, b1, street, 50);
+	road(doc, t2, n2, street, 50);
+	road(doc, n2, s2, street, 50);
+	road(doc, s2, b2, street, 50);
+	spawn_at(doc, n_w, 500, false);
+	spawn_at(doc, n_e, 0, true);
+	spawn_at(doc, s_e, 500, false);
+	spawn_at(doc, s_w, 0, true);
+	for (NodeId n : { t1, t2, b1, b2 }) spawn_at(doc, n, 200);
 	doc.commit();
 }
 
@@ -158,6 +295,29 @@ void build_demo_town(Document &doc) {
 		}
 		if (edge > 0) doc.set_no_change(s2, edge, 0.3, 0.6, true, true);
 	}
+	// M2: the main avenue has priority at its junctions; traffic enters and
+	// leaves at the road ends.
+	for (NodeId j : { a1, a2 }) {
+		std::vector<SegmentId> main;
+		for (SegmentId sid : doc.map().segments_at(j)) {
+			for (SegmentId m : { s1, s2, s3 }) {
+				if (sid == m) main.push_back(sid);
+			}
+		}
+		doc.set_junction_control(j, JunctionControl::PriorityRoad, main);
+	}
+	doc.set_junction_control(s_1, JunctionControl::AllWayStop, {});
+	Spawner in_out;
+	in_out.enabled = true;
+	in_out.rate = 400.0;
+	doc.set_spawner(w, in_out);
+	doc.set_spawner(e2, in_out);
+	in_out.rate = 150.0;
+	doc.set_spawner(bw, in_out);
+	Spawner out_only;
+	out_only.enabled = true;
+	out_only.rate = 0.0;
+	doc.set_spawner(s_3, out_only);
 	doc.commit();
 }
 

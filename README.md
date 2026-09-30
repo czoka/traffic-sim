@@ -2,7 +2,7 @@
 
 A traffic simulation map builder: a C++ simulation core running inside Godot 4, targeting desktop and the browser.
 
-**Status: M1 (road foundations) implemented.** The main scene is a road editor. You can draw straight and curved roads, which join into generated junctions. Each road has a cross-section profile, turn rules per approach and painted no-change lines. Undo/redo is unlimited, and maps save as versioned JSON. Cars don't drive on edited maps yet; that's M2. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
+**Status: M2 (cars move) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop) and press Play: cars route across the network, change lanes, give way and queue. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
 
 The design lives in the Game Design Document (claude.ai artifact "Traffic Sim Map Builder — Game Design Document"). Its *Implementation plan* tab has the checklists and gates.
 
@@ -40,6 +40,7 @@ The layout is a tool palette on the left, an inspector on the right, and a botto
 | Road | `R` | Click the start, click bends, then double-click or press Enter. Clicking an existing node or road ends the road there and makes a junction. Backspace removes the last point; Esc cancels. |
 | Curve road | `C` | Click the start, the control point, then the end. Starting at the end of a road keeps the curve tangent to it; hold Alt to bend freely. |
 | Lane paint | `L` | Drag along the line between two lanes to paint a no-change zone (solid line); drag over a zone to erase it. Alt paints one side only (Alt+Shift for the other side). Click inside a lane to change its type. |
+| Spawn point | `N` | Click a road end to add a spawn / sink point (300 cars/h in, cars may leave). Click one to edit it in the inspector; Shift-click removes it. |
 
 Snapping order: an existing node, then a point on a road (which splits it into a junction), then 15° angles and the 1 m grid (toggle with `G` / `A`). While drawing, the status bar shows the length and angle of the current leg.
 
@@ -55,7 +56,22 @@ What the editor generates from the map:
 
 The **inspector** edits a road's name, speed limit, level, lanes per direction, lane width, median, sidewalks, parking, bike and bus lanes, one-way direction and the turn rules at each junction end. Nine built-in profiles are included, and "Save as…" stores your own in `user://profiles.json`.
 
-The **problems panel** lists errors and warnings. Clicking one jumps to it. Errors are roads that cross on one level without a junction, and lanes with no way out at a junction. Warnings are road ends (cars will need spawn/sink points from M2), turn lanes shorter than 20 m or too long for their road, and roads too short for their junctions.
+The **problems panel** lists errors and warnings. Clicking one jumps to it. Errors are roads that cross on one level without a junction, and lanes with no way out at a junction; errors block Play. Warnings are road ends without a spawn point, spawn points that aren't on a road end, spawn points whose cars can't reach some destinations, turn lanes shorter than 20 m or too long for their road, and roads too short for their junctions.
+
+Selecting a **junction** shows its control: right-hand priority (the default: yield to the right), priority road (tick the legs that form the main road; the two straightest legs are picked by default) or all-way stop. The paint follows: a dashed give-way line for right-hand priority, no line on a main road and shark teeth on its side roads, a wide stop line for an all-way stop. Selecting a **spawn point** shows its rate (cars per hour entering the map), whether cars may leave there, and the share of its trips going to each destination (the origin-destination matrix; uniform by default).
+
+## The simulation (M2)
+
+The bar above the bottom bar runs the sim: **Play/Pause** (`Space`), **Step** one sim second (`.`), **Restart** (remove all cars and start again with the seed), **Speed** (16x real time by default, multipliers 0.25–8 for 4x–128x), **Seed**, **Density** (multiplies every spawn rate) and **Max cars** (spawning pauses at that many cars). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
+
+How it works:
+
+* **Network compile.** The map and its geometry compile into a lane graph: every travel lane (turn pockets included) and every connector through a node is a sim lane with a polyline. Same-direction neighbours are linked, with the stretches where changing lanes is allowed: not within 30 m of a stop line, not across painted no-change zones (per direction), and into or out of a pocket only along its taper. Each junction gets a conflict matrix: which connector pairs cross, merge or pass closer than 1.6 m, where along each path, and who has priority there. The compiler keeps a signature of each segment's and junction's inputs and compiles only the ones that changed; the result is identical to a full compile.
+* **Routing.** A* on the lane graph: connectors and lane changes are edges, costs are observed travel times per lane (free-flow time at first), with small penalties for turns and lane changes and bus lanes counted three times slower. Cars re-route every 5 sim minutes with the latest times, and immediately when a lane change they needed can no longer be made.
+* **Driving.** IDM car following, looking ahead along the route through connectors, slowing for tight turns (curvature sets each connector's speed). MOBIL lane changes with European keep-right bias, never across solid lines; mandatory changes toward the lane the route needs start 100 m per lane change ahead, and the car behind in the target lane leaves a gap for a car that is stuck waiting to merge.
+* **Junctions.** A car may enter a junction only with a grant. It gets one when no car on a conflicting connector is still in the way (the box is exclusive per conflict point), its exit has room for the whole car (don't block the box), and the rules let it go: it yields to cars with priority (from the right, on the main road, or oncoming when it turns left) unless the gap is at least its critical gap (4–6 s, per driver). At an all-way stop every car stops at the line and cars go in arrival order. A driver who has waited 30 s is let in at the next safe moment, and if everyone waits for someone and the box is empty, the longest waiter goes (deadlock breaker).
+* **Demand.** Spawn points release cars as a Poisson process at their rate × density, towards destinations drawn from the origin-destination weights (only reachable ones). Cars queue at the map edge when the entry lane is full, and leave the map at their destination's road end.
+* **Editing while paused.** Vehicles, routes and grants are carried over to the recompiled network by stable lane IDs; cars on lanes that no longer exist are removed and every other car re-routes.
 
 **Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, or the POC ring benchmark.
 
@@ -73,7 +89,7 @@ The **problems panel** lists errors and warnings. Clicking one jumps to it. Erro
 
 ## Map files
 
-Format `"traffic-sim-map"`, version **2**. The file stores nodes (position, level) and segments: curve (straight, arc or Bézier), level, speed limit, name, profile (lanes with stable IDs), turn rules per end (with pocket lane IDs) and no-change zones. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 1 files (the POC ring) are upgraded on load, and files from a newer version are rejected with a message. Examples are in `game/maps/`.
+Format `"traffic-sim-map"`, version **3**. The file stores nodes (position, level, junction control with main-road segments, spawn point with rate, sink flag and origin-destination weights) and segments: curve (straight, arc or Bézier), level, speed limit, name, profile (lanes with stable IDs), turn rules per end (with pocket lane IDs) and no-change zones. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2 files (M1) load unchanged with the default control and no spawn points; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v3.json` are written by `tsim_bench --write-maps game/maps`).
 
 ## M1 gate and measurements
 
@@ -84,6 +100,20 @@ The gate is that **a 50-junction test network draws, edits and saves cleanly; sa
 * **Undo:** 500 random edits (move, split, add, delete, flip, lane counts, turn rules, paint), then 500 undos, restore the exact starting map, and 500 redos restore the exact edited map.
 
 Rebuild cost on the grid (one core of a 2.1 GHz Xeon, debug extension build) is about 7–9 ms of geometry plus about 3 ms to hand the meshes to Godot, per edit or drag step. Validation takes under 0.1 ms.
+
+## M2 gate and measurements
+
+The gate is that **500 cars run 1 sim hour on the test grid with no gridlock and no deadlocked junctions.** It is checked by the C++ test `M2 gate` and by `game/tests/sim_smoke_test.gd`:
+
+* **The network:** the M1 test grid, now with roads out of the grid on every side to 30 spawn points (one-way streets only feed traffic in or out in their own direction). The avenues are priority roads, a few street junctions are all-way stops, the rest keep the right-hand rule. It has 949 sim lanes and 57 controlled junctions.
+* **The run:** density ×2 with a cap of 500 cars, so the grid holds 500 cars all hour (a congested but moving regime: 8–15 km/h mean speed and about 5,500 trips per hour).
+* **Checks:** no car is taken off the map as stuck; no car stands still for 10 minutes (the longest stop is about 5 minutes, at the busiest entries); no junction goes 90 s without letting a car in while cars wait there whose exit has room (the longest is about 10 s); trips per 5 minutes never fall below half of the first 5 minutes; and at every sample no two cars overlap in a lane and no two cars sit on the conflict point of two crossing connectors. The test uses seed 2026; seeds 1–6, run with `tsim_bench --traffic`, stay within the same stop and junction limits.
+
+Other M2 tests cover the conflict matrix, the right-hand rule, priority roads and gap acceptance, all-way stops, four cars arriving together (the deadlock breaker), don't block the box, MOBIL overtaking and painted lines, mandatory changes into a turn pocket, the lane drop, origin-destination weights and unreachable pairs, editing while paused, incremental versus full compile, and the small test maps (T junction, lane drop, one-way pair, demo town).
+
+Cost on one core of a 2.1 GHz Xeon: about 65 µs per tick with 500 cars on the grid (about 0.8 ms of sim work per frame at 128x), about 90 µs with 800 cars. A full network compile of the grid takes about 6 ms; after a local edit, 1–5 junctions are compiled again in about 2–3 ms.
+
+The golden scenario (the grid, seed 42, density ×2, 500-car cap, 6,000 ticks) hashes to `a4ef13f8041c564c` with GCC (-O0 and -O2) and Clang on x86-64, MSVC on Windows, Clang on Apple Silicon, in wasm, and inside Godot 4.7.2. `tsim_bench` checks it with no arguments; `tsim_bench --traffic [--cars CAP] [--minutes M] [--seed S] [--demand D]` prints a per-minute table.
 
 ## POC ring benchmark
 
@@ -108,15 +138,18 @@ core/                 pure C++17, no Godot includes
     curve.h           straight / arc / Bézier curves, deterministic lengths
     road_geometry.h   cross-sections, junctions, connectors, paint, meshes
     validation.h      problems panel checks
-    demo_maps.h       demo town and the M1 gate test grid
+    network.h         sim network compile: lanes, connectors, conflict matrices (M2)
+    traffic.h         traffic sim: routing, IDM, MOBIL, junction grants, demand (M2)
+    traffic_run.h     keeps network and sim in step with the map; M2 golden scenario
+    demo_maps.h       demo town, the gate test grid and the M2 test maps
     map.h, sim.h      POC runtime lane network and IDM simulation
-extension/src/        GDExtension: RoadEditor (editor bridge), TrafficSim (POC)
+extension/src/        GDExtension: RoadEditor (editor + sim bridge), TrafficSim (POC)
 game/                 Godot 4.7 project (Compatibility renderer)
-  editor/             main scene, map view, overlay, tools/, ui/, file I/O
+  editor/             main scene, map view, sim controller, overlay, tools/, ui/, file I/O
   poc/                ring benchmark scene
   common/             camera controller
   maps/               example maps (v2) and the POC ring (v1)
-  tests/              headless smoke tests (editor, POC)
+  tests/              headless smoke tests (editor, sim, POC)
 tests/                C++ unit tests (doctest)
 tools/                headless sim benchmark (tsim_bench)
 third_party/          doctest 2.4.12, nlohmann/json 3.12.0 (MIT), Clipper2 2.0.1 (Boost)
@@ -142,24 +175,28 @@ Other checks:
 ```sh
 build/native/tsim_bench                                          # golden scenario: PASS/FAIL
 godot --headless --path game --script res://tests/editor_smoke_test.gd
+godot --headless --path game --script res://tests/sim_smoke_test.gd
 godot --headless --path game --script res://tests/poc_smoke_test.gd
 ```
 
-CI (`.github/workflows/ci.yml`) builds Linux, Windows (MSVC) and macOS (Apple Silicon runner) plus the web extension. It runs the unit tests on every platform, including in wasm under Node. On Linux it also runs both Godot smoke tests and a quick benchmark.
+CI (`.github/workflows/ci.yml`) builds Linux, Windows (MSVC) and macOS (Apple Silicon runner) plus the web extension. It runs the unit tests (with both golden hashes) on every platform, including in wasm under Node. On Linux it also runs the three Godot smoke tests and a quick benchmark. (Godot 4.7.2 aborts on exit after a headless `--import`; CI tolerates that exit code, and the smoke tests fail if the import really went wrong.)
 
 ## Rules the core follows
 
 * **No Godot in `core/`.** Everything is testable headless.
 * **The map is the only source of truth.** Lane shapes, junctions, connectors and paint are derived from nodes and segments and never saved. Undo restores nodes and segments, and everything else follows.
-* **Determinism.** Inside `Simulation::tick()` only `+ - * /` and `sqrt` are used on doubles. Curve and lane lengths are computed the same way, in closed form or by Gauss–Legendre quadrature, ready for M2's network compile. Builds use `-ffp-contract=off` (MSVC: `/fp:precise`). Iteration order is always by ID, and sorting uses a strict total order.
+* **Determinism.** Inside `Simulation::tick()` and `Traffic::tick()` only `+ - * /` and `sqrt` are used on doubles. Geometry uses trig, so the network compile snaps everything the sim reads to a 1/1024 m grid and derives lengths from the snapped points; the compiled network is then bit-identical on every platform. Builds use `-ffp-contract=off` (MSVC: `/fp:precise`). Iteration order is always by ID, sorting and the A* queue use strict total orders, and random numbers come from the seeded RNG in a fixed order.
 * **Stable IDs.** Nodes, segments, lanes (including turn pockets) and vehicles get IDs from counters that are saved with the map and never reused, even after undo.
 * **Versioned saves.** Every format change bumps the version and adds a migration in `road_map_json.cpp`.
 * **Coordinates.** Metres, with y pointing down (same as Godot 2D). Lanes are listed left to right, looking from a segment's from-node to its to-node. A positive arc sweep runs clockwise on screen.
 
 ## Known limits
 
-* Cars don't drive on edited maps yet. M2 compiles the editable map into the sim network and adds routing, lane changes and junction control.
+* Junctions have no signals or roundabouts yet (M3). A 500-car grid of unsignalized junctions runs congested (about 12 km/h); M3's signals are the tool for busy crossings.
+* Bus lanes are only expensive for cars (they use them to turn right from the kerb lane); the M3 rule "cars only within 30 m of a turn" comes with buses. Bike lanes and parking lanes are not driven.
+* A lane change is instant in the sim and drawn as a 3 s sideways slide. There are no U-turns, and cars never turn around at a dead end: routes only lead to spawn points.
+* The sim is single-threaded. At 128x a 2,000-car map may be CPU-limited; the status bar then shows the speed actually reached.
 * Roads that cross mid-segment don't join automatically; a junction is made by snapping an end onto a road or node. Crossings are flagged in the problems panel.
 * The whole map's geometry is rebuilt after each edit (about 10 ms on the 56-junction grid). Incremental rebuilds can come later if bigger maps need them.
 * Levels are stored and kept apart, but ramps, bridges and level shadows are M4.
-* The web build (including the browser file picker) hasn't been exported and tested yet. The editor has only been run on Linux so far.
+* The web build (including the browser file picker) hasn't been exported and tested yet. The editor has only been run on Linux so far (headless and under Xvfb).

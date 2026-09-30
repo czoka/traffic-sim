@@ -160,6 +160,18 @@ void RoadEditor::load_test_grid(int cols, int rows, double spacing) {
 	doc_.reset(d.map());
 }
 
+bool RoadEditor::load_example(const String &name) {
+	Document d;
+	if (name == "town") build_demo_town(d);
+	else if (name == "grid") build_test_grid(d, 7, 8, 120.0);
+	else if (name == "t_junction") build_t_junction(d);
+	else if (name == "lane_drop") build_lane_drop(d);
+	else if (name == "one_way_pair") build_one_way_pair(d);
+	else return false;
+	doc_.reset(d.map());
+	return true;
+}
+
 String RoadEditor::save_json() const { return gs(road_map_to_json(doc_.map())); }
 
 Dictionary RoadEditor::load_json(const String &text) {
@@ -252,6 +264,30 @@ void RoadEditor::set_no_change(int64_t seg, int edge, double u0, double u1, bool
 	doc_.set_no_change(static_cast<SegmentId>(seg), edge, u0, u1, block_l2r, block_r2l);
 }
 
+void RoadEditor::set_junction_control(int64_t node, const String &control, const PackedInt64Array &priority) {
+	JunctionControl c = JunctionControl::RightHand;
+	junction_control_from_name(ss(control), c);
+	std::vector<SegmentId> segs;
+	for (int64_t i = 0; i < priority.size(); ++i) segs.push_back(static_cast<SegmentId>(priority[i]));
+	doc_.set_junction_control(static_cast<NodeId>(node), c, segs);
+}
+
+void RoadEditor::set_spawner(int64_t node, const Dictionary &d) {
+	Spawner sp;
+	sp.enabled = d.get("enabled", true);
+	sp.rate = static_cast<double>(d.get("rate", sp.rate));
+	sp.sink = d.get("sink", sp.sink);
+	const Array od = d.get("od", Array());
+	for (int64_t i = 0; i < od.size(); ++i) {
+		const Dictionary w = od[i];
+		OdWeight ow;
+		ow.to = static_cast<NodeId>(static_cast<int64_t>(w.get("to", 0)));
+		ow.weight = static_cast<double>(w.get("weight", 1.0));
+		sp.od.push_back(ow);
+	}
+	doc_.set_spawner(static_cast<NodeId>(node), sp);
+}
+
 // --- Profiles --------------------------------------------------------------------------
 
 Array RoadEditor::presets() const {
@@ -309,6 +345,39 @@ Dictionary RoadEditor::get_node(int64_t id) {
 	for (SegmentId s : doc_.map().segments_at(n->id)) segs.push_back(s);
 	d["segments"] = segs;
 	d["connectors"] = g ? static_cast<int64_t>(g->connectors.size()) : 0;
+	d["control"] = junction_control_name(n->control);
+	PackedInt64Array prio;
+	for (SegmentId p : n->priority) prio.push_back(p);
+	d["priority"] = prio;
+	// Legs for the junction editor: segment, direction away from the node, name.
+	Array legs;
+	if (g) {
+		for (const Leg &l : g->legs) {
+			Dictionary ld;
+			ld["segment"] = static_cast<int64_t>(l.seg);
+			ld["dir"] = gv(l.dir);
+			const RoadSegment *s = doc_.map().segment(l.seg);
+			ld["name"] = s ? gs(s->name) : String();
+			ld["priority"] = n->is_priority(l.seg);
+			legs.push_back(ld);
+		}
+	}
+	d["legs"] = legs;
+	d["junction"] = g && g->kind == NodeKind::Junction && g->legs.size() >= 3;
+	d["road_end"] = g && g->kind == NodeKind::End;
+	Dictionary sp;
+	sp["enabled"] = n->spawner.enabled;
+	sp["rate"] = n->spawner.rate;
+	sp["sink"] = n->spawner.sink;
+	Array od;
+	for (const OdWeight &w : n->spawner.od) {
+		Dictionary wd;
+		wd["to"] = static_cast<int64_t>(w.to);
+		wd["weight"] = w.weight;
+		od.push_back(wd);
+	}
+	sp["od"] = od;
+	d["spawner"] = sp;
 	return d;
 }
 
@@ -563,9 +632,52 @@ Array RoadEditor::get_connectors() {
 	return out;
 }
 
-Array RoadEditor::get_problems() {
+void RoadEditor::ensure_network() {
 	ensure_geometry();
+	if (checked_revision_ == doc_.revision()) return;
+	check_compiler_.compile(doc_.map(), geom_, check_net_);
+	net_problems_ = network_problems(doc_.map(), check_net_);
+	checked_revision_ = doc_.revision();
+}
+
+Array RoadEditor::get_spawners() {
+	ensure_network();
 	Array out;
+	for (const auto &kv : doc_.map().nodes()) {
+		const RoadNode &n = kv.second;
+		if (!n.spawner.enabled) continue;
+		Dictionary d;
+		d["id"] = static_cast<int64_t>(n.id);
+		d["pos"] = gv(n.pos);
+		d["level"] = n.level;
+		d["rate"] = n.spawner.rate;
+		d["sink"] = n.spawner.sink;
+		d["active"] = check_net_.spawner_at(n.id) != nullptr;
+		// Direction pointing into the map, for drawing.
+		const NodeGeom *g = geom_.node(n.id);
+		d["dir"] = g && !g->legs.empty() ? gv(g->legs[0].dir) : Vector2(1, 0);
+		out.push_back(d);
+	}
+	return out;
+}
+
+Array RoadEditor::get_problems() {
+	ensure_network();
+	Array out;
+	Array net;
+	for (const NetProblem &p : net_problems_) {
+		Dictionary d;
+		d["severity"] = "warning";
+		d["code"] = gs(p.code);
+		d["message"] = gs(p.message);
+		d["pos"] = gv(p.pos);
+		d["level"] = p.level;
+		d["segments"] = PackedInt64Array();
+		PackedInt64Array nodes;
+		nodes.push_back(p.node);
+		d["nodes"] = nodes;
+		net.push_back(d);
+	}
 	for (const Problem &p : problems_) {
 		Dictionary d;
 		d["severity"] = p.severity == Severity::Error ? "error" : "warning";
@@ -580,11 +692,20 @@ Array RoadEditor::get_problems() {
 		d["nodes"] = nodes;
 		out.push_back(d);
 	}
-	return out;
+	// Errors first (problems_ is sorted that way), then network warnings.
+	Array sorted;
+	for (int64_t i = 0; i < out.size(); ++i) {
+		if (String(Dictionary(out[i])["severity"]) == "error") sorted.push_back(out[i]);
+	}
+	for (int64_t i = 0; i < out.size(); ++i) {
+		if (String(Dictionary(out[i])["severity"]) != "error") sorted.push_back(out[i]);
+	}
+	for (int64_t i = 0; i < net.size(); ++i) sorted.push_back(net[i]);
+	return sorted;
 }
 
 Dictionary RoadEditor::get_stats() {
-	ensure_geometry();
+	ensure_network();
 	int junctions = 0;
 	for (const auto &kv : geom_.nodes()) junctions += kv.second.kind == NodeKind::Junction && kv.second.legs.size() >= 3;
 	int64_t lanes = 0, verts = 0;
@@ -592,6 +713,7 @@ Dictionary RoadEditor::get_stats() {
 	for (const MeshBatch &b : geom_.meshes()) verts += static_cast<int64_t>(b.vertices.size());
 	int errors = 0, warnings = 0;
 	for (const Problem &p : problems_) (p.severity == Severity::Error ? errors : warnings)++;
+	warnings += static_cast<int>(net_problems_.size());
 	Dictionary d;
 	d["nodes"] = static_cast<int64_t>(doc_.map().nodes().size());
 	d["segments"] = static_cast<int64_t>(doc_.map().segments().size());
@@ -610,6 +732,7 @@ void RoadEditor::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("new_map"), &RoadEditor::new_map);
 	ClassDB::bind_method(D_METHOD("load_demo_town"), &RoadEditor::load_demo_town);
 	ClassDB::bind_method(D_METHOD("load_test_grid", "cols", "rows", "spacing"), &RoadEditor::load_test_grid);
+	ClassDB::bind_method(D_METHOD("load_example", "name"), &RoadEditor::load_example);
 	ClassDB::bind_method(D_METHOD("save_json"), &RoadEditor::save_json);
 	ClassDB::bind_method(D_METHOD("load_json", "text"), &RoadEditor::load_json);
 	ClassDB::bind_method(D_METHOD("revision"), &RoadEditor::revision);
@@ -645,6 +768,9 @@ void RoadEditor::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_no_change", "segment", "edge", "u0", "u1", "block_l2r", "block_r2l"),
 			&RoadEditor::set_no_change);
 
+	ClassDB::bind_method(D_METHOD("set_junction_control", "node", "control", "priority"), &RoadEditor::set_junction_control);
+	ClassDB::bind_method(D_METHOD("set_spawner", "node", "spawner"), &RoadEditor::set_spawner);
+
 	ClassDB::bind_method(D_METHOD("presets"), &RoadEditor::presets);
 	ClassDB::bind_method(D_METHOD("params_of_profile", "profile"), &RoadEditor::params_of_profile);
 	ClassDB::bind_method(D_METHOD("profile_from_params", "params"), &RoadEditor::profile_from_params);
@@ -669,6 +795,20 @@ void RoadEditor::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_connectors"), &RoadEditor::get_connectors);
 	ClassDB::bind_method(D_METHOD("get_problems"), &RoadEditor::get_problems);
 	ClassDB::bind_method(D_METHOD("get_stats"), &RoadEditor::get_stats);
+	ClassDB::bind_method(D_METHOD("get_spawners"), &RoadEditor::get_spawners);
+
+	ClassDB::bind_method(D_METHOD("sim_reset", "seed"), &RoadEditor::sim_reset);
+	ClassDB::bind_method(D_METHOD("sim_advance", "real_delta", "speed", "budget_ms"), &RoadEditor::sim_advance);
+	ClassDB::bind_method(D_METHOD("sim_step", "ticks"), &RoadEditor::sim_step);
+	ClassDB::bind_method(D_METHOD("sim_set_demand", "multiplier"), &RoadEditor::sim_set_demand);
+	ClassDB::bind_method(D_METHOD("sim_set_max_vehicles", "cap"), &RoadEditor::sim_set_max_vehicles);
+	ClassDB::bind_method(D_METHOD("sim_car_buffer", "level", "car_scale"), &RoadEditor::sim_car_buffer);
+	ClassDB::bind_method(D_METHOD("sim_car_count", "level"), &RoadEditor::sim_car_count);
+	ClassDB::bind_method(D_METHOD("sim_pick_car", "pos", "radius", "level"), &RoadEditor::sim_pick_car);
+	ClassDB::bind_method(D_METHOD("sim_car_info", "id"), &RoadEditor::sim_car_info);
+	ClassDB::bind_method(D_METHOD("sim_stats"), &RoadEditor::sim_stats);
+	ClassDB::bind_method(D_METHOD("sim_state_hash"), &RoadEditor::sim_state_hash);
+	ClassDB::bind_method(D_METHOD("sim_golden_check"), &RoadEditor::sim_golden_check);
 }
 
 } // namespace godot

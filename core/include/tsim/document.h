@@ -93,6 +93,12 @@ public:
 	// Paints (or with both flags false, clears) a no-change zone.
 	void set_no_change(SegmentId id, int edge, double u0, double u1, bool block_l2r, bool block_r2l);
 
+	// --- Junctions and demand (M2) ------------------------------------------
+	// Priority segments not at this node are dropped.
+	void set_junction_control(NodeId id, JunctionControl control, const std::vector<SegmentId> &priority);
+	// Replaces the node's spawn / sink point (enabled = false removes it).
+	void set_spawner(NodeId id, const Spawner &spawner);
+
 	// Fresh lane IDs for a profile template.
 	Profile instantiate(const Profile &proto);
 

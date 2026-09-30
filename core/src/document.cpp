@@ -412,6 +412,13 @@ NodeId Document::split_segment(SegmentId id, double u) {
 
 	put_segment(a);
 	put_segment(b);
+	// The far node's leg is now segment b.
+	const RoadNode *far = map_.node(seg.to);
+	if (far && far->is_priority(id)) {
+		RoadNode n = *far;
+		std::replace(n.priority.begin(), n.priority.end(), id, b.id);
+		put_node(n);
+	}
 	return mid.id;
 }
 
@@ -508,6 +515,14 @@ void Document::delete_segment(SegmentId id) {
 	const NodeId a = s->from;
 	const NodeId b = s->to;
 	erase_segment(id);
+	for (NodeId end : { a, b }) {
+		const RoadNode *n = map_.node(end);
+		if (n && n->is_priority(id)) {
+			RoadNode c = *n;
+			c.priority.erase(std::remove(c.priority.begin(), c.priority.end(), id), c.priority.end());
+			put_node(c);
+		}
+	}
 	remove_if_isolated(a);
 	remove_if_isolated(b);
 }
@@ -671,8 +686,9 @@ void Document::set_level(SegmentId id, int level) {
 		const RoadNode n = *map_.node(*end);
 		if (map_.segments_at(n.id).size() > 1) {
 			// Shared with roads on the old level: this road gets its own node.
-			RoadNode copy = n;
+			RoadNode copy;
 			copy.id = map_.alloc_node_id();
+			copy.pos = n.pos;
 			copy.level = level;
 			put_node(copy);
 			*end = copy.id;
@@ -742,6 +758,45 @@ void Document::set_no_change(SegmentId id, int edge, double u0, double u1, bool 
 	}
 	s.no_change = merged;
 	put_segment(s);
+}
+
+void Document::set_junction_control(NodeId id, JunctionControl control, const std::vector<SegmentId> &priority) {
+	const RoadNode *orig = map_.node(id);
+	if (!orig) {
+		return;
+	}
+	Scope scope(*this, "Change junction control");
+	RoadNode n = *orig;
+	n.control = control;
+	n.priority.clear();
+	const std::vector<SegmentId> here = map_.segments_at(id);
+	for (SegmentId s : priority) {
+		if (std::find(here.begin(), here.end(), s) != here.end() && !n.is_priority(s)) {
+			n.priority.push_back(s);
+		}
+	}
+	std::sort(n.priority.begin(), n.priority.end());
+	put_node(n);
+}
+
+void Document::set_spawner(NodeId id, const Spawner &spawner) {
+	const RoadNode *orig = map_.node(id);
+	if (!orig) {
+		return;
+	}
+	Scope scope(*this, spawner.enabled ? "Change spawn point" : "Remove spawn point");
+	RoadNode n = *orig;
+	n.spawner = spawner.enabled ? spawner : Spawner{};
+	n.spawner.rate = std::clamp(n.spawner.rate, 0.0, 5000.0);
+	std::vector<OdWeight> od;
+	for (const OdWeight &w : n.spawner.od) {
+		if (w.to != id && map_.node(w.to) && w.weight >= 0.0 && w.weight != 1.0) od.push_back(w);
+	}
+	std::sort(od.begin(), od.end(), [](const OdWeight &a, const OdWeight &b) { return a.to < b.to; });
+	od.erase(std::unique(od.begin(), od.end(), [](const OdWeight &a, const OdWeight &b) { return a.to == b.to; }),
+			od.end());
+	n.spawner.od = od;
+	put_node(n);
 }
 
 } // namespace tsim

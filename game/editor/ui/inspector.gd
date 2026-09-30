@@ -1,11 +1,13 @@
 class_name Inspector
 extends PanelContainer
-## Right-hand inspector for the selected road or node. Widgets are built once
-## and filled without firing signals, so editing a field never loses focus.
+## Right-hand inspector for the selected road, node or car. Widgets are built
+## once and filled without firing signals, so editing a field never loses focus.
 
 const RULES := ["disallowed", "allowed", "turn_lane"]
 const RULE_LABELS := ["No turn", "Allowed", "Turn lane"]
 const MEDIANS := ["none", "painted", "raised"]
+const CONTROLS := ["right_hand", "priority_road", "all_way_stop"]
+const CONTROL_LABELS := ["Right-hand priority", "Priority road", "All-way stop"]
 
 var editor: MapEditor
 
@@ -40,6 +42,21 @@ var _end_rows: Array = [] # [{box, title, left, right, length}]
 
 # Node widgets
 var _node_info: Label
+var _control_box: VBoxContainer
+var _control: OptionButton
+var _legs_box: VBoxContainer
+var _legs_hint: Label
+var _spawn_box: VBoxContainer
+var _spawn_on: CheckBox
+var _spawn_rate: SpinBox
+var _spawn_sink: CheckBox
+var _od_box: GridContainer
+var _od_scroll: ScrollContainer
+var _od_hint: Label
+
+# Car widgets
+var _car_box: VBoxContainer
+var _car_info: Label
 
 
 func _ready() -> void:
@@ -58,6 +75,7 @@ func _ready() -> void:
 	outer.add_child(_empty)
 	_build_segment(outer)
 	_build_node(outer)
+	_build_car(outer)
 	_multi_box = VBoxContainer.new()
 	_multi_label = Label.new()
 	_multi_box.add_child(_multi_label)
@@ -214,12 +232,69 @@ func _build_segment(outer: VBoxContainer) -> void:
 
 func _build_node(outer: VBoxContainer) -> void:
 	_node_box = VBoxContainer.new()
+	_node_box.add_theme_constant_override("separation", 4)
 	outer.add_child(_node_box)
 	_node_info = Label.new()
 	_node_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_node_info.custom_minimum_size = Vector2(280, 0)
 	_node_box.add_child(_node_info)
+
+	_control_box = VBoxContainer.new()
+	_control_box.add_child(EditorUI.section("Junction control"))
+	_control = _option(_control_box, CONTROL_LABELS, func(_i: int) -> void: _set_control())
+	_legs_hint = Label.new()
+	_legs_hint.text = "Main road (has right of way):"
+	_legs_hint.add_theme_color_override("font_color", Color(0.75, 0.78, 0.82))
+	_control_box.add_child(_legs_hint)
+	_legs_box = VBoxContainer.new()
+	_control_box.add_child(_legs_box)
+	_node_box.add_child(_control_box)
+
+	_spawn_box = VBoxContainer.new()
+	_spawn_box.add_child(EditorUI.section("Spawn point"))
+	_spawn_on = CheckBox.new()
+	_spawn_on.text = "Traffic enters and leaves the map here"
+	_spawn_on.focus_mode = Control.FOCUS_NONE
+	_spawn_on.toggled.connect(func(_on: bool) -> void:
+		if not _updating:
+			_set_spawner())
+	_spawn_box.add_child(_spawn_on)
+	_spawn_rate = _spin(_row(_spawn_box, "Cars in"), 0, 5000, 50, "/h", func(_v: float) -> void: _set_spawner())
+	_spawn_sink = CheckBox.new()
+	_spawn_sink.text = "Cars may leave the map here"
+	_spawn_sink.focus_mode = Control.FOCUS_NONE
+	_spawn_sink.toggled.connect(func(_on: bool) -> void:
+		if not _updating:
+			_set_spawner())
+	_spawn_box.add_child(_spawn_sink)
+	_od_hint = Label.new()
+	_od_hint.text = "Share of trips to each destination:"
+	_od_hint.add_theme_color_override("font_color", Color(0.75, 0.78, 0.82))
+	_spawn_box.add_child(_od_hint)
+	_od_scroll = ScrollContainer.new()
+	_od_scroll.custom_minimum_size = Vector2(280, 0)
+	_od_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_od_box = GridContainer.new()
+	_od_box.columns = 2
+	_od_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_od_scroll.add_child(_od_box)
+	_spawn_box.add_child(_od_scroll)
+	_node_box.add_child(_spawn_box)
 	_delete_button(_node_box)
+
+
+func _build_car(outer: VBoxContainer) -> void:
+	_car_box = VBoxContainer.new()
+	outer.add_child(_car_box)
+	_car_info = Label.new()
+	_car_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_car_info.custom_minimum_size = Vector2(280, 0)
+	_car_box.add_child(_car_info)
+	var hint := Label.new()
+	hint.text = "The route is drawn on the map. Esc deselects."
+	hint.add_theme_font_size_override("font_size", 11)
+	hint.add_theme_color_override("font_color", Color(0.6, 0.62, 0.65))
+	_car_box.add_child(hint)
 
 
 # --- refresh --------------------------------------------------------------------------
@@ -230,17 +305,21 @@ func refresh() -> void:
 	var sel := editor.selection
 	var n_seg: int = sel.segments.size()
 	var n_node: int = sel.nodes.size()
+	var car: bool = editor.sim != null and editor.sim.selected_car != 0 and n_seg + n_node == 0
+	_car_box.visible = car
 	_segment_box.visible = n_seg == 1 and n_node == 0
 	_node_box.visible = n_node == 1 and n_seg == 0
 	_multi_box.visible = n_seg + n_node > 1
-	_empty.visible = n_seg + n_node == 0
-	if _empty.visible:
+	_empty.visible = n_seg + n_node == 0 and not car
+	if car:
+		refresh_car()
+	elif _empty.visible:
 		_seg = 0
 		_node = 0
 		var st: Dictionary = editor.road.get_stats()
 		_title.text = "Map"
-		_empty.text = "%d roads · %d junctions · %d lanes\nGeometry %.1f ms · %d vertices\n\nSelect a road or node to edit it. Press R to draw a road, C for a curve, L to paint lanes." % [
-			st.segments, st.junctions, st.lanes, st.build_ms, st.vertices]
+		_empty.text = "%d roads · %d junctions · %d lanes · %d spawn points\nGeometry %.1f ms · %d vertices\n\nSelect a road or node to edit it. Press R to draw a road, C for a curve, L to paint lanes, N to add spawn points. Press Space to run the traffic and click a car to follow it." % [
+			st.segments, st.junctions, st.lanes, editor.road.get_spawners().size(), st.build_ms, st.vertices]
 	elif _multi_box.visible:
 		_title.text = "Selection"
 		_multi_label.text = "%d road%s, %d node%s" % [n_seg, "" if n_seg == 1 else "s", n_node, "" if n_node == 1 else "s"]
@@ -256,10 +335,130 @@ func _fill_node(id: int) -> void:
 	var n: Dictionary = editor.road.get_node(id)
 	if n.is_empty():
 		return
+	_updating = true
 	_title.text = "Node %d" % id
 	_node_info.text = "%s · level %+d\nAt %.1f, %.1f m\n%d road%s · %d connector%s" % [
 		String(n.kind).capitalize(), n.level, n.pos.x, n.pos.y, n.segments.size(),
 		"" if n.segments.size() == 1 else "s", n.connectors, "" if n.connectors == 1 else "s"]
+	# Junction control and the main-road legs.
+	_control_box.visible = n.junction
+	if n.junction:
+		_control.select(CONTROLS.find(n.control))
+		var priority: bool = n.control == "priority_road"
+		_legs_hint.visible = priority
+		_legs_box.visible = priority
+		for c in _legs_box.get_children():
+			c.queue_free()
+		if priority:
+			for leg in n.legs:
+				var cb := CheckBox.new()
+				cb.focus_mode = Control.FOCUS_NONE
+				var name_text := String(leg.name) if String(leg.name) != "" else "Road %d" % leg.segment
+				cb.text = "%s (%s)" % [name_text, _compass(leg.dir)]
+				cb.button_pressed = leg.priority
+				cb.set_meta("segment", leg.segment)
+				cb.toggled.connect(func(_on: bool) -> void:
+					if not _updating:
+						_set_control())
+				_legs_box.add_child(cb)
+	# Spawn point.
+	var sp: Dictionary = n.spawner
+	_spawn_box.visible = n.road_end or sp.enabled
+	_spawn_on.button_pressed = sp.enabled
+	_spawn_rate.value = sp.rate
+	_spawn_rate.editable = sp.enabled
+	_spawn_sink.button_pressed = sp.sink
+	_spawn_sink.disabled = not sp.enabled
+	for c in _od_box.get_children():
+		c.queue_free()
+	var others: Array = []
+	if sp.enabled:
+		for o in editor.road.get_spawners():
+			if int(o.id) != id and o.sink:
+				others.append(o)
+	_od_hint.visible = not others.is_empty()
+	_od_scroll.visible = not others.is_empty()
+	_od_scroll.custom_minimum_size = Vector2(280, minf(others.size() * 34.0, 170.0))
+	var weights := {}
+	for w in sp.od:
+		weights[int(w.to)] = float(w.weight)
+	for o in others:
+		var l := Label.new()
+		l.text = "To node %d" % o.id
+		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_od_box.add_child(l)
+		var w := SpinBox.new()
+		w.min_value = 0
+		w.max_value = 20
+		w.step = 0.5
+		w.value = weights.get(int(o.id), 1.0)
+		w.set_meta("to", int(o.id))
+		w.value_changed.connect(func(_v: float) -> void:
+			if not _updating:
+				_set_spawner())
+		_od_box.add_child(w)
+	_updating = false
+
+
+static func _compass(dir: Vector2) -> String:
+	# Screen y points down, so north is -y.
+	var names := ["east", "south-east", "south", "south-west", "west", "north-west", "north", "north-east"]
+	var i := int(roundf(fposmod(dir.angle(), TAU) / (TAU / 8.0))) % 8
+	return names[i]
+
+
+func _set_control() -> void:
+	var prio := PackedInt64Array()
+	for cb in _legs_box.get_children():
+		if cb is CheckBox and cb.button_pressed and not cb.is_queued_for_deletion():
+			prio.append(int(cb.get_meta("segment")))
+	var control: String = CONTROLS[_control.selected]
+	if control == "priority_road" and prio.is_empty():
+		# Default main road: the two legs closest to a straight line.
+		var legs: Array = editor.road.get_node(_node).legs
+		var best := -2.0
+		var pair := []
+		for i in legs.size():
+			for j in range(i + 1, legs.size()):
+				var straightness: float = -(legs[i].dir as Vector2).dot(legs[j].dir)
+				if straightness > best:
+					best = straightness
+					pair = [legs[i].segment, legs[j].segment]
+		prio = PackedInt64Array(pair)
+	editor.road.set_junction_control(_node, control, prio)
+
+
+func _set_spawner() -> void:
+	var od: Array = []
+	for w in _od_box.get_children():
+		if w is SpinBox and not w.is_queued_for_deletion():
+			od.append({"to": int(w.get_meta("to")), "weight": w.value})
+	editor.road.set_spawner(_node, {
+		"enabled": _spawn_on.button_pressed,
+		"rate": _spawn_rate.value,
+		"sink": _spawn_sink.button_pressed,
+		"od": od,
+	})
+
+
+func refresh_car() -> void:
+	var c: Dictionary = editor.sim.car_info
+	if c.is_empty():
+		return
+	_title.text = "Car %d" % c.id
+	var where := "in junction" if c.in_junction else ("on " + (String(c.road) if String(c.road) != "" else "road %d" % c.segment))
+	var lines := [
+		"%s, %s" % [String(c.state).capitalize(), where],
+		"Speed %.0f km/h (wants %.0f) · accel %+.1f m/s²" % [c.speed_kmh, c.desired_kmh, c.accel],
+		"From node %d to node %d · %d turn%s left" % [c.origin, c.dest, c.turns_left, "" if int(c.turns_left) == 1 else "s"],
+		"Trip %s · %.0f m driven" % [EditorUI.clock(c.trip_time), c.distance],
+		"Critical gap %.1f s" % c.critical_gap,
+	]
+	if float(c.stopped_for) > 0.5:
+		lines.append("Stopped for %.0f s" % c.stopped_for)
+	if int(c.blocker) != 0:
+		lines.append("Waiting for car %d" % c.blocker)
+	_car_info.text = "\n".join(lines)
 
 
 func _fill_segment(id: int) -> void:
