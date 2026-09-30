@@ -36,7 +36,7 @@ func input(event: InputEvent) -> bool:
 	if event is InputEventMouseMotion:
 		if _painting:
 			_u1 = editor.road.segment_u_at(_seg, mouse)
-			editor.ui.set_status("%s zone: %.0f%% → %.0f%% of the road" % ["Erasing" if _erase else "Painting", _u0 * 100, _u1 * 100])
+			editor.ui.set_status("%s zone: %.0f%% to %.0f%% of the road" % ["Erasing" if _erase else "Painting", _u0 * 100, _u1 * 100])
 			return true
 		_hover = editor.road.pick(mouse, editor.pick_radius() * 0.3, editor.level)
 		if _hover.type == "node":

@@ -30,6 +30,8 @@ python3 build.py serve            # http://localhost:8060
 
 The web build is single-threaded, so it needs no special server headers (no COOP/COEP).
 
+**Play it in the browser:** every push to `main` exports the web build and publishes it on GitHub Pages (`.github/workflows/pages.yml`), at https://czoka.github.io/traffic-sim/. The download is about 50 MB (most of it Godot's side module, which GDExtension needs on the web); the editor autosaves to browser storage.
+
 ## The road editor (M1)
 
 The layout is a tool palette on the left, an inspector on the right, and a bottom bar with undo/redo, level, snapping, connectors, status and problems.
@@ -232,4 +234,4 @@ CI (`.github/workflows/ci.yml`) builds Linux, Windows (MSVC) and macOS (Apple Si
 * Roads that cross mid-segment don't join automatically; a junction is made by snapping an end onto a road or node. Crossings are flagged in the problems panel.
 * The whole map's geometry is rebuilt after each edit (about 10 ms on the 56-junction grid). Incremental rebuilds can come later if bigger maps need them.
 * Levels are stored and kept apart, but ramps, bridges and level shadows are M4.
-* The web build (including the browser file picker) hasn't been exported and tested yet. The editor has only been run on Linux so far (headless and under Xvfb).
+* The web build has been exported and run in headless Chromium (editor, examples, sim at 16x, autosave); the browser file picker and real-hardware performance are untested. The desktop editor has only been run on Linux so far (headless and under Xvfb).
