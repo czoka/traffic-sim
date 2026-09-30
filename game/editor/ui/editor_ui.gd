@@ -163,7 +163,7 @@ func _build_palette(root: Control) -> void:
 	_button("Export…", editor.export_map, files)
 	box.add_child(files)
 	var demos := MenuButton.new()
-	demos.text = "Examples ▾"
+	demos.text = "Examples"
 	demos.flat = false
 	demos.focus_mode = Control.FOCUS_NONE
 	demos.get_popup().add_item("Demo town", 0)
@@ -222,7 +222,7 @@ func refresh_presets() -> void:
 		_preset.add_item(p.name)
 		_preset_values.append({"preset": p.name})
 	for p in editor.user_presets:
-		_preset.add_item("★ " + String(p.name))
+		_preset.add_item("* " + String(p.name))
 		_preset_values.append({"profile": p.profile})
 	for i in _preset.item_count:
 		if _preset.get_item_text(i) == editor.road_template_name:
@@ -246,8 +246,8 @@ func _build_bottom_bar(root: Control) -> void:
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	panel.add_child(bar)
-	_undo = _button("↶ Undo", editor.undo, bar)
-	_redo = _button("↷ Redo", editor.redo, bar)
+	_undo = _button("Undo", editor.undo, bar)
+	_redo = _button("Redo", editor.redo, bar)
 	bar.add_child(VSeparator.new())
 	var ll := Label.new()
 	ll.text = "Level"
@@ -315,7 +315,7 @@ func _build_sim_bar(root: Control) -> void:
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	panel.add_child(bar)
-	_play = _button("▶ Play", sim.toggle, bar)
+	_play = _button("Play", sim.toggle, bar)
 	_play.custom_minimum_size = Vector2(90, 0)
 	_play.tooltip_text = "Play / pause (Space). Editing pauses; Play resumes with the changes."
 	var step := _button("Step", sim.step, bar)
@@ -384,7 +384,7 @@ func _build_sim_bar(root: Control) -> void:
 func _refresh_sim_buttons() -> void:
 	if _play == null:
 		return
-	_play.text = "⏸ Pause" if editor.sim.playing else "▶ Play"
+	_play.text = "Pause" if editor.sim.playing else "Play"
 	_speed_opt.select(editor.sim.speed_index)
 
 
@@ -473,7 +473,7 @@ func refresh() -> void:
 	for p in _problems:
 		if p.severity == "error":
 			errors += 1
-		var icon := "⛔ " if p.severity == "error" else "⚠ "
+		var icon := "Error: " if p.severity == "error" else "Warning: "
 		_problems_list.add_item(icon + String(p.message))
 	var warnings := _problems.size() - errors
 	if _problems.is_empty():

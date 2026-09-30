@@ -211,8 +211,8 @@ func _build_segment(outer: VBoxContainer) -> void:
 	save.pressed.connect(_save_preset)
 	pr.add_child(save)
 	box.add_child(pr)
-	_forward = _spin(_row(box, "Lanes →"), 0, 6, 1, "", func(v: float) -> void: _set_param("forward", int(v)))
-	_backward = _spin(_row(box, "Lanes ←"), 0, 4, 1, "", func(v: float) -> void: _set_param("backward", int(v)))
+	_forward = _spin(_row(box, "Lanes forward"), 0, 6, 1, "", func(v: float) -> void: _set_param("forward", int(v)))
+	_backward = _spin(_row(box, "Lanes back"), 0, 4, 1, "", func(v: float) -> void: _set_param("backward", int(v)))
 	_lane_width = _spin(_row(box, "Lane width"), 2.5, 5.0, 0.05, "m", func(v: float) -> void: _set_param("lane_width", v))
 	_lane_width.custom_arrow_step = 0.25
 	_flip = Button.new()
@@ -554,7 +554,7 @@ func _fill_segment(id: int) -> void:
 		_checks[k].set_pressed_no_signal(bool(_params.get(k, false)))
 	var parts: Array = []
 	for l in s.profile.lanes:
-		var arrow := " →" if l.dir == "forward" else (" ←" if l.dir == "backward" else "")
+		var arrow := " fwd" if l.dir == "forward" else (" back" if l.dir == "backward" else "")
 		parts.append("%s%s %s m" % [String(l.type), arrow, str(snappedf(float(l.width), 0.01))])
 	_lanes_label.text = "Left to right: " + " | ".join(parts)
 	for e in 2:
@@ -580,7 +580,7 @@ func _refresh_preset_items() -> void:
 	for p in editor.road.presets():
 		_preset.add_item(p.name)
 	for p in editor.user_presets:
-		_preset.add_item("★ " + String(p.name))
+		_preset.add_item("* " + String(p.name))
 	_preset.select(0)
 
 
@@ -870,7 +870,7 @@ func _fill_m3_node(n: Dictionary) -> void:
 				if not _updating:
 					_set_spawner())
 			row.add_child(dw)
-			_small_button(row, "✕", func() -> void:
+			_small_button(row, "×", func() -> void:
 				row.queue_free()
 				_set_spawner.call_deferred())
 			row.set_meta("coach", cl)
@@ -900,7 +900,7 @@ func _fill_phases() -> void:
 			_plan.phases[i]["green"] = v
 			_send_plan())
 		head.add_child(g)
-		_small_button(head, "✕", func() -> void:
+		_small_button(head, "×", func() -> void:
 			var list: Array = _plan.phases
 			list.remove_at(i)
 			_plan["phases"] = list
@@ -916,7 +916,7 @@ func _fill_phases() -> void:
 				if int(a.segment) == int(b.segment):
 					continue
 				var l := Label.new()
-				l.text = "%s → %s" % [_compass(a.dir), _compass(b.dir)]
+				l.text = "%s to %s" % [_compass(a.dir), _compass(b.dir)]
 				l.tooltip_text = "From %s to %s" % [_leg_name(int(a.segment)), _leg_name(int(b.segment))]
 				l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				l.add_theme_font_size_override("font_size", 12)
@@ -1017,7 +1017,7 @@ func _fill_routes() -> void:
 			_depot.routes[i]["name"] = t
 			_set_depot())
 		head.add_child(name_edit)
-		_small_button(head, "✕", func() -> void:
+		_small_button(head, "×", func() -> void:
 			var list: Array = _depot.routes
 			list.remove_at(i)
 			_depot["routes"] = list
@@ -1050,7 +1050,7 @@ func _fill_routes() -> void:
 		var stop_names: Array = []
 		for sid in r.stops:
 			stop_names.append(names.get(int(sid), "?"))
-		var line := "Stops: " + " → ".join(stop_names)
+		var line := "Stops: " + ", ".join(stop_names)
 		if stats.has(int(r.id)):
 			var rs: Dictionary = stats[int(r.id)]
 			line += "\nRound trip %.0f min · needs %d bus%s · %d out now · %d runs" % [
@@ -1135,5 +1135,5 @@ func _fill_stops(seg: Dictionary) -> void:
 				stop["bays"] = int(v)
 				editor.road.set_stop(_seg, stop))
 			row.add_child(bays)
-		_small_button(row, "✕", func() -> void: editor.road.remove_stop(_seg, int(stop.id)))
+		_small_button(row, "×", func() -> void: editor.road.remove_stop(_seg, int(stop.id)))
 		_stops_list.add_child(row)

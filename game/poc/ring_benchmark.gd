@@ -166,7 +166,7 @@ func _report_text() -> String:
 		lines.append("%-20s %6.1f %7.2f %7.2f %8.1f %7.1fx" % [
 			r.name, r.fps, r.frame_p95_ms, r.sim_ms_per_frame_avg, r.tick_us, r.speed_achieved])
 	var g := _gate()
-	lines.append("Determinism: %s   2,000 cars ≥ %d fps: %s" % [
+	lines.append("Determinism: %s   2,000 cars >= %d fps: %s" % [
 		"PASS" if g.determinism_ok else "FAIL", int(GATE_MIN_FPS), "PASS" if g.fps_2000_ok else "FAIL"])
 	return "\n".join(lines)
 
