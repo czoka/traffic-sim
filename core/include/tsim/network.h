@@ -73,6 +73,7 @@ struct NetLane {
 	bool sink = false; // ends at a spawn point that accepts vehicles
 	int32_t approach_of = -1; // junction this lane ends at (if it controls entry)
 	bool merge_end = false; // lane ends by merging into its neighbour (lane drop)
+	bool ring = false; // circulating lane of a roundabout
 
 	// Connectors
 	NodeId node = kNoId;
@@ -81,11 +82,26 @@ struct NetLane {
 	TurnKind turn = TurnKind::Straight;
 	int leg = -1; // index of the incoming leg at the node
 	std::vector<Conflict> conflicts;
+	double route_penalty = 0.0; // s added by routing
+	int32_t movement = -1; // signal movement at a signalized junction
 
 	// Graph: road lane -> its connectors; connector -> its road lane.
 	std::vector<int32_t> next;
 	std::vector<int32_t> prev;
 };
+
+// A fixed-time signal program in ticks (M3).
+struct NetSignal {
+	bool enabled = false;
+	std::vector<int64_t> green; // per phase
+	int64_t amber = 30, all_red = 20, offset = 0, cycle = 0;
+	// state[phase][movement]: 0 red, 1 green, 2 green but yield (permissive)
+	std::vector<std::vector<uint8_t>> state;
+	std::vector<uint8_t> right_on_red; // per movement: EU flashing green arrow
+	std::vector<std::pair<SegmentId, SegmentId>> movements; // (from leg, to leg)
+};
+
+enum class SignalLight : uint8_t { Red = 0, Green = 1, GreenYield = 2, Amber = 3 };
 
 struct NetJunction {
 	NodeId node = kNoId;
@@ -96,6 +112,60 @@ struct NetJunction {
 	std::vector<int32_t> approaches; // road lanes that end here
 	bool arbitrated = false; // some connectors conflict: entry needs a grant
 	bool joint = false; // two roads joined end to end (continuation or taper)
+	bool roundabout = false;
+	NetSignal signal;
+	// Light for a movement at a tick (signalized junctions only).
+	SignalLight light(int32_t movement, int64_t tick) const;
+	// Phase index and ticks into it, for display.
+	int phase_at(int64_t tick, int64_t *into = nullptr) const;
+};
+
+struct NetBay {
+	LaneId parking_lane = kNoId;
+	int index = 0;
+	int32_t lane = -1; // travel lane cars park from
+	double s = 0.0; // along that lane
+	Vec2 pos;
+	Vec2 dir;
+	ParkingStyle style = ParkingStyle::Parallel;
+};
+
+struct NetStop {
+	uint32_t id = 0;
+	SegmentId segment = kNoId;
+	StopKind kind = StopKind::Kerbside;
+	std::string name;
+	int32_t lane = -1; // kerb-side lane of the direction it serves
+	double s = 0.0;
+	int bays = 1;
+	Vec2 pos; // where a bus waits
+	Vec2 dir;
+};
+
+struct NetRoute {
+	uint32_t id = 0;
+	std::string name;
+	uint32_t color = 0;
+	std::vector<int32_t> stops; // indices into Network::stops
+	double headway = 600.0;
+	bool loop = false;
+};
+
+struct NetDepot {
+	NodeId node = kNoId;
+	std::string name;
+	Vec2 pos;
+	int level = 0;
+	int capacity = 20;
+	std::vector<int32_t> spawn_lanes, sink_lanes;
+	std::vector<NetRoute> routes;
+};
+
+struct NetCoachLine {
+	uint32_t id = 0;
+	NodeId entry = kNoId, exit = kNoId;
+	double per_hour = 2.0;
+	double dwell = 600.0;
 };
 
 struct NetSpawner {
@@ -103,7 +173,8 @@ struct NetSpawner {
 	Vec2 pos;
 	int level = 0;
 	Spawner config;
-	std::vector<int32_t> spawn_lanes; // road lanes leaving the map edge
+	std::vector<int32_t> spawn_lanes; // road lanes leaving the map edge (cars)
+	std::vector<int32_t> bike_lanes; // where bicycles enter
 	std::vector<int32_t> sink_lanes; // road lanes arriving at it
 };
 
@@ -112,6 +183,12 @@ public:
 	std::vector<NetLane> lanes;
 	std::vector<NetJunction> junctions; // ascending node id
 	std::vector<NetSpawner> spawners; // ascending node id, enabled road ends only
+	std::vector<NetBay> bays;
+	std::vector<NetStop> stops;
+	std::vector<NetDepot> depots; // ascending node id
+	std::vector<NetCoachLine> coach_lines;
+	int32_t main_station = -1; // index into stops
+	int32_t stop_index(uint32_t id) const;
 	double max_speed = 13.9; // fastest speed limit, for the routing heuristic
 
 	int32_t find(const LaneKey &k) const;
@@ -163,9 +240,12 @@ private:
 	};
 	struct NodePart {
 		uint64_t sig = 0;
+		std::vector<NetLane> ring; // roundabout lanes; left/right are local
 		std::vector<NetLane> connectors; // conflicts[].other and leg are local
 		bool arbitrated = false;
 		bool joint = false;
+		bool roundabout = false;
+		std::vector<std::pair<SegmentId, SegmentId>> movements; // signalized junctions
 	};
 	std::map<SegmentId, SegmentPart> segments_;
 	std::map<NodeId, NodePart> nodes_;

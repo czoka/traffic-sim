@@ -21,8 +21,14 @@ const char *node_kind_name(NodeKind k) {
 			return "taper";
 		case NodeKind::Junction:
 			return "junction";
+		case NodeKind::Roundabout:
+			return "roundabout";
 	}
 	return "isolated";
+}
+
+LaneId ring_lane_id(SegmentId leg, bool leg_at_start, int lane) {
+	return 0x80000000u | ((leg & 0x07FFFFFFu) << 4) | (leg_at_start ? 8u : 0u) | (static_cast<uint32_t>(lane) & 7u);
 }
 
 const char *turn_kind_name(TurnKind k) {
@@ -483,6 +489,7 @@ void RoadGeometry::build(const RoadMap &map) {
 			g.dir = l.dir;
 			g.base_width = l.width;
 			g.profile_index = static_cast<int>(i);
+			g.parking = l.parking;
 			c.lanes.push_back(g);
 		}
 		c.recompute_groups();
@@ -506,7 +513,9 @@ void RoadGeometry::build(const RoadMap &map) {
 		std::sort(g.legs.begin(), g.legs.end(),
 				[](const Leg &a, const Leg &b) { return angle_of(a.dir) < angle_of(b.dir); });
 		const size_t deg = g.legs.size();
-		if (deg == 0) {
+		if (n.roundabout.enabled) {
+			g.kind = NodeKind::Roundabout;
+		} else if (deg == 0) {
 			g.kind = NodeKind::Isolated;
 		} else if (deg == 1) {
 			g.kind = NodeKind::End;
@@ -519,7 +528,7 @@ void RoadGeometry::build(const RoadMap &map) {
 		for (const Leg &leg : g.legs) {
 			SegCtx &c = ctx[leg.seg];
 			c.end_kind[leg.at_start ? 0 : 1] = g.kind;
-			c.stop_at[leg.at_start ? 0 : 1] = g.kind == NodeKind::Junction && deg >= 3;
+			c.stop_at[leg.at_start ? 0 : 1] = (g.kind == NodeKind::Junction && deg >= 3) || g.kind == NodeKind::Roundabout;
 		}
 	}
 
@@ -666,6 +675,16 @@ void RoadGeometry::build(const RoadMap &map) {
 	for (auto &kv : nodes_) {
 		NodeGeom &g = kv.second;
 		for (Leg &leg : g.legs) leg_widths(leg);
+		if (g.kind == NodeKind::Roundabout) {
+			// Legs stop a little outside the circulating carriageway.
+			const double r = map.node(g.id)->roundabout.radius;
+			for (Leg &leg : g.legs) {
+				const SegCtx &c = ctx[leg.seg];
+				leg.trim = std::clamp(r + 6.0, 1.0, 0.45 * c.length);
+				ctx[leg.seg].trim[leg.at_start ? 0 : 1] = leg.trim;
+			}
+			continue;
+		}
 		if (g.kind != NodeKind::Junction) continue;
 		const size_t deg = g.legs.size();
 		for (size_t i = 0; i < deg; ++i) {
@@ -925,14 +944,139 @@ void RoadGeometry::build(const RoadMap &map) {
 			}
 			MeshSet::thick(paint, pts, sg.n, kLineWidth, kWhite);
 		}
-		// Parking bay ticks every 6 m.
+		// Parking bays (M3): parallel, 45 degree or perpendicular, never within
+		// 10 m of a junction; yellow kerb line where parking is not allowed.
 		for (size_t i = 0; i < nl; ++i) {
-			if (c.lanes[i].type != LaneType::Parking) continue;
-			for (size_t k = 0; k < ns; ++k) {
-				if (std::fmod(sg.s[k], 6.0) >= 2.0) continue;
-				const auto &e = sg.edge(k, i);
-				MeshSet::path(paint, { sg.at(k, e.first), sg.at(k, e.second) }, 0.12, kWhite);
+			const GeomLane &pl = c.lanes[i];
+			if (pl.type != LaneType::Parking) continue;
+			const bool right_side = i >= c.right_start;
+			// Travel direction of the nearest directional lane towards the median.
+			LaneDir travel = right_side ? LaneDir::Forward : LaneDir::Backward;
+			for (size_t k = 1; k < nl; ++k) {
+				const size_t j = right_side ? (i >= k ? i - k : nl) : i + k;
+				if (j >= nl) break;
+				if (is_directional(c.lanes[j].type)) {
+					travel = c.lanes[j].dir;
+					break;
+				}
 			}
+			const double keep[2] = { c.end_kind[0] == NodeKind::Junction || c.end_kind[0] == NodeKind::Roundabout ? 10.0 : 2.0,
+				c.end_kind[1] == NodeKind::Junction || c.end_kind[1] == NodeKind::Roundabout ? 10.0 : 2.0 };
+			const double a = s0 + keep[0], b = s1 - keep[1];
+			const double bay = parking_bay_length(pl.parking);
+			const int count = b > a ? static_cast<int>((b - a) / bay) : 0;
+			const double first = a + 0.5 * ((b - a) - count * bay);
+			auto edges_at = [&](double s, Vec2 &p, Vec2 &nrm, double &lo, double &hi) {
+				c.frame(s, p, nrm);
+				c.cross_section(s, xs);
+				lo = xs[i].first;
+				hi = xs[i].second;
+			};
+			// Kerb side: the lane edge away from the traffic.
+			auto kerb_line = [&](double from, double to) {
+				if (to - from < 0.5) return;
+				std::vector<Vec2> pts, nrms;
+				const int n = std::max(1, static_cast<int>((to - from) / 2.0));
+				for (int k = 0; k <= n; ++k) {
+					const double sk = from + (to - from) * k / n;
+					Vec2 p, nrm;
+					double lo, hi;
+					edges_at(sk, p, nrm, lo, hi);
+					pts.push_back(p + nrm * (right_side ? hi - 0.25 : lo + 0.25));
+					nrms.push_back(nrm);
+				}
+				MeshSet::thick(paint, pts, nrms, 0.15, kYellow);
+			};
+			kerb_line(s0, count > 0 ? first : s1);
+			if (count > 0) kerb_line(first + count * bay, s1);
+			const Vec2 zero{};
+			(void)zero;
+			for (int m = 0; m <= count && count > 0; ++m) {
+				const double sb = first + m * bay;
+				Vec2 p, nrm;
+				double lo, hi;
+				edges_at(sb, p, nrm, lo, hi);
+				const Vec2 tan = tangent_of(nrm);
+				const Vec2 inner = p + nrm * (right_side ? lo : hi);
+				const Vec2 outer = p + nrm * (right_side ? hi : lo);
+				if (pl.parking == ParkingStyle::Angle45) {
+					// Slanted towards the direction of travel.
+					const double depth = hi - lo;
+					const Vec2 fwd = travel == LaneDir::Forward ? tan : tan * -1.0;
+					MeshSet::path(paint, { inner, outer + fwd * depth }, 0.12, kWhite);
+				} else {
+					MeshSet::path(paint, { inner, outer }, 0.12, kWhite);
+				}
+				if (m == count) break;
+				ParkingBay pb;
+				pb.lane = pl.id;
+				pb.index = m;
+				pb.s = sb + 0.5 * bay;
+				pb.style = pl.parking;
+				pb.list_right = right_side;
+				Vec2 pc, nc;
+				double l2, h2;
+				edges_at(pb.s, pc, nc, l2, h2);
+				pb.pos = pc + nc * (0.5 * (l2 + h2));
+				const Vec2 tc = tangent_of(nc);
+				const Vec2 fwd = travel == LaneDir::Forward ? tc : tc * -1.0;
+				const Vec2 to_kerb = right_side ? nc : nc * -1.0;
+				if (pl.parking == ParkingStyle::Parallel) pb.dir = fwd;
+				else if (pl.parking == ParkingStyle::Angle45) pb.dir = (fwd + to_kerb).normalized();
+				else pb.dir = to_kerb;
+				if (pl.parking == ParkingStyle::Angle45) pb.pos = pb.pos + fwd * (0.5 * (h2 - l2));
+				sg.bays.push_back(pb);
+			}
+		}
+
+		// Bus stops (M3): a yellow box on the kerb lane, and a lay-by for bays
+		// and the main station.
+		for (const BusStop &st : seg.stops) {
+			const bool fwd = st.side == LaneDir::Forward;
+			int lane = -1;
+			for (size_t i = 0; i < nl; ++i) {
+				if (!is_travel(c.lanes[i].type) || c.lanes[i].pocket_end >= 0 || c.lanes[i].dir != st.side) continue;
+				if (fwd || lane < 0) lane = static_cast<int>(i); // forward: last in the list; backward: first
+			}
+			if (lane < 0) continue;
+			const double len = st.kind == StopKind::MainStation ? 15.0 * std::max(1, st.bays) + 5.0 : 18.0;
+			const double sc = std::clamp(st.u * c.length, s0 + 0.5 * len + 2.0, std::max(s0 + 0.5 * len + 2.0, s1 - 0.5 * len - 2.0));
+			const double sa = sc - 0.5 * len;
+			const size_t li = static_cast<size_t>(lane);
+			auto side_pts = [&](double off_from_edge, bool outer_edge) {
+				std::vector<Vec2> pts;
+				const int n = std::max(2, static_cast<int>(len / 2.0));
+				for (int k = 0; k <= n; ++k) {
+					const double sk = sa + len * k / n;
+					Vec2 p, nrm;
+					c.frame(sk, p, nrm);
+					c.cross_section(sk, xs);
+					// The kerb side of the lane: right edge for forward, left for backward.
+					const double edge = fwd ? xs[li].second : xs[li].first;
+					const double inner = fwd ? xs[li].first : xs[li].second;
+					const double sign = fwd ? 1.0 : -1.0;
+					pts.push_back(p + nrm * (outer_edge ? edge + sign * off_from_edge : inner + sign * off_from_edge));
+				}
+				return pts;
+			};
+			if (st.kind != StopKind::Kerbside) {
+				// Lay-by 3 m deep beyond the kerb lane, with short tapers.
+				std::vector<Vec2> a = side_pts(0.0, true), b = side_pts(3.0, true);
+				const size_t n = a.size();
+				for (size_t k = 0; k < n; ++k) {
+					const double f = std::min(1.0, std::min(static_cast<double>(k), static_cast<double>(n - 1 - k)) / 2.0);
+					b[k] = a[k] + (b[k] - a[k]) * f;
+				}
+				MeshSet::strip(mesh.get(seg.level, Layer::Asphalt), fwd ? a : b, fwd ? b : a, kAsphalt);
+			}
+			// Yellow box outline on the kerb lane (or in the lay-by). Offsets
+			// are measured outwards, towards the kerb.
+			const std::vector<Vec2> o1 = st.kind == StopKind::Kerbside ? side_pts(-0.3, true) : side_pts(2.7, true);
+			const std::vector<Vec2> o2 = st.kind == StopKind::Kerbside ? side_pts(0.3, false) : side_pts(0.3, true);
+			MeshSet::path(paint, o1, 0.15, kYellow);
+			MeshSet::path(paint, o2, 0.15, kYellow);
+			MeshSet::path(paint, { o1.front(), o2.front() }, 0.15, kYellow);
+			MeshSet::path(paint, { o1.back(), o2.back() }, 0.15, kYellow);
 		}
 	}
 
@@ -1011,6 +1155,245 @@ void RoadGeometry::build(const RoadMap &map) {
 			}
 			continue;
 		}
+		if (g.kind == NodeKind::Roundabout) {
+			const Roundabout &rb = map.node(g.id)->roundabout;
+			const int nr = std::clamp(rb.lanes, 1, 3);
+			const bool turbo = rb.turbo && nr >= 2;
+			const double lane_w = 4.0;
+			const double R = rb.radius;
+			const double island = std::max(3.0, R - lane_w * nr);
+			const Vec2 ctr = g.pos;
+			g.ring_radius = R;
+			g.island_radius = island;
+			auto on_circle = [&](double r, double th) { return ctr + Vec2{ std::cos(th), std::sin(th) } * r; };
+			// Counter-clockwise on screen = decreasing angle in a y-down frame.
+			auto travel_dir = [](double th) { return Vec2{ std::sin(th), -std::cos(th) }; };
+			auto circle = [&](double r, int n) {
+				std::vector<Vec2> pts;
+				for (int k = 0; k < n; ++k) pts.push_back(on_circle(r, 2.0 * kPi * k / n));
+				return pts;
+			};
+			auto annulus = [&](MeshBatch &b, double r0, double r1, Color col) {
+				std::vector<Vec2> in = circle(r0, 72), out = circle(r1, 72);
+				in.push_back(in.front());
+				out.push_back(out.front());
+				MeshSet::strip(b, in, out, col);
+			};
+			// Footway ring, carriageway (circle plus leg mouths), island.
+			annulus(mesh.get(g.level, Layer::Ground), R, R + 2.5, kSidewalk);
+			Clipper2Lib::PathsD shapes;
+			Clipper2Lib::PathD disc;
+			for (const Vec2 &v : circle(R, 72)) disc.push_back(Clipper2Lib::PointD(v.x, v.y));
+			shapes.push_back(disc);
+			for (const Leg &leg : g.legs) {
+				const Vec2 a = leg_point(leg, -leg.kerb_left), b = leg_point(leg, leg.kerb_right);
+				const Vec2 side = leg.dir.right();
+				const Vec2 base = ctr + leg.dir * (R - 2.0);
+				const Vec2 a2 = base - side * leg.kerb_left, b2 = base + side * leg.kerb_right;
+				Clipper2Lib::PathD q;
+				for (const Vec2 &v : { a, b, b2, a2 }) q.push_back(Clipper2Lib::PointD(v.x, v.y));
+				shapes.push_back(q);
+			}
+			const Clipper2Lib::PathsD surface = Clipper2Lib::Union(shapes, Clipper2Lib::FillRule::NonZero, 3);
+			for (const Clipper2Lib::PathD &pth : surface) {
+				std::vector<Vec2> ring;
+				for (const Clipper2Lib::PointD &q : pth) ring.push_back(Vec2{ q.x, q.y });
+				if (Clipper2Lib::Area(pth) > 0.0) triangulate(ring, mesh.get(g.level, Layer::Asphalt), kAsphalt);
+			}
+			std::vector<Vec2> isl = circle(island, 48);
+			for (size_t k = 1; k + 1 < isl.size(); ++k) MeshSet::tri(mesh.get(g.level, Layer::Tint), isl[0], isl[k], isl[k + 1], kIsland);
+			MeshBatch &paint = mesh.get(g.level, Layer::Markings);
+			{
+				std::vector<Vec2> edge = circle(island + 0.2, 72);
+				edge.push_back(edge.front());
+				MeshSet::path(paint, edge, 0.2, kWhite);
+			}
+			// Lane dividers: dashed, or raised (double solid) for a turbo layout.
+			for (int k = 1; k < nr; ++k) {
+				const double r = R - lane_w * k;
+				const int n = std::max(24, static_cast<int>(2.0 * kPi * r / 1.5));
+				for (int m = 0; m < n; ++m) {
+					if (!turbo && m % 3 != 0) continue;
+					const double t0 = 2.0 * kPi * m / n, t1 = 2.0 * kPi * (m + 1) / n;
+					if (turbo) {
+						MeshSet::path(paint, { on_circle(r - 0.15, t0), on_circle(r - 0.15, t1) }, 0.15, kWhite);
+						MeshSet::path(paint, { on_circle(r + 0.15, t0), on_circle(r + 0.15, t1) }, 0.15, kWhite);
+					} else {
+						MeshSet::path(paint, { on_circle(r, t0), on_circle(r, t1) }, 0.15, kWhite);
+					}
+				}
+			}
+			if (deg > 0) {
+				g.polygon = circle(R + 2.5, 48);
+				// Leg angles (legs are sorted by angle) and the half-angle each takes.
+				std::vector<double> phi(deg), half(deg);
+				for (size_t i = 0; i < deg; ++i) {
+					phi[i] = angle_of(g.legs[i].dir);
+					half[i] = std::clamp((0.5 * (g.legs[i].kerb_left + g.legs[i].kerb_right) + 1.0) / R, 0.08, 1.2);
+				}
+				auto next_leg = [&](size_t i) { return (i + deg - 1) % deg; }; // the next exit counter-clockwise
+				auto span_to_next = [&](size_t i) {
+					if (deg == 1) return 2.0 * kPi;
+					double d = phi[i] - phi[next_leg(i)];
+					while (d <= 0.0) d += 2.0 * kPi;
+					return d;
+				};
+				// Leave at least 4 m of circulating lane between two legs.
+				for (size_t i = 0; i < deg; ++i) {
+					const size_t j = next_leg(i);
+					const double room = span_to_next(i) - 4.0 / (R - 0.5 * lane_w);
+					if (half[i] + half[j] > room) {
+						g.ring_cramped = true;
+						const double k = std::max(0.05, room) / (half[i] + half[j]);
+						half[i] *= k;
+						half[j] *= k;
+					}
+				}
+				auto ring_r = [&](int k) { return R - lane_w * (k + 0.5); };
+				// Pieces: after leg i (its entry point) to the next leg's exit point.
+				for (size_t i = 0; i < deg; ++i) {
+					const size_t j = next_leg(i);
+					const double t0 = phi[i] - half[i];
+					const double t1 = t0 - (span_to_next(i) - half[i] - half[j]);
+					const int n = std::max(3, static_cast<int>(std::ceil((t0 - t1) * R / 2.0)));
+					for (int k = 0; k < nr; ++k) {
+						RingLane rl;
+						rl.id = ring_lane_id(g.legs[i].seg, g.legs[i].at_start, k);
+						rl.lane = k;
+						rl.piece = static_cast<int>(i);
+						rl.radius = ring_r(k);
+						for (int m = 0; m <= n; ++m) rl.pts.push_back(on_circle(rl.radius, t0 + (t1 - t0) * m / n));
+						g.ring.push_back(std::move(rl));
+					}
+				}
+				auto bezier = [](Vec2 a, Vec2 da, Vec2 b, Vec2 db) {
+					const double k = std::max(1.0, (b - a).length() / 3.0);
+					Curve cv;
+					cv.kind = CurveKind::Bezier;
+					cv.p0 = a;
+					cv.c1 = a + da * k;
+					cv.c2 = b - db * k;
+					cv.p3 = b;
+					std::vector<Vec2> pts;
+					for (int m = 0; m <= 12; ++m) pts.push_back(cv.point(m / 12.0));
+					return pts;
+				};
+				auto add = [&](SegmentId fs, LaneId fl, SegmentId ts, LaneId tl, TurnKind tk, std::vector<Vec2> path,
+								   double penalty) {
+					Connector cn;
+					cn.from_seg = fs;
+					cn.from_lane = fl;
+					cn.to_seg = ts;
+					cn.to_lane = tl;
+					cn.turn = tk;
+					cn.path = std::move(path);
+					cn.route_penalty = penalty;
+					g.connectors.push_back(std::move(cn));
+				};
+				for (size_t i = 0; i < deg; ++i) {
+					const Leg &leg = g.legs[i];
+					const size_t prev_piece = (i + 1) % deg; // the piece that ends at this leg
+					const Leg &pleg = g.legs[prev_piece];
+					const double th_exit = phi[i] + half[i];
+					const double th_entry = phi[i] - half[i];
+					auto ring_id = [&](const Leg &l, int k) { return ring_lane_id(l.seg, l.at_start, k); };
+					// Continue round the ring.
+					for (int k = 0; k < nr; ++k) {
+						if (turbo && k == 0) continue; // the outer turbo lane serves the next exit only
+						std::vector<Vec2> arc;
+						for (int m = 0; m <= 8; ++m) arc.push_back(on_circle(ring_r(k), th_exit + (th_entry - th_exit) * m / 8));
+						add(kNoId, ring_id(pleg, k), kNoId, ring_id(leg, k), TurnKind::Straight, arc,
+								!turbo && nr >= 2 && k == 0 ? 3.0 : 0.0);
+					}
+					// Exits.
+					std::vector<LegLane> out = leg_lanes(leg, false);
+					std::vector<LegLane> travel_out;
+					for (const LegLane &l : out) {
+						if (is_travel(l.type)) travel_out.push_back(l);
+					}
+					for (const LegLane &l : out) {
+						if (!is_directional(l.type)) continue;
+						int from_k = 0;
+						if (turbo && is_travel(l.type)) {
+							const size_t idx = static_cast<size_t>(std::find_if(travel_out.begin(), travel_out.end(),
+													   [&](const LegLane &t) { return t.id == l.id; }) -
+									travel_out.begin());
+							from_k = std::min<int>(static_cast<int>(idx), nr - 1);
+						}
+						add(kNoId, ring_id(pleg, from_k), leg.seg, l.id, TurnKind::Right,
+								bezier(on_circle(ring_r(from_k), th_exit), travel_dir(th_exit), l.point, l.dir), 0.0);
+						if (turbo && is_travel(l.type) && travel_out.size() == 1) {
+							// One exit lane: every turbo lane can leave into it.
+							for (int k = 1; k < nr; ++k) {
+								add(kNoId, ring_id(pleg, k), leg.seg, l.id, TurnKind::Right,
+										bezier(on_circle(ring_r(k), th_exit), travel_dir(th_exit), l.point, l.dir), 0.0);
+							}
+						}
+					}
+					// Entries: the right entry lane to the outer ring lane, lanes to the
+					// left to the inner ones; bikes join the outer lane.
+					std::vector<LegLane> in = leg_lanes(leg, true);
+					std::vector<LegLane> travel_in;
+					for (const LegLane &l : in) {
+						if (is_travel(l.type)) travel_in.push_back(l);
+						else if (l.type == LaneType::Bike) {
+							add(leg.seg, l.id, kNoId, ring_id(leg, 0), TurnKind::Right,
+									bezier(l.point, l.dir, on_circle(ring_r(0), th_entry), travel_dir(th_entry)), 0.0);
+						}
+					}
+					for (size_t jn = 0; jn < travel_in.size(); ++jn) {
+						const LegLane &l = travel_in[jn];
+						const int k0 = std::min<int>(static_cast<int>(jn), nr - 1);
+						const int k1 = jn + 1 == travel_in.size() ? nr - 1 : k0;
+						for (int k = k0; k <= k1; ++k) {
+							add(leg.seg, l.id, kNoId, ring_id(leg, k), TurnKind::Right,
+									bezier(l.point, l.dir, on_circle(ring_r(k), th_entry), travel_dir(th_entry)), 0.0);
+						}
+					}
+					// Give-way teeth across the entry.
+					if (!travel_in.empty()) {
+						const SegCtx &c = ctx[leg.seg];
+						const double sl = leg.at_start ? leg.trim + 0.5 : c.length - leg.trim - 0.5;
+						c.cross_section(sl, xs);
+						double lo = 1e300, hi = -1e300;
+						for (const LegLane &l : in) {
+							lo = std::min(lo, xs[l.index].first);
+							hi = std::max(hi, xs[l.index].second);
+						}
+						Vec2 p, nrm;
+						c.frame(sl, p, nrm);
+						const Vec2 up = leg.at_start ? tangent_of(nrm) : tangent_of(nrm) * -1.0;
+						const int n = std::max(1, static_cast<int>((hi - lo) / 1.2));
+						for (int m = 0; m < n; ++m) {
+							const Vec2 q0 = p + nrm * (lo + (hi - lo) * m / n + 0.15);
+							const Vec2 q1 = p + nrm * (lo + (hi - lo) * (m + 1) / n - 0.15);
+							MeshSet::tri(paint, q0, q1, (q0 + q1) * 0.5 + up * 0.9, kWhite);
+						}
+					}
+					// Right-turn bypass to the next exit.
+					if (deg >= 2 && std::find(rb.slip.begin(), rb.slip.end(), leg.seg) != rb.slip.end() && !travel_in.empty()) {
+						const Leg &nleg = g.legs[next_leg(i)];
+						std::vector<LegLane> nout = leg_lanes(nleg, false);
+						const LegLane *target = nullptr;
+						for (const LegLane &l : nout) {
+							if (is_travel(l.type)) {
+								target = &l;
+								break;
+							}
+						}
+						if (target) {
+							const Vec2 a = travel_in.front().point, b = target->point;
+							const Vec2 mid = ((a - ctr).normalized() + (b - ctr).normalized()).normalized();
+							const double far = std::max((a - ctr).length(), (b - ctr).length()) * 1.25;
+							const std::vector<Vec2> path = quad_bezier(a, ctr + mid * far, b, 16);
+							add(leg.seg, travel_in.front().id, nleg.seg, target->id, TurnKind::Right, path, 0.0);
+							MeshSet::path(mesh.get(g.level, Layer::Asphalt), path, 3.8, kAsphalt);
+						}
+					}
+				}
+			}
+			continue;
+		}
 		if (g.kind == NodeKind::Continuation || g.kind == NodeKind::Taper) {
 			// Joint filler over the small wedge between the two ends.
 			const Leg &la = g.legs[0];
@@ -1070,6 +1453,36 @@ void RoadGeometry::build(const RoadMap &map) {
 					cn.turn = TurnKind::Straight;
 					cn.path = { li.point, lo.point };
 					g.connectors.push_back(cn);
+				}
+				// Bike lanes continue into the next road's bike lane (or its kerb lane).
+				{
+					std::vector<LegLane> bin = leg_lanes(from, true), bout = leg_lanes(to, false);
+					std::vector<LegLane> bikes_in, bikes_out;
+					for (const LegLane &l : bin) {
+						if (l.type == LaneType::Bike) bikes_in.push_back(l);
+					}
+					for (const LegLane &l : bout) {
+						if (l.type == LaneType::Bike) bikes_out.push_back(l);
+					}
+					if (bikes_out.empty()) {
+						for (const LegLane &l : bout) {
+							if (is_travel(l.type)) {
+								bikes_out.push_back(l);
+								break;
+							}
+						}
+					}
+					for (size_t bi = 0; bi < bikes_in.size() && !bikes_out.empty(); ++bi) {
+						const LegLane &lo = bikes_out[std::min(bi, bikes_out.size() - 1)];
+						Connector cn;
+						cn.from_seg = from.seg;
+						cn.from_lane = bikes_in[bi].id;
+						cn.to_seg = to.seg;
+						cn.to_lane = lo.id;
+						cn.turn = TurnKind::Straight;
+						cn.path = { bikes_in[bi].point, lo.point };
+						g.connectors.push_back(cn);
+					}
 				}
 				// Merge arrows in lanes that end at this taper.
 				if (in.size() > out.size()) {
@@ -1284,6 +1697,38 @@ void RoadGeometry::build(const RoadMap &map) {
 					link(general[i], rights[0].leg, true, i, TurnKind::Right);
 				} else if (!straights.empty()) {
 					link(general[i], straights[0].leg, true, i, TurnKind::Straight);
+				}
+			}
+			// Bike lanes get their own connectors (M3): into the target road's bike
+			// lane, or its kerb-side travel lane when it has none.
+			for (const LegLane &bl : in) {
+				if (bl.type != LaneType::Bike) continue;
+				for (size_t k = 0; k < deg; ++k) {
+					if (k == j) continue;
+					const TurnKind tk = turn_between(g, j, k);
+					if (tk == TurnKind::UTurn) continue;
+					if (tk == TurnKind::Left && rules.left == TurnRule::Disallowed) continue;
+					if (tk == TurnKind::Right && rules.right == TurnRule::Disallowed) continue;
+					const std::vector<LegLane> out = leg_lanes(g.legs[k], false);
+					const LegLane *to = nullptr;
+					for (const LegLane &l : out) {
+						if (l.type == LaneType::Bike) {
+							to = &l;
+							break;
+						}
+					}
+					for (const LegLane &l : out) {
+						if (!to && is_travel(l.type)) to = &l; // sorted right to left: the kerb lane first
+					}
+					if (!to) continue;
+					Connector cn;
+					cn.from_seg = leg.seg;
+					cn.from_lane = bl.id;
+					cn.to_seg = g.legs[k].seg;
+					cn.to_lane = to->id;
+					cn.turn = tk;
+					cn.path = connector_path(bl.point, bl.dir, to->point, to->dir);
+					g.connectors.push_back(cn);
 				}
 			}
 			// Arrows painted from the connectors, 8 m before the stop line.

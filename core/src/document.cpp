@@ -409,15 +409,28 @@ NodeId Document::split_segment(SegmentId id, double u) {
 	b.profile = instantiate(seg.profile);
 	b.ends[0] = default_end();
 	b.no_change = clip_zones(seg.no_change, u, 1.0);
+	// Bus stops go with the piece they are on.
+	a.stops.clear();
+	b.stops.clear();
+	for (const BusStop &st : seg.stops) {
+		BusStop c = st;
+		if (st.u < u) {
+			c.u = st.u / u;
+			a.stops.push_back(c);
+		} else {
+			c.u = (st.u - u) / (1.0 - u);
+			b.stops.push_back(c);
+		}
+	}
 
 	put_segment(a);
 	put_segment(b);
 	// The far node's leg is now segment b.
 	const RoadNode *far = map_.node(seg.to);
-	if (far && far->is_priority(id)) {
+	if (far) {
 		RoadNode n = *far;
-		std::replace(n.priority.begin(), n.priority.end(), id, b.id);
-		put_node(n);
+		n.rename_segment(id, b.id);
+		if (!(n == *far)) put_node(n);
 	}
 	return mid.id;
 }
@@ -517,11 +530,10 @@ void Document::delete_segment(SegmentId id) {
 	erase_segment(id);
 	for (NodeId end : { a, b }) {
 		const RoadNode *n = map_.node(end);
-		if (n && n->is_priority(id)) {
-			RoadNode c = *n;
-			c.priority.erase(std::remove(c.priority.begin(), c.priority.end(), id), c.priority.end());
-			put_node(c);
-		}
+		if (!n) continue;
+		RoadNode c = *n;
+		c.rename_segment(id, kNoId);
+		if (!(c == *n)) put_node(c);
 	}
 	remove_if_isolated(a);
 	remove_if_isolated(b);
@@ -629,6 +641,10 @@ bool Document::flip(SegmentId id) {
 		z.u1 = 1.0 - z.u0;
 		z.u0 = u0;
 		std::swap(z.block_left_to_right, z.block_right_to_left);
+	}
+	for (BusStop &st : s.stops) {
+		st.u = 1.0 - st.u;
+		st.side = st.side == LaneDir::Forward ? LaneDir::Backward : LaneDir::Forward;
 	}
 	put_segment(s);
 	return true;
@@ -768,6 +784,7 @@ void Document::set_junction_control(NodeId id, JunctionControl control, const st
 	Scope scope(*this, "Change junction control");
 	RoadNode n = *orig;
 	n.control = control;
+	if (control == JunctionControl::Signal && n.signal.phases.empty()) n.signal = default_signal_plan(map_, id);
 	n.priority.clear();
 	const std::vector<SegmentId> here = map_.segments_at(id);
 	for (SegmentId s : priority) {
@@ -788,6 +805,12 @@ void Document::set_spawner(NodeId id, const Spawner &spawner) {
 	RoadNode n = *orig;
 	n.spawner = spawner.enabled ? spawner : Spawner{};
 	n.spawner.rate = std::clamp(n.spawner.rate, 0.0, 5000.0);
+	n.spawner.bikes = std::clamp(n.spawner.bikes, 0.0, 2000.0);
+	for (CoachLine &c : n.spawner.coaches) {
+		if (c.id == 0) c.id = map_.alloc_object_id();
+		c.per_hour = std::clamp(c.per_hour, 0.0, 30.0);
+		c.dwell = std::clamp(c.dwell, 0.0, 7200.0);
+	}
 	std::vector<OdWeight> od;
 	for (const OdWeight &w : n.spawner.od) {
 		if (w.to != id && map_.node(w.to) && w.weight >= 0.0 && w.weight != 1.0) od.push_back(w);
@@ -796,6 +819,154 @@ void Document::set_spawner(NodeId id, const Spawner &spawner) {
 	od.erase(std::unique(od.begin(), od.end(), [](const OdWeight &a, const OdWeight &b) { return a.to == b.to; }),
 			od.end());
 	n.spawner.od = od;
+	put_node(n);
+}
+
+// --- M3 -------------------------------------------------------------------------------
+
+namespace {
+
+// Unit direction of a segment's leg, pointing away from `node`.
+Vec2 leg_dir(const RoadMap &map, const RoadSegment &s, NodeId node) {
+	const Curve c = map.curve_of(s);
+	return s.from == node ? c.tangent(0.0) : c.tangent(1.0) * -1.0;
+}
+
+} // namespace
+
+SignalPlan default_signal_plan(const RoadMap &map, NodeId node) {
+	SignalPlan plan;
+	const std::vector<SegmentId> legs = map.segments_at(node);
+	std::vector<Vec2> dirs;
+	for (SegmentId s : legs) dirs.push_back(leg_dir(map, *map.segment(s), node));
+	// Pair legs that face each other.
+	std::vector<int> partner(legs.size(), -1);
+	for (size_t i = 0; i < legs.size(); ++i) {
+		if (partner[i] >= 0) continue;
+		double best = -0.85; // within ~30 degrees of straight across
+		for (size_t j = i + 1; j < legs.size(); ++j) {
+			if (partner[j] >= 0) continue;
+			const double d = dirs[i].dot(dirs[j]);
+			if (d < best) {
+				best = d;
+				partner[i] = static_cast<int>(j);
+			}
+		}
+		if (partner[i] >= 0) partner[static_cast<size_t>(partner[i])] = static_cast<int>(i);
+	}
+	auto turn_is_left = [&](size_t from, size_t to) {
+		const Vec2 in = dirs[from] * -1.0;
+		return cross(in, dirs[to]) < -0.3; // y-down: negative cross = to the left
+	};
+	std::vector<bool> done(legs.size(), false);
+	for (size_t i = 0; i < legs.size(); ++i) {
+		if (done[i]) continue;
+		SignalPhase ph;
+		std::vector<size_t> group = { i };
+		if (partner[i] >= 0) group.push_back(static_cast<size_t>(partner[i]));
+		for (size_t g : group) {
+			done[g] = true;
+			for (size_t t = 0; t < legs.size(); ++t) {
+				if (t == g) continue;
+				SignalMovement m;
+				m.from = legs[g];
+				m.to = legs[t];
+				m.permissive = group.size() > 1 && turn_is_left(g, t);
+				ph.moves.push_back(m);
+			}
+		}
+		ph.green = group.size() > 1 ? 25.0 : 15.0;
+		plan.phases.push_back(ph);
+	}
+	return plan;
+}
+
+void Document::set_roundabout(NodeId id, const Roundabout &r) {
+	const RoadNode *orig = map_.node(id);
+	if (!orig) return;
+	Scope scope(*this, r.enabled ? "Change roundabout" : "Remove roundabout");
+	RoadNode n = *orig;
+	n.roundabout = r.enabled ? r : Roundabout{};
+	n.roundabout.lanes = std::clamp(n.roundabout.lanes, 1, 3);
+	n.roundabout.radius = std::clamp(n.roundabout.radius, 12.0, 40.0);
+	const std::vector<SegmentId> here = map_.segments_at(id);
+	std::vector<SegmentId> slip;
+	for (SegmentId s : n.roundabout.slip) {
+		if (std::find(here.begin(), here.end(), s) != here.end() &&
+				std::find(slip.begin(), slip.end(), s) == slip.end()) {
+			slip.push_back(s);
+		}
+	}
+	std::sort(slip.begin(), slip.end());
+	n.roundabout.slip = slip;
+	put_node(n);
+}
+
+void Document::set_signal_plan(NodeId id, const SignalPlan &plan) {
+	const RoadNode *orig = map_.node(id);
+	if (!orig) return;
+	Scope scope(*this, "Change signal plan");
+	RoadNode n = *orig;
+	n.control = JunctionControl::Signal;
+	n.signal = plan;
+	n.signal.amber = std::clamp(n.signal.amber, 1.0, 6.0);
+	n.signal.all_red = std::clamp(n.signal.all_red, 0.0, 6.0);
+	for (SignalPhase &p : n.signal.phases) p.green = std::clamp(p.green, 3.0, 180.0);
+	put_node(n);
+}
+
+uint32_t Document::add_stop(SegmentId seg, double u, LaneDir side, StopKind kind, const std::string &name) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig) return 0;
+	Scope scope(*this, "Add bus stop");
+	RoadSegment s = *orig;
+	BusStop st;
+	st.id = map_.alloc_object_id();
+	st.u = std::clamp(u, 0.0, 1.0);
+	st.side = side == LaneDir::Backward ? LaneDir::Backward : LaneDir::Forward;
+	st.kind = kind;
+	st.name = name;
+	st.bays = kind == StopKind::MainStation ? 4 : 1;
+	s.stops.push_back(st);
+	put_segment(s);
+	return st.id;
+}
+
+void Document::set_stop(SegmentId seg, const BusStop &stop) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig) return;
+	Scope scope(*this, "Change bus stop");
+	RoadSegment s = *orig;
+	for (BusStop &st : s.stops) {
+		if (st.id != stop.id) continue;
+		st = stop;
+		st.u = std::clamp(st.u, 0.0, 1.0);
+		st.bays = std::clamp(st.bays, 1, 12);
+	}
+	put_segment(s);
+}
+
+void Document::remove_stop(SegmentId seg, uint32_t stop) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig) return;
+	Scope scope(*this, "Remove bus stop");
+	RoadSegment s = *orig;
+	s.stops.erase(std::remove_if(s.stops.begin(), s.stops.end(), [stop](const BusStop &b) { return b.id == stop; }),
+			s.stops.end());
+	put_segment(s);
+}
+
+void Document::set_depot(NodeId id, const Depot &depot) {
+	const RoadNode *orig = map_.node(id);
+	if (!orig) return;
+	Scope scope(*this, depot.enabled ? "Change depot" : "Remove depot");
+	RoadNode n = *orig;
+	n.depot = depot.enabled ? depot : Depot{};
+	n.depot.capacity = std::clamp(n.depot.capacity, 1, 200);
+	for (BusRoute &r : n.depot.routes) {
+		if (r.id == 0) r.id = map_.alloc_object_id();
+		r.headway = std::clamp(r.headway, 60.0, 7200.0);
+	}
 	put_node(n);
 }
 

@@ -1,6 +1,6 @@
 class_name SimController
 extends Node2D
-## M2 simulation in the editor: play / pause / step, speed, seed, demand, car
+## Simulation in the editor: play / pause / step, speed, seed, demand, car
 ## rendering (one MultiMesh per level) and the car inspector's selection.
 ## Editing the map pauses the sim; pressing Play again recompiles only the
 ## changed junctions and carries on with the same cars.

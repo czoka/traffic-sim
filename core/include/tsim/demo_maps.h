@@ -21,6 +21,12 @@ void build_one_way_pair(Document &doc); // parallel one-way streets and cross st
 // A small town that shows every M1 road feature.
 void build_demo_town(Document &doc);
 
+// M3 showcase: a signalized junction (with a right-on-red arrow), a two-lane
+// roundabout with a slip lane, bus lanes, parallel / 45° / 90° parking, bike
+// lanes and bikes, kerbside and bay stops, the main station, a depot with a
+// loop and an end-to-end route, and a coach line. Recorded as one undo step.
+void build_showcase(Document &doc);
+
 // Profile for a preset name (see profile_presets()); falls back to the first.
 Profile preset_profile(const char *name, RoadMap &map);
 

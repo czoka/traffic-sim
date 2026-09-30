@@ -1,8 +1,8 @@
 class_name EditorOverlay
 extends Node2D
 ## Everything drawn on top of the roads: selection, hover, Bézier handles,
-## connectors, spawn points, the selected car's route, problem markers and the
-## active tool's preview.
+## connectors, spawn points, bus stops, depots and routes, signal heads, the
+## selected car's route, problem markers and the active tool's preview.
 
 const SELECT := Color(0.35, 0.72, 1.0, 1.0)
 const HOVER := Color(1.0, 1.0, 1.0, 0.55)
@@ -10,6 +10,14 @@ const ERROR := Color(0.93, 0.33, 0.29)
 const WARNING := Color(0.96, 0.72, 0.2)
 const SPAWN := Color(0.4, 0.85, 0.95)
 const ROUTE := Color(0.35, 0.9, 1.0, 0.85)
+const STOP := Color(0.98, 0.85, 0.2)
+const DEPOT := Color(0.95, 0.95, 0.98)
+const LIGHTS := {
+	"red": Color(0.93, 0.2, 0.18),
+	"amber": Color(0.98, 0.7, 0.1),
+	"green": Color(0.25, 0.85, 0.35),
+	"yield": Color(0.6, 0.95, 0.35),
+}
 const TURN_COLORS := {
 	"straight": Color(1, 1, 1, 0.8),
 	"left": Color(0.45, 0.7, 1.0, 0.9),
@@ -22,6 +30,13 @@ var _cache_rev := -1
 var _connectors: Array = []
 var _problems: Array = []
 var _spawners: Array = []
+var _stops: Array = []
+var _depots: Array = []
+
+
+## 0xRRGGBB -> Color
+static func rgb(c: int) -> Color:
+	return Color(((c >> 16) & 0xff) / 255.0, ((c >> 8) & 0xff) / 255.0, (c & 0xff) / 255.0)
 
 
 func _ready() -> void:
@@ -41,6 +56,8 @@ func _draw() -> void:
 		_cache_rev = road.revision()
 		_problems = road.get_problems()
 		_spawners = road.get_spawners()
+		_stops = road.get_stops()
+		_depots = road.get_depots()
 		_connectors = []
 	if editor.show_connectors and _connectors.is_empty():
 		_connectors = road.get_connectors()
@@ -65,6 +82,13 @@ func _draw() -> void:
 		if int(sp.level) != editor.level:
 			continue
 		_spawn_marker(sp, font)
+	_draw_transit(font)
+	for h in road.sim_signal_heads(editor.level):
+		var p: Vector2 = h.pos
+		var side := Vector2(-(h.dir as Vector2).y, (h.dir as Vector2).x)
+		var at := p + side * px(0.0) + (h.dir as Vector2) * px(4)
+		draw_circle(at, maxf(px(4.5), 0.9), Color(0.05, 0.05, 0.06, 0.9))
+		draw_circle(at, maxf(px(3.2), 0.65), LIGHTS.get(h.light, Color.WHITE))
 	var car: Dictionary = editor.sim.car_info if editor.sim and editor.sim.selected_car != 0 else {}
 	if not car.is_empty():
 		var route: PackedVector2Array = car.route
@@ -103,6 +127,42 @@ func _spawn_marker(sp: Dictionary, font: Font) -> void:
 		draw_line(b + d * px(5), b - d * px(2), col, px(1.5))
 	var label := "%d/h" % int(sp.rate) if float(sp.rate) > 0.0 else "out"
 	draw_string(font, p + Vector2(px(13), px(5)), label, HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(13)), col)
+
+
+## Bus stops (a sign beside the road), depots and route lines.
+func _draw_transit(font: Font) -> void:
+	var playing: bool = editor.sim != null and editor.sim.playing
+	for d in _depots:
+		if int(d.level) != editor.level:
+			continue
+		if not playing:
+			for r in d.routes:
+				var path: PackedVector2Array = r.path
+				if path.size() >= 2:
+					var c := rgb(int(r.color))
+					c.a = 0.7
+					draw_polyline(path, c, px(2.5))
+		var p: Vector2 = d.pos
+		var s := px(9)
+		draw_rect(Rect2(p - Vector2(s, s), Vector2(s, s) * 2.0), Color(0.1, 0.12, 0.16, 0.9))
+		draw_rect(Rect2(p - Vector2(s, s), Vector2(s, s) * 2.0), DEPOT if d.active else ERROR, false, px(2))
+		draw_string(font, p + Vector2(-px(4), px(5)), "D", HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(14)), DEPOT)
+		draw_string(font, p + Vector2(px(12), px(5)), String(d.name), HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(12)), DEPOT)
+	for st in _stops:
+		if int(st.level) != editor.level:
+			continue
+		var p: Vector2 = st.pos
+		var dir: Vector2 = (st.dir as Vector2).normalized()
+		var right := Vector2(-dir.y, dir.x)
+		var sign_at := p + right * maxf(px(10), 4.5)
+		var col := STOP if st.served else ERROR
+		var r := px(6) if st.kind != "main_station" else px(9)
+		draw_circle(sign_at, r, Color(0.1, 0.1, 0.12, 0.9))
+		draw_circle(sign_at, r, col, false, px(2))
+		var letter := "H" if st.kind == "main_station" else "B"
+		draw_string(font, sign_at + Vector2(-px(3.5), px(4.5)), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(12)), col)
+		if editor.camera.zoom.x > 1.2:
+			draw_string(font, sign_at + Vector2(r + px(3), px(4)), String(st.name), HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(11)), col)
 
 
 func _outline(pts: PackedVector2Array, col: Color, width: float) -> void:

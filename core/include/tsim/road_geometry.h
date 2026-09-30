@@ -43,6 +43,7 @@ enum class NodeKind : uint8_t {
 	Continuation = 2, // two roads join end to end, same lane counts
 	Taper = 3, // two roads join end to end and lanes are added or dropped
 	Junction = 4, // three or more legs, or a sharp corner
+	Roundabout = 5, // RoadNode::roundabout (M3)
 };
 
 enum class TurnKind : uint8_t {
@@ -64,6 +65,18 @@ struct GeomLane {
 	int pocket_end = -1; // 0 or 1 for pockets, -1 for profile lanes
 	bool pocket_left = false;
 	int profile_index = -1; // index in the segment profile, -1 for pockets
+	ParkingStyle parking = ParkingStyle::Parallel;
+};
+
+// A parking bay (M3), derived from a parking lane. Stable key: (lane, index).
+struct ParkingBay {
+	LaneId lane = kNoId; // the parking lane
+	int index = 0;
+	double s = 0.0; // centreline station of the bay's centre
+	Vec2 pos; // bay centre
+	Vec2 dir{ 1, 0 }; // heading of a parked car
+	ParkingStyle style = ParkingStyle::Parallel;
+	bool list_right = true; // on the right of the profile list (next to forward lanes)
 };
 
 struct SegmentGeom {
@@ -80,6 +93,7 @@ struct SegmentGeom {
 	// Lateral edges, x[k * lanes + i] = {left, right} offset of lane i at sample k.
 	std::vector<std::pair<double, double>> x;
 	Vec2 bb_min, bb_max; // bounding box of the drawn shape
+	std::vector<ParkingBay> bays;
 
 	size_t lane_count() const { return lanes.size(); }
 	const std::pair<double, double> &edge(size_t k, size_t lane) const { return x[k * lanes.size() + lane]; }
@@ -106,7 +120,23 @@ struct Connector {
 	LaneId to_lane = kNoId;
 	TurnKind turn = TurnKind::Straight;
 	std::vector<Vec2> path;
+	double route_penalty = 0.0; // s added by routing (roundabout lane choice)
 };
+
+// One circulating lane of a roundabout between two legs (M3). Its id is
+// synthetic (see ring_lane_id) and stable while the leg exists.
+struct RingLane {
+	LaneId id = kNoId;
+	int lane = 0; // 0 = outer
+	int piece = 0; // index of the leg it starts after
+	std::vector<Vec2> pts; // travel order (counter-clockwise on screen)
+	double radius = 0.0;
+};
+
+// Synthetic lane ids for roundabout rings: high bit set, so they never clash
+// with profile lane ids.
+LaneId ring_lane_id(SegmentId leg, bool leg_at_start, int lane);
+inline bool is_ring_lane(LaneId id) { return (id & 0x80000000u) != 0; }
 
 struct NodeGeom {
 	NodeId id = kNoId;
@@ -118,6 +148,11 @@ struct NodeGeom {
 	std::vector<Connector> connectors;
 	// Incoming lanes that have no way out (dead ends).
 	std::vector<std::pair<SegmentId, LaneId>> dead_lanes;
+	// Roundabouts (M3).
+	std::vector<RingLane> ring;
+	double ring_radius = 0.0;
+	double island_radius = 0.0;
+	bool ring_cramped = false; // too many legs for the radius
 };
 
 struct LaneHit {

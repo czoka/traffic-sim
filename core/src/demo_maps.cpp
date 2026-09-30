@@ -321,4 +321,133 @@ void build_demo_town(Document &doc) {
 	doc.commit();
 }
 
+// --- M3 showcase ----------------------------------------------------------------------
+
+void build_showcase(Document &doc) {
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	const Profile bike = preset_profile("Street 1+1, bike lanes", scratch);
+	const Profile bus = preset_profile("Avenue 2+2, bus lanes, parking", scratch);
+	const Profile avenue = preset_profile("Avenue 2+2, median", scratch);
+	auto parking = [&](ParkingStyle style) {
+		ProfileParams p;
+		p.sidewalk_left = p.sidewalk_right = true;
+		p.parking_left = p.parking_right = true;
+		p.parking_style = style;
+		return build_profile(p, nullptr, scratch);
+	};
+	const Profile parallel = parking(ParkingStyle::Parallel);
+	const Profile angled = parking(ParkingStyle::Angle45);
+	const Profile perpendicular = parking(ParkingStyle::Perpendicular);
+
+	doc.begin("Showcase town");
+	auto node = [&](double x, double y) { return doc.add_node(Vec2{ x, y }, 0); };
+	// Main avenue west-east: bus lanes to a signalized junction (A) and on to a
+	// roundabout (B), then a plain avenue to the east edge.
+	const NodeId w = node(-560, 0), a = node(-220, 0), b = node(180, 0), e = node(520, 0);
+	const SegmentId wa = road(doc, w, a, bus, 50);
+	const SegmentId ab = road(doc, a, b, bus, 50);
+	road(doc, b, e, avenue, 60);
+	pockets(doc, wa, true, false, 40);
+	{
+		// Westbound left turns into the bike street get a pocket at the signal.
+		EndRules r;
+		r.left = TurnRule::TurnLane;
+		r.turn_lane_length = 45;
+		doc.set_end_rules(ab, 0, r);
+	}
+	// North-south bike street through A.
+	const NodeId n1 = node(-220, -320), s1 = node(-220, 300), s3 = node(-220, 480);
+	road(doc, n1, a, bike, 40);
+	const SegmentId as1 = road(doc, a, s1, bike, 40);
+	road(doc, s1, s3, bike, 40);
+	// Roundabout legs north and south, with angled and perpendicular parking.
+	const NodeId n2 = node(180, -330), s2 = node(180, 300), s4 = node(180, 480);
+	const SegmentId bn = road(doc, b, n2, angled, 40);
+	const SegmentId bs = road(doc, b, s2, perpendicular, 40);
+	road(doc, s2, s4, street, 50);
+	// Southern street with parallel parking, and the depot road to the west.
+	const SegmentId s12 = road(doc, s1, s2, parallel, 40);
+	const NodeId d = node(-520, 300);
+	road(doc, d, s1, street, 40);
+
+	// Junction control.
+	doc.set_signal_plan(a, default_signal_plan(doc.map(), a));
+	{
+		SignalPlan plan = doc.map().node(a)->signal;
+		plan.right_on_red = { as1 }; // northbound traffic from the south may turn right on red
+		doc.set_signal_plan(a, plan);
+	}
+	Roundabout r;
+	r.enabled = true;
+	r.radius = 24.0;
+	r.lanes = 2;
+	r.slip = { bs }; // southern leg: bypass to the east exit
+	doc.set_roundabout(b, r);
+	doc.set_junction_control(s1, JunctionControl::AllWayStop, {});
+	std::vector<SegmentId> main;
+	for (SegmentId sid : doc.map().segments_at(s2)) {
+		if (sid == bs || sid == s12) continue;
+		main.push_back(sid);
+	}
+	main.push_back(bs);
+	doc.set_junction_control(s2, JunctionControl::PriorityRoad, main);
+	(void)bn;
+
+	// Stops: the main station on the avenue (eastbound), kerbside stops on the
+	// bike street and the roundabout's south leg, a bus bay on the south street.
+	const uint32_t station = doc.add_stop(ab, 0.5, LaneDir::Forward, StopKind::MainStation, "Central Station");
+	if (const RoadSegment *seg = doc.map().segment(ab)) {
+		for (BusStop st : seg->stops) {
+			if (st.id != station) continue;
+			st.bays = 3;
+			doc.set_stop(ab, st);
+		}
+	}
+	const uint32_t south_leg = doc.add_stop(bs, 0.55, LaneDir::Forward, StopKind::Kerbside, "Roundabout South");
+	const uint32_t north_leg = doc.add_stop(bs, 0.45, LaneDir::Backward, StopKind::Kerbside, "Roundabout North");
+	const uint32_t market_w = doc.add_stop(s12, 0.5, LaneDir::Backward, StopKind::Bay, "Market");
+	const uint32_t market_e = doc.add_stop(s12, 0.4, LaneDir::Forward, StopKind::Bay, "Market East");
+	const uint32_t school = doc.add_stop(as1, 0.5, LaneDir::Backward, StopKind::Kerbside, "School");
+
+	// Depot with a loop round the block and an end-to-end route.
+	Depot depot;
+	depot.enabled = true;
+	depot.name = "West Depot";
+	depot.capacity = 12;
+	BusRoute loop;
+	loop.name = "1 Circle";
+	loop.color = 0xd83f3f;
+	loop.stops = { station, south_leg, market_w, school };
+	loop.headway = 300.0;
+	loop.loop = true;
+	BusRoute line;
+	line.name = "2 Market";
+	line.color = 0x2f7fd8;
+	line.stops = { market_e, north_leg };
+	line.headway = 480.0;
+	depot.routes = { loop, line };
+	doc.set_depot(d, depot);
+
+	// Demand: cars at every edge, bikes on the bike street, a coach line west-east.
+	Spawner in_out;
+	in_out.enabled = true;
+	in_out.rate = 350.0;
+	Spawner west = in_out;
+	CoachLine coach;
+	coach.exit = e;
+	coach.per_hour = 3.0;
+	coach.dwell = 300.0;
+	west.coaches = { coach };
+	doc.set_spawner(w, west);
+	doc.set_spawner(e, in_out);
+	in_out.rate = 200.0;
+	doc.set_spawner(n2, in_out);
+	doc.set_spawner(s4, in_out);
+	in_out.bikes = 120.0;
+	doc.set_spawner(n1, in_out);
+	doc.set_spawner(s3, in_out);
+	doc.commit();
+}
+
 } // namespace tsim

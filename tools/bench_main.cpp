@@ -40,11 +40,12 @@ int write_maps(const std::string &dir) {
 		void (*build)(Document &);
 	};
 	const Entry maps[] = {
-		{ "demo_town_v3.json", [](Document &d) { build_demo_town(d); } },
-		{ "test_grid_v3.json", [](Document &d) { build_test_grid(d, 7, 8, 120.0); } },
-		{ "t_junction_v3.json", [](Document &d) { build_t_junction(d); } },
-		{ "lane_drop_v3.json", [](Document &d) { build_lane_drop(d); } },
-		{ "one_way_pair_v3.json", [](Document &d) { build_one_way_pair(d); } },
+		{ "demo_town_v4.json", [](Document &d) { build_demo_town(d); } },
+		{ "test_grid_v4.json", [](Document &d) { build_test_grid(d, 7, 8, 120.0); } },
+		{ "t_junction_v4.json", [](Document &d) { build_t_junction(d); } },
+		{ "lane_drop_v4.json", [](Document &d) { build_lane_drop(d); } },
+		{ "one_way_pair_v4.json", [](Document &d) { build_one_way_pair(d); } },
+		{ "showcase_v4.json", [](Document &d) { build_showcase(d); } },
 	};
 	for (const Entry &e : maps) {
 		Document doc;
