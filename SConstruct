@@ -16,8 +16,21 @@ import os
 
 env = SConscript("godot-cpp/SConstruct", {"api_version": "4.7"})
 
-CORE_SOURCES = ["core/src/map.cpp", "core/src/map_json.cpp", "core/src/sim.cpp"]
-CORE_INCLUDES = ["#core/include", "#third_party"]
+CORE_SOURCES = [
+    "core/src/curve.cpp",
+    "core/src/demo_maps.cpp",
+    "core/src/document.cpp",
+    "core/src/map.cpp",
+    "core/src/road_geometry.cpp",
+    "core/src/road_map.cpp",
+    "core/src/road_map_json.cpp",
+    "core/src/sim.cpp",
+    "core/src/validation.cpp",
+    "third_party/clipper2/src/clipper.engine.cpp",
+    "third_party/clipper2/src/clipper.offset.cpp",
+    "third_party/clipper2/src/clipper.rectclip.cpp",
+]
+CORE_INCLUDES = ["#core/include", "#third_party", "#third_party/clipper2/include"]
 # nlohmann::json is used in its no-throw mode (the core builds without exceptions).
 CORE_DEFINES = ["JSON_NOEXCEPTION"]
 
@@ -85,9 +98,11 @@ core_objs = [
     for s in CORE_SOURCES
 ]
 
-tests_prog = prog_env.Program("{}/tsim_tests".format(build_dir),
-                              core_objs + [prog_env.Object("{}/tests/test_core".format(build_dir),
-                                                           "tests/test_core.cpp")])
+test_objs = [
+    prog_env.Object("{}/tests/{}".format(build_dir, os.path.splitext(os.path.basename(str(t)))[0]), t)
+    for t in sorted(Glob("tests/*.cpp"), key=str)
+]
+tests_prog = prog_env.Program("{}/tsim_tests".format(build_dir), core_objs + test_objs)
 bench_prog = prog_env.Program("{}/tsim_bench".format(build_dir),
                               core_objs + [prog_env.Object("{}/tools/bench_main".format(build_dir),
                                                            "tools/bench_main.cpp")])

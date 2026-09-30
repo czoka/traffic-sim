@@ -4,7 +4,6 @@
 
 #include "tsim/hash.h"
 #include "tsim/map.h"
-#include "tsim/map_json.h"
 #include "tsim/rng.h"
 #include "tsim/sim.h"
 
@@ -99,46 +98,6 @@ TEST_CASE("ring geometry") {
 	CHECK(p.dir.y == doctest::Approx(1.0));
 }
 
-TEST_CASE("map json round trip is exact") {
-	Map m;
-	build_ring(m, 1234.5678, 3, 3.3, 60.0 / 3.6);
-	const NodeId a = m.add_node({ 0.1, 0.2 });
-	const NodeId b = m.add_node({ 1.0 / 3.0, 77.7 });
-	m.add_straight(a, b, 2, 3.5, 13.9);
-	const std::string first = map_to_json(m);
-
-	Map loaded;
-	std::string err;
-	REQUIRE_MESSAGE(map_from_json(first, loaded, &err), err);
-	const std::string second = map_to_json(loaded);
-	CHECK(first == second);
-	REQUIRE(loaded.lanes().size() == m.lanes().size());
-	for (size_t i = 0; i < m.lanes().size(); ++i) {
-		CHECK(loaded.lanes()[i].length == m.lanes()[i].length); // bit-exact
-		CHECK(loaded.lanes()[i].next == m.lanes()[i].next);
-	}
-	CHECK(loaded.next_lane_id() == m.next_lane_id());
-}
-
-TEST_CASE("map json rejects bad input without changing the target") {
-	Map target;
-	build_ring(target, 50.0, 1, 3.5, 10.0);
-	const size_t lanes_before = target.lanes().size();
-	std::string err;
-	CHECK_FALSE(map_from_json("{nope", target, &err));
-	CHECK_FALSE(map_from_json(R"({"format":"other","version":1})", target, &err));
-	CHECK_FALSE(map_from_json(R"({"format":"traffic-sim-map","version":99,"nodes":[],"segments":[],"lanes":[]})",
-			target, &err));
-	CHECK(err.find("newer") != std::string::npos);
-	// Lane pointing at a missing lane.
-	CHECK_FALSE(map_from_json(R"({"format":"traffic-sim-map","version":1,
-		"nodes":[{"id":1,"x":0,"y":0},{"id":2,"x":10,"y":0}],
-		"segments":[{"id":1,"from":1,"to":2,"kind":"straight","lane_width":3.5,"speed_limit":10,"lanes":[1]}],
-		"lanes":[{"id":1,"segment":1,"next":[5]}]})",
-			target, &err));
-	CHECK(target.lanes().size() == lanes_before);
-}
-
 TEST_CASE("spawn spreads cars over looping lanes only") {
 	Map m;
 	build_ring(m, 200.0, 2, 3.5, 13.9);
@@ -215,15 +174,6 @@ TEST_CASE("same map and seed give the same hash; different seed differs") {
 	const uint64_t h3 = run_scenario(m, 200, 12, 500);
 	CHECK(h1 == h2);
 	CHECK(h1 != h3);
-}
-
-TEST_CASE("hash survives a JSON round trip of the map") {
-	Map m;
-	build_golden_map(m);
-	Map loaded;
-	std::string err;
-	REQUIRE(map_from_json(map_to_json(m), loaded, &err));
-	CHECK(run_scenario(m, 500, 7, 300) == run_scenario(loaded, 500, 7, 300));
 }
 
 TEST_CASE("adding a road mid-run keeps vehicles and determinism") {

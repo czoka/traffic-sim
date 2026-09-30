@@ -1,7 +1,6 @@
 #include "traffic_sim.h"
 
 #include "tsim/hash.h"
-#include "tsim/map_json.h"
 
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
@@ -82,25 +81,6 @@ int64_t TrafficSim::add_straight_road(Vector2 a, Vector2 b, int lanes, double sp
 	return s;
 }
 
-String TrafficSim::save_json() const {
-	const std::string text = tsim::map_to_json(map_);
-	return String::utf8(text.c_str(), static_cast<int64_t>(text.size()));
-}
-
-String TrafficSim::load_json(const String &text) {
-	const CharString utf8 = text.utf8();
-	tsim::Map loaded;
-	std::string err;
-	if (!tsim::map_from_json(std::string(utf8.get_data(), static_cast<size_t>(utf8.length())), loaded, &err)) {
-		return String::utf8(err.c_str());
-	}
-	sim_->clear_vehicles();
-	map_ = std::move(loaded);
-	sim_->on_map_changed();
-	reset_clock();
-	return String();
-}
-
 Array TrafficSim::get_road_lines(double max_step) const {
 	Array out;
 	std::vector<tsim::Vec2> pts;
@@ -143,7 +123,7 @@ Rect2 TrafficSim::get_map_bounds() const {
 		grow(n.pos.x, n.pos.y);
 	}
 	for (const tsim::Segment &s : map_.segments()) {
-		if (s.kind == tsim::SegmentKind::Arc) {
+		if (s.kind == tsim::NetCurve::Arc) {
 			const tsim::Node *a = map_.node(s.from);
 			const double r = a ? (a->pos - s.center).length() : 0.0;
 			grow(s.center.x - r, s.center.y - r);
@@ -297,8 +277,6 @@ Dictionary TrafficSim::run_golden_check() const {
 void TrafficSim::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("new_ring", "radius", "lanes", "lane_width", "speed_kmh"), &TrafficSim::new_ring);
 	ClassDB::bind_method(D_METHOD("add_straight_road", "a", "b", "lanes", "speed_kmh"), &TrafficSim::add_straight_road);
-	ClassDB::bind_method(D_METHOD("save_json"), &TrafficSim::save_json);
-	ClassDB::bind_method(D_METHOD("load_json", "text"), &TrafficSim::load_json);
 	ClassDB::bind_method(D_METHOD("get_road_lines", "max_step"), &TrafficSim::get_road_lines);
 	ClassDB::bind_method(D_METHOD("get_map_bounds"), &TrafficSim::get_map_bounds);
 	ClassDB::bind_method(D_METHOD("spawn_cars", "count", "seed"), &TrafficSim::spawn_cars);

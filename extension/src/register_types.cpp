@@ -1,3 +1,4 @@
+#include "road_editor.h"
 #include "traffic_sim.h"
 
 #include <gdextension_interface.h>
@@ -14,6 +15,7 @@ void initialize_traffic_sim(ModuleInitializationLevel level) {
 		return;
 	}
 	GDREGISTER_CLASS(TrafficSim);
+	GDREGISTER_CLASS(RoadEditor);
 }
 
 void uninitialize_traffic_sim(ModuleInitializationLevel level) {

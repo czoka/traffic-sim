@@ -1,4 +1,4 @@
-// GDExtension bridge: exposes the C++ simulation core to GDScript.
+// GDExtension bridge for the POC ring benchmark (runtime lane network + sim).
 //
 // The core (tsim::) knows nothing about Godot. This class owns a map and a
 // simulation, runs fixed ticks from real frame time (with a time budget so
@@ -35,9 +35,6 @@ public:
 	void new_ring(double radius, int lanes, double lane_width, double speed_kmh);
 	// Throwaway POC tool: a one-way straight road from a to b. Returns its ID.
 	int64_t add_straight_road(Vector2 a, Vector2 b, int lanes, double speed_kmh);
-	String save_json() const;
-	// Returns an empty string on success, otherwise the error message.
-	String load_json(const String &text);
 	// Road drawing data: Array of {points: PackedVector2Array, width: float, kind: int}
 	// kind 0 = asphalt, 1 = road edge, 2 = lane divider.
 	Array get_road_lines(double max_step) const;

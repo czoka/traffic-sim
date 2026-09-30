@@ -1,4 +1,5 @@
-// Editable road map: nodes, segments (straight or arc) and lanes.
+// Runtime lane network (POC): nodes, straight/arc segments and lanes with
+// explicit connectors. M2 compiles the editable RoadMap into this.
 //
 // Every object has a stable ID that is never reused, so save files, undo logs
 // and the simulation can refer to things by ID across edits.
@@ -11,7 +12,7 @@
 
 namespace tsim {
 
-enum class SegmentKind : uint8_t {
+enum class NetCurve : uint8_t {
 	Straight = 0,
 	Arc = 1,
 };
@@ -25,7 +26,7 @@ struct Segment {
 	SegmentId id = kNoId;
 	NodeId from = kNoId;
 	NodeId to = kNoId;
-	SegmentKind kind = SegmentKind::Straight;
+	NetCurve kind = NetCurve::Straight;
 	// Arc only: centre of the circle and signed sweep in radians. A positive
 	// sweep runs clockwise on screen (y-down), negative runs counter-clockwise.
 	Vec2 center;

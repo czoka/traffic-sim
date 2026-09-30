@@ -35,7 +35,7 @@ bool Map::compute_lane_length(const Segment &seg, Lane &lane) const {
 	if (!a || !b) {
 		return false;
 	}
-	if (seg.kind == SegmentKind::Straight) {
+	if (seg.kind == NetCurve::Straight) {
 		lane.length = (b->pos - a->pos).length();
 	} else {
 		const double radius = (a->pos - seg.center).length();
@@ -90,7 +90,7 @@ SegmentId Map::add_straight(NodeId from, NodeId to, int lane_count, double lane_
 	Segment seg;
 	seg.from = from;
 	seg.to = to;
-	seg.kind = SegmentKind::Straight;
+	seg.kind = NetCurve::Straight;
 	seg.lane_width = lane_width;
 	seg.speed_limit = speed_limit;
 	return add_segment(seg, lane_count);
@@ -111,7 +111,7 @@ SegmentId Map::add_arc(NodeId from, NodeId to, Vec2 center, double sweep, int la
 	Segment seg;
 	seg.from = from;
 	seg.to = to;
-	seg.kind = SegmentKind::Arc;
+	seg.kind = NetCurve::Arc;
 	seg.center = center;
 	seg.sweep = sweep;
 	seg.lane_width = lane_width;
@@ -146,7 +146,7 @@ Pose Map::lane_pose(const Lane &lane, double s) const {
 		return p;
 	}
 	const double t = lane.length > 0.0 ? std::clamp(s / lane.length, 0.0, 1.0) : 0.0;
-	if (seg->kind == SegmentKind::Straight) {
+	if (seg->kind == NetCurve::Straight) {
 		const Vec2 d = (b->pos - a->pos).normalized();
 		p.dir = d;
 		p.pos = a->pos + d.right() * lane.offset + (b->pos - a->pos) * t;
@@ -169,7 +169,7 @@ void Map::offset_polyline(const Segment &seg, double offset, double max_step, st
 	if (!a || !b) {
 		return;
 	}
-	if (seg.kind == SegmentKind::Straight) {
+	if (seg.kind == NetCurve::Straight) {
 		const Vec2 n = (b->pos - a->pos).normalized().right() * offset;
 		out.push_back(a->pos + n);
 		out.push_back(b->pos + n);
@@ -247,7 +247,7 @@ bool MapBuilder::finish(uint32_t next_node, uint32_t next_segment, uint32_t next
 		if (!(s.lane_width > 0.0) || !(s.speed_limit > 0.0)) {
 			return fail("segment " + std::to_string(s.id) + " has invalid lane width or speed limit");
 		}
-		if (s.kind == SegmentKind::Arc && (s.sweep == 0.0 || std::fabs(s.sweep) > 2.0 * kPi)) {
+		if (s.kind == NetCurve::Arc && (s.sweep == 0.0 || std::fabs(s.sweep) > 2.0 * kPi)) {
 			return fail("segment " + std::to_string(s.id) + " has an invalid sweep");
 		}
 		const int count = static_cast<int>(s.lanes.size());
