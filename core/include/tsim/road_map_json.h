@@ -4,6 +4,9 @@
 //   1  POC: one-way lanes with explicit connectors (migrated on load)
 //   2  M1: levels, curves (straight/arc/bezier), road profiles, turn rules,
 //      no-change zones
+//   3  M2: junction control per node (right-hand, priority road, all-way
+//      stop), spawn / sink points with rates and origin-destination weights.
+//      Version 2 files load unchanged (the new fields have defaults).
 // Numbers are written in shortest round-trip form and keys in a fixed order,
 // so save -> load -> save gives an identical file.
 #pragma once
@@ -14,7 +17,7 @@
 
 namespace tsim {
 
-constexpr int kRoadMapVersion = 2;
+constexpr int kRoadMapVersion = 3;
 
 std::string road_map_to_json(const RoadMap &map);
 

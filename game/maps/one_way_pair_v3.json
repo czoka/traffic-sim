@@ -1,0 +1,597 @@
+{
+ "format": "traffic-sim-map",
+ "version": 3,
+ "next_ids": {
+  "node": 13,
+  "segment": 13,
+  "lane": 49
+ },
+ "nodes": [
+  {
+   "id": 1,
+   "x": -300.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 500.0,
+    "sink": false
+   }
+  },
+  {
+   "id": 2,
+   "x": -100.0,
+   "y": 0.0,
+   "level": 0
+  },
+  {
+   "id": 3,
+   "x": 100.0,
+   "y": 0.0,
+   "level": 0
+  },
+  {
+   "id": 4,
+   "x": 300.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 0.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 5,
+   "x": -300.0,
+   "y": 100.0,
+   "level": 0,
+   "spawner": {
+    "rate": 0.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 6,
+   "x": -100.0,
+   "y": 100.0,
+   "level": 0
+  },
+  {
+   "id": 7,
+   "x": 100.0,
+   "y": 100.0,
+   "level": 0
+  },
+  {
+   "id": 8,
+   "x": 300.0,
+   "y": 100.0,
+   "level": 0,
+   "spawner": {
+    "rate": 500.0,
+    "sink": false
+   }
+  },
+  {
+   "id": 9,
+   "x": -100.0,
+   "y": -150.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 10,
+   "x": 100.0,
+   "y": -150.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 11,
+   "x": -100.0,
+   "y": 250.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 12,
+   "x": 100.0,
+   "y": 250.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true
+   }
+  }
+ ],
+ "segments": [
+  {
+   "id": 1,
+   "from": 1,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 1,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 2,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 3,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 4,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 2,
+   "from": 2,
+   "to": 3,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 5,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 6,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 7,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 8,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "from": 3,
+   "to": 4,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 9,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 10,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 11,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 12,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 4,
+   "from": 8,
+   "to": 7,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 13,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 14,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 15,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 16,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 5,
+   "from": 7,
+   "to": 6,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 17,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 18,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 19,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 20,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 6,
+   "from": 6,
+   "to": 5,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 21,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 22,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 23,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 24,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 7,
+   "from": 9,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 25,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 26,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 27,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 28,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 8,
+   "from": 2,
+   "to": 6,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 29,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 30,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 31,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 32,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 9,
+   "from": 6,
+   "to": 11,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 33,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 34,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 35,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 36,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 10,
+   "from": 10,
+   "to": 3,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 37,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 38,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 39,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 40,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 11,
+   "from": 3,
+   "to": 7,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 41,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 42,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 43,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 44,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 12,
+   "from": 7,
+   "to": 12,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 45,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 46,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 47,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 48,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  }
+ ]
+}

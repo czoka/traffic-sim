@@ -8,6 +8,37 @@ namespace tsim {
 
 // --- Lane types --------------------------------------------------------------
 
+const char *junction_control_name(JunctionControl c) {
+	switch (c) {
+		case JunctionControl::RightHand:
+			return "right_hand";
+		case JunctionControl::PriorityRoad:
+			return "priority_road";
+		case JunctionControl::AllWayStop:
+			return "all_way_stop";
+	}
+	return "right_hand";
+}
+
+bool junction_control_from_name(const std::string &s, JunctionControl &out) {
+	if (s == "right_hand") out = JunctionControl::RightHand;
+	else if (s == "priority_road") out = JunctionControl::PriorityRoad;
+	else if (s == "all_way_stop") out = JunctionControl::AllWayStop;
+	else return false;
+	return true;
+}
+
+double Spawner::weight_to(NodeId to) const {
+	for (const OdWeight &w : od) {
+		if (w.to == to) return w.weight;
+	}
+	return 1.0;
+}
+
+bool RoadNode::is_priority(SegmentId s) const {
+	return std::find(priority.begin(), priority.end(), s) != priority.end();
+}
+
 bool is_travel(LaneType t) { return t == LaneType::General || t == LaneType::Bus || t == LaneType::Turn; }
 
 bool is_directional(LaneType t) { return is_travel(t) || t == LaneType::Bike; }

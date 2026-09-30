@@ -1140,10 +1140,16 @@ void RoadGeometry::build(const RoadMap &map) {
 			triangulate(ring, mesh.get(g.level, Layer::Asphalt), kAsphalt);
 		}
 
-		// Stop lines (not at simple bends).
+		// Stop lines (not at simple bends), styled by the junction control:
+		// right-hand priority gets a dashed give-way line, a priority road's
+		// main legs get none and its side legs get shark teeth, an all-way stop
+		// gets a wide solid line.
 		MeshBatch &paint = mesh.get(g.level, Layer::Markings);
+		const RoadNode *rn = map.node(g.id);
 		for (const Leg &leg : g.legs) {
 			if (deg < 3) break;
+			const JunctionControl ctl = rn ? rn->control : JunctionControl::RightHand;
+			const bool major = ctl == JunctionControl::PriorityRoad && rn->is_priority(leg.seg);
 			const std::vector<LegLane> in = leg_lanes(leg, true);
 			if (in.empty()) continue;
 			const SegCtx &c = ctx[leg.seg];
@@ -1156,9 +1162,30 @@ void RoadGeometry::build(const RoadMap &map) {
 			}
 			Vec2 p, nrm;
 			c.frame(s, p, nrm);
-			const Vec2 tan = tangent_of(nrm) * 0.2;
+			const Vec2 along = tangent_of(nrm);
 			const Vec2 a = p + nrm * lo, b = p + nrm * hi;
-			MeshSet::quad(paint, a - tan, b - tan, b + tan, a + tan, kWhite);
+			if (major) continue;
+			if (ctl == JunctionControl::AllWayStop) {
+				const Vec2 t = along * 0.25;
+				MeshSet::quad(paint, a - t, b - t, b + t, a + t, kWhite);
+				continue;
+			}
+			// Upstream is away from the node along the leg.
+			const Vec2 up = leg.at_start ? along : along * -1.0;
+			const double width = hi - lo;
+			const int n = std::max(1, static_cast<int>(width / 1.2));
+			const double step = width / n;
+			for (int i = 0; i < n; ++i) {
+				const Vec2 q0 = p + nrm * (lo + step * i + 0.15);
+				const Vec2 q1 = p + nrm * (lo + step * (i + 1) - 0.15);
+				if (ctl == JunctionControl::PriorityRoad) {
+					MeshSet::tri(paint, q0, q1, (q0 + q1) * 0.5 + up * 0.9, kWhite);
+				} else {
+					const Vec2 t = along * 0.15;
+					const Vec2 m0 = q0 + (q1 - q0) * 0.2, m1 = q0 + (q1 - q0) * 0.8;
+					MeshSet::quad(paint, m0 - t, m1 - t, m1 + t, m0 + t, kWhite);
+				}
+			}
 		}
 
 		// Default connectors from turn rules.

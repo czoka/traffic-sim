@@ -77,11 +77,15 @@ std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom) {
 
 	for (const auto &kv : geom.nodes()) {
 		const NodeGeom &g = kv.second;
-		if (g.kind == NodeKind::End && !g.dead_lanes.empty()) {
+		const RoadNode *rn = map.node(g.id);
+		const bool spawn_point = rn && rn->spawner.enabled;
+		if (g.kind == NodeKind::End && spawn_point) {
+			// Traffic enters and leaves the map here.
+		} else if (g.kind == NodeKind::End && !g.dead_lanes.empty()) {
 			Problem p;
 			p.severity = Severity::Warning;
 			p.code = "road_end";
-			p.message = "Road ends here. Cars will need a spawn or sink point (M2) or a connection.";
+			p.message = "Road ends here. Cars won't use it: add a spawn point (N) or connect it.";
 			p.pos = g.pos;
 			p.level = g.level;
 			p.nodes = { g.id };

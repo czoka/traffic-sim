@@ -113,12 +113,53 @@ struct NoChangeZone {
 	}
 };
 
+// How a junction decides who goes first (M2). Signals and roundabouts are M3.
+enum class JunctionControl : uint8_t {
+	RightHand = 0, // yield to the right (European default for unmarked junctions)
+	PriorityRoad = 1, // the legs listed in RoadNode::priority have right of way
+	AllWayStop = 2, // everyone stops; first come, first served
+};
+
+const char *junction_control_name(JunctionControl c);
+bool junction_control_from_name(const std::string &s, JunctionControl &out);
+
+// Share of a spawner's trips that go to one destination (origin-destination
+// matrix row). Destinations without an entry get weight 1, so the default is
+// uniform.
+struct OdWeight {
+	NodeId to = kNoId;
+	double weight = 1.0;
+
+	bool operator==(const OdWeight &o) const { return to == o.to && weight == o.weight; }
+};
+
+// Spawn / sink point for traffic from outside the map, on a road end.
+struct Spawner {
+	bool enabled = false;
+	double rate = 300.0; // vehicles per hour entering here (0 = sink only)
+	bool sink = true; // vehicles may leave the map here
+	std::vector<OdWeight> od;
+
+	bool operator==(const Spawner &o) const {
+		return enabled == o.enabled && rate == o.rate && sink == o.sink && od == o.od;
+	}
+	double weight_to(NodeId to) const;
+};
+
 struct RoadNode {
 	NodeId id = kNoId;
 	Vec2 pos;
 	int level = 0;
+	JunctionControl control = JunctionControl::RightHand;
+	// Segments whose legs form the main road (PriorityRoad only).
+	std::vector<SegmentId> priority;
+	Spawner spawner;
 
-	bool operator==(const RoadNode &o) const { return id == o.id && pos == o.pos && level == o.level; }
+	bool operator==(const RoadNode &o) const {
+		return id == o.id && pos == o.pos && level == o.level && control == o.control && priority == o.priority &&
+				spawner == o.spawner;
+	}
+	bool is_priority(SegmentId s) const;
 };
 
 struct RoadSegment {

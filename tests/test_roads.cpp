@@ -285,7 +285,7 @@ TEST_CASE("json: save -> load -> save is identical; errors leave the target alon
 
 	RoadMap target = loaded;
 	CHECK_FALSE(road_map_from_json("{", target, &err));
-	CHECK_FALSE(road_map_from_json(R"({"format":"traffic-sim-map","version":3})", target, &err));
+	CHECK_FALSE(road_map_from_json(R"({"format":"traffic-sim-map","version":4})", target, &err));
 	CHECK(err.find("newer") != std::string::npos);
 	CHECK_FALSE(road_map_from_json(
 			R"({"format":"traffic-sim-map","version":2,"nodes":[{"id":1,"x":0,"y":0,"level":0}],
@@ -318,8 +318,8 @@ TEST_CASE("json: v1 (POC) ring migrates to a v2 map") {
 	RoadGeometry g;
 	g.build(m);
 	for (const auto &kv : g.nodes()) CHECK(kv.second.kind == NodeKind::Continuation);
-	// Re-saving writes version 2.
-	CHECK(road_map_to_json(m).find("\"version\": 2") != std::string::npos);
+	// Re-saving writes the current version.
+	CHECK(road_map_to_json(m).find("\"version\": 3") != std::string::npos);
 }
 
 TEST_CASE("geometry: four-way junction is trimmed, filled and connected") {
@@ -512,7 +512,7 @@ TEST_CASE("M1 gate: 50+ junction network builds, saves identically and survives 
 		auto nth_seg = [&](uint64_t k) { auto it = segs.begin(); std::advance(it, static_cast<long>(k % segs.size())); return it->first; };
 		auto nth_node = [&](uint64_t k) { auto it = nodes.begin(); std::advance(it, static_cast<long>(k % nodes.size())); return it->first; };
 		const size_t before = doc.undo_count();
-		switch (rng.next_u64() % 9) {
+		switch (rng.next_u64() % 11) {
 			case 0: {
 				const NodeId n = nth_node(rng.next_u64());
 				doc.move_node(n, doc.map().node(n)->pos + Vec2{ rng.range(-20, 20), rng.range(-20, 20) });
@@ -554,6 +554,19 @@ TEST_CASE("M1 gate: 50+ junction network builds, saves identically and survives 
 					doc.set_no_change(s, 1 + static_cast<int>(rng.next_u64() % static_cast<uint64_t>(lanes - 1)), a,
 							std::min(1.0, a + 0.3), true, rng.uniform() < 0.5);
 				}
+				break;
+			}
+			case 9: {
+				const NodeId n = nth_node(rng.next_u64());
+				doc.set_junction_control(n, static_cast<JunctionControl>(rng.next_u64() % 3), doc.map().segments_at(n));
+				break;
+			}
+			case 10: {
+				Spawner sp;
+				sp.enabled = rng.uniform() < 0.7;
+				sp.rate = rng.range(0, 800);
+				sp.sink = rng.uniform() < 0.5;
+				doc.set_spawner(nth_node(rng.next_u64()), sp);
 				break;
 			}
 		}

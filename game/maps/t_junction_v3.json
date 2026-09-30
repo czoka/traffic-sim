@@ -1,0 +1,176 @@
+{
+ "format": "traffic-sim-map",
+ "version": 3,
+ "next_ids": {
+  "node": 5,
+  "segment": 4,
+  "lane": 13
+ },
+ "nodes": [
+  {
+   "id": 1,
+   "x": -200.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 400.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 2,
+   "x": 0.0,
+   "y": 0.0,
+   "level": 0,
+   "control": {
+    "type": "priority_road",
+    "priority": [
+     1,
+     2
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "x": 200.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 400.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 4,
+   "x": 0.0,
+   "y": 200.0,
+   "level": 0,
+   "spawner": {
+    "rate": 300.0,
+    "sink": true
+   }
+  }
+ ],
+ "segments": [
+  {
+   "id": 1,
+   "from": 1,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 1,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 2,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 3,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 4,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 2,
+   "from": 2,
+   "to": 3,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 5,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 6,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 7,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 8,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "from": 4,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 9,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 10,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 11,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 12,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  }
+ ]
+}
