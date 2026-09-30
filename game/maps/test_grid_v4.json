@@ -1,6 +1,6 @@
 {
  "format": "traffic-sim-map",
- "version": 3,
+ "version": 4,
  "next_ids": {
   "node": 88,
   "segment": 129,
@@ -1122,7 +1122,7 @@
       "id": 26,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 27,
@@ -1152,7 +1152,7 @@
       "id": 31,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 32,
@@ -1201,7 +1201,7 @@
       "id": 36,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 37,
@@ -1231,7 +1231,7 @@
       "id": 41,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 42,
@@ -1280,7 +1280,7 @@
       "id": 46,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 47,
@@ -1310,7 +1310,7 @@
       "id": 51,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 52,
@@ -1359,7 +1359,7 @@
       "id": 56,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 57,
@@ -1389,7 +1389,7 @@
       "id": 61,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 62,
@@ -1438,7 +1438,7 @@
       "id": 66,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 67,
@@ -1468,7 +1468,7 @@
       "id": 71,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 72,
@@ -1517,7 +1517,7 @@
       "id": 76,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 77,
@@ -1547,7 +1547,7 @@
       "id": 81,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 82,
@@ -2958,7 +2958,7 @@
       "id": 230,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 231,
@@ -2988,7 +2988,7 @@
       "id": 235,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 236,
@@ -3037,7 +3037,7 @@
       "id": 240,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 241,
@@ -3067,7 +3067,7 @@
       "id": 245,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 246,
@@ -3116,7 +3116,7 @@
       "id": 250,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 251,
@@ -3146,7 +3146,7 @@
       "id": 255,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 256,
@@ -3195,7 +3195,7 @@
       "id": 260,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 261,
@@ -3225,7 +3225,7 @@
       "id": 265,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 266,
@@ -3274,7 +3274,7 @@
       "id": 270,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 271,
@@ -3304,7 +3304,7 @@
       "id": 275,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 276,
@@ -3353,7 +3353,7 @@
       "id": 280,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 281,
@@ -3383,7 +3383,7 @@
       "id": 285,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 286,
@@ -3431,7 +3431,7 @@
       "id": 290,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 291,
@@ -3449,7 +3449,7 @@
       "id": 293,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 294,
@@ -3483,7 +3483,7 @@
       "id": 296,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 297,
@@ -3501,7 +3501,7 @@
       "id": 299,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 300,
@@ -3535,7 +3535,7 @@
       "id": 302,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 303,
@@ -3553,7 +3553,7 @@
       "id": 305,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 306,
@@ -3587,7 +3587,7 @@
       "id": 308,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 309,
@@ -3605,7 +3605,7 @@
       "id": 311,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 312,
@@ -3639,7 +3639,7 @@
       "id": 314,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 315,
@@ -3657,7 +3657,7 @@
       "id": 317,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 318,
@@ -3691,7 +3691,7 @@
       "id": 320,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 321,
@@ -3709,7 +3709,7 @@
       "id": 323,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 324,
@@ -3743,7 +3743,7 @@
       "id": 326,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 327,
@@ -3761,7 +3761,7 @@
       "id": 329,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 330,
@@ -4109,7 +4109,7 @@
       "id": 367,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 368,
@@ -4127,7 +4127,7 @@
       "id": 370,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 371,
@@ -4161,7 +4161,7 @@
       "id": 373,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 374,
@@ -4179,7 +4179,7 @@
       "id": 376,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 377,
@@ -4213,7 +4213,7 @@
       "id": 379,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 380,
@@ -4231,7 +4231,7 @@
       "id": 382,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 383,
@@ -4265,7 +4265,7 @@
       "id": 385,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 386,
@@ -4283,7 +4283,7 @@
       "id": 388,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 389,
@@ -4317,7 +4317,7 @@
       "id": 391,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 392,
@@ -4335,7 +4335,7 @@
       "id": 394,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 395,
@@ -4369,7 +4369,7 @@
       "id": 397,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 398,
@@ -4387,7 +4387,7 @@
       "id": 400,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 401,
@@ -4421,7 +4421,7 @@
       "id": 403,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 404,
@@ -4439,7 +4439,7 @@
       "id": 406,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 407,
@@ -4753,7 +4753,7 @@
       "id": 437,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 438,
@@ -4771,7 +4771,7 @@
       "id": 440,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 441,
@@ -4805,7 +4805,7 @@
       "id": 443,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 444,
@@ -4823,7 +4823,7 @@
       "id": 446,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 447,
@@ -4857,7 +4857,7 @@
       "id": 449,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 450,
@@ -4875,7 +4875,7 @@
       "id": 452,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 453,
@@ -4909,7 +4909,7 @@
       "id": 455,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 456,
@@ -4927,7 +4927,7 @@
       "id": 458,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 459,
@@ -4961,7 +4961,7 @@
       "id": 461,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 462,
@@ -4979,7 +4979,7 @@
       "id": 464,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 465,
@@ -5013,7 +5013,7 @@
       "id": 467,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 468,
@@ -5031,7 +5031,7 @@
       "id": 470,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 471,
@@ -5065,7 +5065,7 @@
       "id": 473,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 474,
@@ -5083,7 +5083,7 @@
       "id": 476,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 477,
@@ -5397,7 +5397,7 @@
       "id": 507,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 508,
@@ -5415,7 +5415,7 @@
       "id": 510,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 511,
@@ -5449,7 +5449,7 @@
       "id": 513,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 514,
@@ -5467,7 +5467,7 @@
       "id": 516,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 517,
@@ -5501,7 +5501,7 @@
       "id": 519,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 520,
@@ -5519,7 +5519,7 @@
       "id": 522,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 523,
@@ -5553,7 +5553,7 @@
       "id": 525,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 526,
@@ -5571,7 +5571,7 @@
       "id": 528,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 529,
@@ -5605,7 +5605,7 @@
       "id": 531,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 532,
@@ -5623,7 +5623,7 @@
       "id": 534,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 535,
@@ -5657,7 +5657,7 @@
       "id": 537,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 538,
@@ -5675,7 +5675,7 @@
       "id": 540,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 541,
@@ -5709,7 +5709,7 @@
       "id": 543,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 544,
@@ -5727,7 +5727,7 @@
       "id": 546,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 547,
@@ -5842,7 +5842,7 @@
       "id": 557,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 558,
@@ -5872,7 +5872,7 @@
       "id": 562,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 563,
@@ -5907,7 +5907,7 @@
       "id": 565,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 566,
@@ -5937,7 +5937,7 @@
       "id": 570,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 571,
@@ -6398,7 +6398,7 @@
       "id": 617,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 618,
@@ -6428,7 +6428,7 @@
       "id": 622,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 623,
@@ -6463,7 +6463,7 @@
       "id": 625,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 626,
@@ -6493,7 +6493,7 @@
       "id": 630,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 631,
@@ -6527,7 +6527,7 @@
       "id": 633,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 634,
@@ -6545,7 +6545,7 @@
       "id": 636,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 637,
@@ -6579,7 +6579,7 @@
       "id": 639,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 640,
@@ -6597,7 +6597,7 @@
       "id": 642,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 643,
@@ -6711,7 +6711,7 @@
       "id": 653,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 654,
@@ -6729,7 +6729,7 @@
       "id": 656,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 657,
@@ -6763,7 +6763,7 @@
       "id": 659,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 660,
@@ -6781,7 +6781,7 @@
       "id": 662,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 663,
@@ -6895,7 +6895,7 @@
       "id": 673,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 674,
@@ -6913,7 +6913,7 @@
       "id": 676,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 677,
@@ -6947,7 +6947,7 @@
       "id": 679,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 680,
@@ -6965,7 +6965,7 @@
       "id": 682,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 683,
@@ -7079,7 +7079,7 @@
       "id": 693,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 694,
@@ -7097,7 +7097,7 @@
       "id": 696,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 697,
@@ -7131,7 +7131,7 @@
       "id": 699,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 700,
@@ -7149,7 +7149,7 @@
       "id": 702,
       "type": "parking",
       "dir": "none",
-      "width": 2.5
+      "width": 2.0
      },
      {
       "id": 703,
