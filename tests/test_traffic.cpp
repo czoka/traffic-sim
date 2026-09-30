@@ -133,7 +133,9 @@ struct Invariants {
 	int box_violations = 0;
 	void check(const Network &net, const Traffic &t) {
 		std::map<int32_t, std::vector<const Vehicle *>> by_lane;
-		for (const Vehicle &v : t.vehicles()) by_lane[v.lane].push_back(&v);
+		for (const Vehicle &v : t.vehicles()) {
+			if (!v.off_lane) by_lane[v.lane].push_back(&v); // parked cars are beside the lane
+		}
 		for (auto &kv : by_lane) {
 			auto &vs = kv.second;
 			std::sort(vs.begin(), vs.end(), [](const Vehicle *a, const Vehicle *b) { return a->s > b->s; });
@@ -777,7 +779,7 @@ TEST_CASE("map v3: junction control and spawn points save, load, undo and surviv
 	Document doc;
 	build_t_junction(doc);
 	const std::string a = road_map_to_json(doc.map());
-	CHECK(a.find("\"version\": 3") != std::string::npos);
+	CHECK(a.find("\"version\": 4") != std::string::npos);
 	CHECK(a.find("priority_road") != std::string::npos);
 	CHECK(a.find("\"spawner\"") != std::string::npos);
 	RoadMap loaded;

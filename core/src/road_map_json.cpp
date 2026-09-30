@@ -144,8 +144,9 @@ ojson vec_json(Vec2 v) { return ojson{ { "x", v.x }, { "y", v.y } }; }
 ojson profile_json(const Profile &p) {
 	ojson lanes = ojson::array();
 	for (const LaneSpec &l : p.lanes) {
-		lanes.push_back(ojson{ { "id", l.id }, { "type", lane_type_name(l.type) }, { "dir", dir_name(l.dir) },
-				{ "width", l.width } });
+		ojson jl{ { "id", l.id }, { "type", lane_type_name(l.type) }, { "dir", dir_name(l.dir) }, { "width", l.width } };
+		if (l.type == LaneType::Parking && l.parking != ParkingStyle::Parallel) jl["parking"] = parking_style_name(l.parking);
+		lanes.push_back(std::move(jl));
 	}
 	ojson o;
 	o["median"] = median_name(p.median);
@@ -178,6 +179,11 @@ bool parse_profile(const json &o, Profile &p, std::string &err) {
 		if (!jl.is_object() || !id(jl, "id", l.id) || !str(jl, "type", t) || !lane_type_from_name(t, l.type) ||
 				!str(jl, "dir", d) || !dir_from(d, l.dir) || !num(jl, "width", l.width)) {
 			err = "invalid lane in profile";
+			return false;
+		}
+		std::string ps;
+		if (str(jl, "parking", ps) && !parking_style_from_name(ps, l.parking)) {
+			err = "invalid parking style '" + ps + "'";
 			return false;
 		}
 		p.lanes.push_back(l);
@@ -308,6 +314,115 @@ bool parse_node_extras(const json &jn, RoadNode &n, std::string &err) {
 				s.od.push_back(w);
 			}
 		}
+		num(*sp, "bikes", s.bikes);
+		auto cl = sp->find("coaches");
+		if (cl != sp->end()) {
+			if (!cl->is_array()) {
+				err = where + "coaches must be an array";
+				return false;
+			}
+			for (const json &jc : *cl) {
+				CoachLine c;
+				if (!jc.is_object() || !id(jc, "id", c.id) || !id(jc, "exit", c.exit) || !num(jc, "per_hour", c.per_hour) ||
+						!num(jc, "dwell", c.dwell)) {
+					err = where + "invalid coach line";
+					return false;
+				}
+				s.coaches.push_back(c);
+			}
+		}
+	}
+	auto rb = jn.find("roundabout");
+	if (rb != jn.end()) {
+		Roundabout &r = n.roundabout;
+		r.enabled = true;
+		if (!rb->is_object() || !num(*rb, "radius", r.radius) || !integer(*rb, "lanes", r.lanes) || r.lanes < 1 ||
+				r.lanes > 3 || !(r.radius >= 5.0 && r.radius <= 100.0)) {
+			err = where + "invalid roundabout";
+			return false;
+		}
+		auto t = rb->find("turbo");
+		if (t != rb->end() && t->is_boolean()) r.turbo = t->get<bool>();
+		auto sl = rb->find("slip");
+		if (sl != rb->end() && sl->is_array()) {
+			for (const json &v : *sl) {
+				if (v.is_number_unsigned()) r.slip.push_back(static_cast<SegmentId>(v.get<uint64_t>()));
+			}
+		}
+	}
+	auto sg = jn.find("signal");
+	if (sg != jn.end()) {
+		SignalPlan &pl = n.signal;
+		if (!sg->is_object() || !num(*sg, "amber", pl.amber) || !num(*sg, "all_red", pl.all_red)) {
+			err = where + "invalid signal plan";
+			return false;
+		}
+		num(*sg, "offset", pl.offset);
+		auto phases = sg->find("phases");
+		if (phases == sg->end() || !phases->is_array()) {
+			err = where + "signal plan needs phases";
+			return false;
+		}
+		for (const json &jp : *phases) {
+			SignalPhase ph;
+			auto moves = jp.find("moves");
+			if (!jp.is_object() || !num(jp, "green", ph.green) || moves == jp.end() || !moves->is_array()) {
+				err = where + "invalid signal phase";
+				return false;
+			}
+			for (const json &jm : *moves) {
+				SignalMovement m;
+				if (!jm.is_object() || !id(jm, "from", m.from) || !id(jm, "to", m.to)) {
+					err = where + "invalid signal movement";
+					return false;
+				}
+				auto pm = jm.find("permissive");
+				if (pm != jm.end() && pm->is_boolean()) m.permissive = pm->get<bool>();
+				ph.moves.push_back(m);
+			}
+			pl.phases.push_back(ph);
+		}
+		auto ror = sg->find("right_on_red");
+		if (ror != sg->end() && ror->is_array()) {
+			for (const json &v : *ror) {
+				if (v.is_number_unsigned()) pl.right_on_red.push_back(static_cast<SegmentId>(v.get<uint64_t>()));
+			}
+		}
+	}
+	auto dp = jn.find("depot");
+	if (dp != jn.end()) {
+		Depot &d = n.depot;
+		d.enabled = true;
+		if (!dp->is_object() || !integer(*dp, "capacity", d.capacity)) {
+			err = where + "invalid depot";
+			return false;
+		}
+		str(*dp, "name", d.name);
+		auto routes = dp->find("routes");
+		if (routes != dp->end()) {
+			if (!routes->is_array()) {
+				err = where + "depot routes must be an array";
+				return false;
+			}
+			for (const json &jr : *routes) {
+				BusRoute r;
+				double color = 0.0;
+				auto st = jr.find("stops");
+				if (!jr.is_object() || !id(jr, "id", r.id) || !num(jr, "headway", r.headway) || st == jr.end() ||
+						!st->is_array()) {
+					err = where + "invalid bus route";
+					return false;
+				}
+				str(jr, "name", r.name);
+				if (num(jr, "color", color)) r.color = static_cast<uint32_t>(color);
+				auto lp = jr.find("loop");
+				if (lp != jr.end() && lp->is_boolean()) r.loop = lp->get<bool>();
+				for (const json &v : *st) {
+					if (v.is_number_unsigned()) r.stops.push_back(static_cast<uint32_t>(v.get<uint64_t>()));
+				}
+				d.routes.push_back(r);
+			}
+		}
 	}
 	return true;
 }
@@ -326,7 +441,56 @@ ojson node_json(const RoadNode &n) {
 			for (const OdWeight &w : n.spawner.od) od.push_back(ojson{ { "to", w.to }, { "weight", w.weight } });
 			s["od"] = std::move(od);
 		}
+		if (n.spawner.bikes != 0.0) s["bikes"] = n.spawner.bikes;
+		if (!n.spawner.coaches.empty()) {
+			ojson cl = ojson::array();
+			for (const CoachLine &c : n.spawner.coaches) {
+				cl.push_back(ojson{ { "id", c.id }, { "exit", c.exit }, { "per_hour", c.per_hour }, { "dwell", c.dwell } });
+			}
+			s["coaches"] = std::move(cl);
+		}
 		o["spawner"] = std::move(s);
+	}
+	if (n.roundabout.enabled) {
+		ojson r{ { "radius", n.roundabout.radius }, { "lanes", n.roundabout.lanes } };
+		if (n.roundabout.turbo) r["turbo"] = true;
+		if (!n.roundabout.slip.empty()) r["slip"] = n.roundabout.slip;
+		o["roundabout"] = std::move(r);
+	}
+	if (!n.signal.phases.empty() || !n.signal.right_on_red.empty()) {
+		ojson sg{ { "amber", n.signal.amber }, { "all_red", n.signal.all_red } };
+		if (n.signal.offset != 0.0) sg["offset"] = n.signal.offset;
+		ojson phases = ojson::array();
+		for (const SignalPhase &ph : n.signal.phases) {
+			ojson moves = ojson::array();
+			for (const SignalMovement &m : ph.moves) {
+				ojson jm{ { "from", m.from }, { "to", m.to } };
+				if (m.permissive) jm["permissive"] = true;
+				moves.push_back(std::move(jm));
+			}
+			phases.push_back(ojson{ { "green", ph.green }, { "moves", std::move(moves) } });
+		}
+		sg["phases"] = std::move(phases);
+		if (!n.signal.right_on_red.empty()) sg["right_on_red"] = n.signal.right_on_red;
+		o["signal"] = std::move(sg);
+	}
+	if (n.depot.enabled) {
+		ojson d{ { "capacity", n.depot.capacity } };
+		if (!n.depot.name.empty()) d["name"] = n.depot.name;
+		if (!n.depot.routes.empty()) {
+			ojson routes = ojson::array();
+			for (const BusRoute &r : n.depot.routes) {
+				ojson jr{ { "id", r.id } };
+				if (!r.name.empty()) jr["name"] = r.name;
+				jr["color"] = r.color;
+				jr["stops"] = r.stops;
+				jr["headway"] = r.headway;
+				if (r.loop) jr["loop"] = true;
+				routes.push_back(std::move(jr));
+			}
+			d["routes"] = std::move(routes);
+		}
+		o["depot"] = std::move(d);
 	}
 	return o;
 }
@@ -453,6 +617,26 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 				s.no_change.push_back(z);
 			}
 		}
+		auto stops = js.find("stops");
+		if (stops != js.end()) {
+			if (!stops->is_array()) {
+				err = where + "stops must be an array";
+				return false;
+			}
+			for (const json &jst : *stops) {
+				BusStop b;
+				std::string kind, side;
+				if (!jst.is_object() || !id(jst, "id", b.id) || !num(jst, "u", b.u) || !str(jst, "kind", kind) ||
+						!stop_kind_from_name(kind, b.kind) || !str(jst, "side", side) || !dir_from(side, b.side) ||
+						b.side == LaneDir::None || !(b.u >= 0.0 && b.u <= 1.0)) {
+					err = where + "invalid bus stop";
+					return false;
+				}
+				str(jst, "name", b.name);
+				integer(jst, "bays", b.bays);
+				s.stops.push_back(b);
+			}
+		}
 		map.put_segment(s);
 	}
 	// Lane IDs must be unique across the map.
@@ -467,11 +651,12 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 	}
 	auto next = root.find("next_ids");
 	if (next != root.end() && next->is_object()) {
-		uint32_t n = 1, s = 1, l = 1;
+		uint32_t n = 1, s = 1, l = 1, o = 1;
 		id(*next, "node", n);
 		id(*next, "segment", s);
 		id(*next, "lane", l);
-		map.set_next_ids(n, s, l);
+		id(*next, "object", o);
+		map.set_next_ids(n, s, l, o);
 	}
 	return true;
 }
@@ -484,6 +669,7 @@ std::string road_map_to_json(const RoadMap &map) {
 	root["version"] = kRoadMapVersion;
 	root["next_ids"] = ojson{ { "node", map.next_node_id() }, { "segment", map.next_segment_id() },
 		{ "lane", map.next_lane_id() } };
+	if (map.next_object_id() > 1) root["next_ids"]["object"] = map.next_object_id();
 	ojson nodes = ojson::array();
 	for (const auto &kv : map.nodes()) {
 		const RoadNode &n = kv.second;
@@ -536,6 +722,16 @@ std::string road_map_to_json(const RoadMap &map) {
 				zones.push_back(ojson{ { "edge", z.edge }, { "from", z.u0 }, { "to", z.u1 }, { "block", block } });
 			}
 			js["no_change"] = std::move(zones);
+		}
+		if (!s.stops.empty()) {
+			ojson stops = ojson::array();
+			for (const BusStop &b : s.stops) {
+				ojson jst{ { "id", b.id }, { "u", b.u }, { "side", dir_name(b.side) }, { "kind", stop_kind_name(b.kind) } };
+				if (!b.name.empty()) jst["name"] = b.name;
+				if (b.bays != 1) jst["bays"] = b.bays;
+				stops.push_back(std::move(jst));
+			}
+			js["stops"] = std::move(stops);
 		}
 		segments.push_back(std::move(js));
 	}

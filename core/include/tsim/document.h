@@ -22,6 +22,10 @@ struct PointRef {
 	SegmentId segment = kNoId; // snapped onto a segment (split there)
 };
 
+// A starting signal plan for a junction: opposite legs share a phase (left
+// turns permissive), other legs get a phase each.
+SignalPlan default_signal_plan(const RoadMap &map, NodeId node);
+
 class Document {
 public:
 	Document();
@@ -97,7 +101,20 @@ public:
 	// Priority segments not at this node are dropped.
 	void set_junction_control(NodeId id, JunctionControl control, const std::vector<SegmentId> &priority);
 	// Replaces the node's spawn / sink point (enabled = false removes it).
+	// Coach lines without an id get one.
 	void set_spawner(NodeId id, const Spawner &spawner);
+
+	// --- M3: roundabouts, signals, transit ------------------------------------
+	void set_roundabout(NodeId id, const Roundabout &r);
+	// Setting a plan also switches the node to JunctionControl::Signal.
+	void set_signal_plan(NodeId id, const SignalPlan &plan);
+	// Returns the new stop's id (0 if the road doesn't exist).
+	uint32_t add_stop(SegmentId seg, double u, LaneDir side, StopKind kind, const std::string &name);
+	void set_stop(SegmentId seg, const BusStop &stop);
+	void remove_stop(SegmentId seg, uint32_t stop);
+	// Replaces the node's depot (enabled = false removes it). Routes without
+	// an id get one.
+	void set_depot(NodeId id, const Depot &depot);
 
 	// Fresh lane IDs for a profile template.
 	Profile instantiate(const Profile &proto);

@@ -65,7 +65,7 @@ double closest_on(Vec2 a, Vec2 b, Vec2 p) {
 	return std::clamp((p - a).dot(d) / l2, 0.0, 1.0);
 }
 
-bool is_car_lane(LaneType t) { return t == LaneType::General || t == LaneType::Bus || t == LaneType::Turn; }
+bool is_sim_lane(LaneType t) { return is_directional(t); } // cars, buses and bikes
 
 // End (0 = from node, 1 = to node) that a lane of segment s travels towards.
 int arriving_end(const RoadSegment &s, LaneId lane) {
@@ -88,6 +88,45 @@ int32_t Network::find(const LaneKey &k) const {
 int32_t Network::junction_at(NodeId node) const {
 	auto it = junction_index_.find(node);
 	return it == junction_index_.end() ? -1 : it->second;
+}
+
+int32_t Network::stop_index(uint32_t id) const {
+	for (size_t i = 0; i < stops.size(); ++i) {
+		if (stops[i].id == id) return static_cast<int32_t>(i);
+	}
+	return -1;
+}
+
+int NetJunction::phase_at(int64_t tick, int64_t *into) const {
+	const NetSignal &s = signal;
+	if (!s.enabled || s.cycle <= 0) return -1;
+	int64_t t = (tick + s.offset) % s.cycle;
+	for (size_t p = 0; p < s.green.size(); ++p) {
+		const int64_t len = s.green[p] + s.amber + s.all_red;
+		if (t < len) {
+			if (into) *into = t;
+			return static_cast<int>(p);
+		}
+		t -= len;
+	}
+	return 0;
+}
+
+SignalLight NetJunction::light(int32_t movement, int64_t tick) const {
+	const NetSignal &s = signal;
+	if (movement < 0 || static_cast<size_t>(movement) >= s.movements.size()) return SignalLight::Green;
+	int64_t t = 0;
+	const int p = phase_at(tick, &t);
+	if (p < 0) return SignalLight::Green;
+	const size_t ph = static_cast<size_t>(p);
+	const uint8_t now = s.state[ph][static_cast<size_t>(movement)];
+	if (now == 0) return SignalLight::Red;
+	if (t < s.green[ph]) return now == 2 ? SignalLight::GreenYield : SignalLight::Green;
+	// Amber and all-red, unless the next phase keeps this movement green.
+	const size_t next = (ph + 1) % s.green.size();
+	const uint8_t then = s.state[next][static_cast<size_t>(movement)];
+	if (then != 0) return then == 2 || now == 2 ? SignalLight::GreenYield : SignalLight::Green;
+	return t < s.green[ph] + s.amber ? SignalLight::Amber : SignalLight::Red;
 }
 
 const NetSpawner *Network::spawner_at(NodeId node) const {
@@ -171,6 +210,9 @@ uint64_t Network::hash() const {
 		}
 		h.u(l.sink);
 		h.u(l.merge_end);
+		h.u(l.ring);
+		h.d(l.route_penalty);
+		h.u(static_cast<uint64_t>(static_cast<int64_t>(l.movement)));
 		h.u(static_cast<uint64_t>(static_cast<int64_t>(l.approach_of)));
 	}
 	for (const NetJunction &j : junctions) {
@@ -178,6 +220,28 @@ uint64_t Network::hash() const {
 		h.u(static_cast<uint64_t>(j.control));
 		h.u(j.arbitrated);
 		h.u(j.joint);
+		h.u(j.roundabout);
+		h.u(static_cast<uint64_t>(j.signal.cycle));
+		for (const auto &st : j.signal.state) {
+			for (uint8_t v : st) h.u(v);
+		}
+	}
+	for (const NetBay &b : bays) {
+		h.u(b.parking_lane);
+		h.u(static_cast<uint64_t>(b.lane));
+		h.d(b.s);
+	}
+	for (const NetStop &st : stops) {
+		h.u(st.id);
+		h.u(static_cast<uint64_t>(st.lane));
+		h.d(st.s);
+	}
+	for (const NetDepot &d : depots) {
+		h.u(d.node);
+		for (const NetRoute &r : d.routes) {
+			h.u(r.id);
+			for (int32_t x : r.stops) h.u(static_cast<uint64_t>(x));
+		}
 	}
 	for (const NetSpawner &s : spawners) {
 		h.u(s.node);
@@ -191,6 +255,11 @@ void Network::clear() {
 	lanes.clear();
 	junctions.clear();
 	spawners.clear();
+	bays.clear();
+	stops.clear();
+	depots.clear();
+	coach_lines.clear();
+	main_station = -1;
 	index_.clear();
 	junction_index_.clear();
 	max_speed = 13.9;
@@ -210,7 +279,7 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 
 	auto stop_at = [&](NodeId n) {
 		const NodeGeom *g = geom.node(n);
-		return g && g->kind == NodeKind::Junction && g->legs.size() >= 3;
+		return g && ((g->kind == NodeKind::Junction && g->legs.size() >= 3) || g->kind == NodeKind::Roundabout);
 	};
 
 	// --- 1. Segments --------------------------------------------------------------
@@ -268,7 +337,7 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 		std::vector<int32_t> local(nl, -1);
 		for (size_t i = 0; i < nl; ++i) {
 			const GeomLane &gl = sg->lanes[i];
-			if (!is_car_lane(gl.type) || ns < 2) continue;
+			if (!is_sim_lane(gl.type) || ns < 2) continue;
 			const bool fwd = gl.dir == LaneDir::Forward;
 			std::vector<Vec2> pts;
 			int32_t first = -1;
@@ -317,6 +386,8 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 				if (list_left ? i == 0 : i + 1 >= nl) continue;
 				const size_t bi = list_left ? i - 1 : i + 1;
 				if (local[bi] < 0 || sg->lanes[bi].dir != a.dir) continue;
+				// Bikes and motor traffic keep to their own lanes.
+				if ((sg->lanes[bi].type == LaneType::Bike) != (sg->lanes[i].type == LaneType::Bike)) continue;
 				(side == 0 ? a.left : a.right) = local[bi];
 				const NetLane &b = part.lanes[static_cast<size_t>(local[bi])];
 				const GeomLane &ga = sg->lanes[i];
@@ -393,7 +464,21 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 			h.u(c.to_seg);
 			h.u(c.to_lane);
 			h.u(static_cast<uint64_t>(c.turn));
+			h.d(c.route_penalty);
 			for (const Vec2 &p : c.path) h.v(p);
+		}
+		h.u(rn->roundabout.enabled);
+		h.u(rn->roundabout.turbo);
+		h.u(static_cast<uint64_t>(rn->roundabout.lanes));
+		for (const RingLane &r : g.ring) {
+			h.u(r.id);
+			for (const Vec2 &p : r.pts) h.v(p);
+		}
+		// Lane types of the incoming lanes (bike rules).
+		for (const Leg &leg : g.legs) {
+			const RoadSegment *s = map.segment(leg.seg);
+			if (!s) continue;
+			for (const LaneSpec &l : s->profile.lanes) h.u(static_cast<uint64_t>(l.type));
 		}
 		const uint64_t sig = h.h.value();
 		NodePart &part = nodes_[g.id];
@@ -402,14 +487,57 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 		++stats_.junctions_compiled;
 		part.sig = sig;
 		part.connectors.clear();
+		part.ring.clear();
 		part.arbitrated = false;
+		part.roundabout = g.kind == NodeKind::Roundabout;
+
+		// Roundabout circulating lanes: ordinary road lanes that belong to no
+		// map segment. Their neighbours are the lanes of the same piece.
+		std::map<LaneId, int32_t> ring_local;
+		for (const RingLane &r : g.ring) {
+			NetLane l;
+			l.kind = NetLaneKind::Road;
+			l.key = LaneKey{ NetLaneKind::Road, r.id, 0 };
+			l.type = LaneType::General;
+			l.level = g.level;
+			l.speed_limit = quantize(std::min(13.9, std::sqrt(2.5 * r.radius)));
+			l.segment = 0x80000000u | ((g.id & 0x0FFFFFFFu) << 3) | (static_cast<uint32_t>(r.piece) & 7u);
+			l.dir = LaneDir::Forward;
+			l.ring = true;
+			l.first_sample = 0;
+			l.start_node = l.end_node = g.id;
+			std::vector<Vec2> pts = r.pts;
+			l.pts.clear();
+			for (const Vec2 &p : pts) l.pts.push_back(qv(p));
+			l.cum.assign(l.pts.size(), 0.0);
+			for (size_t k = 1; k < l.pts.size(); ++k) l.cum[k] = l.cum[k - 1] + (l.pts[k] - l.pts[k - 1]).length();
+			l.length = std::max(0.01, l.cum.back());
+			l.cum.back() = l.length;
+			ring_local[r.id] = static_cast<int32_t>(part.ring.size());
+			part.ring.push_back(std::move(l));
+		}
+		const bool turbo = map.node(g.id)->roundabout.turbo && map.node(g.id)->roundabout.lanes >= 2;
+		for (const RingLane &r : g.ring) {
+			NetLane &l = part.ring[static_cast<size_t>(ring_local[r.id])];
+			// Travel-left is the inner lane.
+			for (const RingLane &o : g.ring) {
+				if (o.piece != r.piece) continue;
+				if (o.lane == r.lane + 1) l.left = ring_local[o.id];
+				if (o.lane + 1 == r.lane) l.right = ring_local[o.id];
+			}
+			if (!turbo) {
+				if (l.left >= 0) l.change_left.push_back({ 0.0, l.length });
+				if (l.right >= 0) l.change_right.push_back({ 0.0, l.length });
+			}
+		}
 
 		std::set<std::pair<LaneId, LaneId>> seen;
+		std::vector<char> from_bike;
 		for (const Connector &c : g.connectors) {
 			if (!seen.insert({ c.from_lane, c.to_lane }).second) continue;
 			const RoadSegment *fs = map.segment(c.from_seg);
 			const RoadSegment *ts = map.segment(c.to_seg);
-			if (!fs || !ts) continue;
+			if ((!fs && !is_ring_lane(c.from_lane)) || (!ts && !is_ring_lane(c.to_lane))) continue;
 			NetLane l;
 			l.kind = NetLaneKind::Connector;
 			l.key = LaneKey{ NetLaneKind::Connector, c.from_lane, c.to_lane };
@@ -417,7 +545,8 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 			l.node = g.id;
 			l.turn = c.turn;
 			set_polyline(l, c.path);
-			double limit = std::min(fs->speed_limit, ts->speed_limit);
+			l.route_penalty = c.route_penalty;
+			double limit = std::min(fs ? fs->speed_limit : 13.9, ts ? ts->speed_limit : 13.9);
 			if (l.pts.size() >= 3) {
 				const Vec2 da = (l.pts[1] - l.pts[0]).normalized();
 				const Vec2 db = (l.pts.back() - l.pts[l.pts.size() - 2]).normalized();
@@ -428,16 +557,44 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 				}
 			}
 			l.speed_limit = quantize(limit);
-			const int end = arriving_end(*fs, c.from_lane);
-			for (size_t k = 0; k < g.legs.size(); ++k) {
-				if (g.legs[k].seg == c.from_seg && g.legs[k].at_start == (end == 0)) l.leg = static_cast<int>(k);
+			if (fs) {
+				const int end = arriving_end(*fs, c.from_lane);
+				for (size_t k = 0; k < g.legs.size(); ++k) {
+					if (g.legs[k].seg == c.from_seg && g.legs[k].at_start == (end == 0)) l.leg = static_cast<int>(k);
+				}
 			}
+			bool bike = false;
+			if (fs) {
+				for (const LaneSpec &ls : fs->profile.lanes) bike |= ls.id == c.from_lane && ls.type == LaneType::Bike;
+			}
+			from_bike.push_back(bike ? 1 : 0);
 			part.connectors.push_back(std::move(l));
 		}
 		// Merges at continuations and tapers: the first connector into a lane
 		// is the through lane; others merge into it and yield.
 		const bool joint = g.kind == NodeKind::Continuation || g.kind == NodeKind::Taper;
 		part.joint = joint;
+		// Signal movements: all connectors from one leg into another.
+		part.movements.clear();
+		if (rn->control == JunctionControl::Signal && !joint && !part.roundabout) {
+			for (NetLane &l : part.connectors) {
+				SegmentId fs = kNoId, ts = kNoId;
+				for (const Connector &c : g.connectors) {
+					if (c.from_lane == l.key.a && c.to_lane == l.key.b) {
+						fs = c.from_seg;
+						ts = c.to_seg;
+						break;
+					}
+				}
+				const std::pair<SegmentId, SegmentId> mv{ fs, ts };
+				auto it = std::find(part.movements.begin(), part.movements.end(), mv);
+				if (it == part.movements.end()) {
+					part.movements.push_back(mv);
+					it = part.movements.end() - 1;
+				}
+				l.movement = static_cast<int32_t>(it - part.movements.begin());
+			}
+		}
 		std::map<LaneId, size_t> first_into;
 		for (size_t i = 0; i < part.connectors.size(); ++i) {
 			first_into.emplace(part.connectors[i].key.b, i);
@@ -494,7 +651,20 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 				cb.s_other = ca.s_self;
 				// Priority.
 				int8_t prio = 0;
-				if (joint) {
+				const bool bike_a = from_bike[i] != 0, bike_b = from_bike[j] != 0;
+				auto car_turn = [](const NetLane &x, bool bike) {
+					return !bike && (x.turn == TurnKind::Left || x.turn == TurnKind::Right);
+				};
+				if (part.roundabout) {
+					// Circulating traffic has priority over entries and bypasses.
+					const bool ring_a = is_ring_lane(a.key.a), ring_b = is_ring_lane(b.key.a);
+					prio = ring_a && !ring_b ? 1 : ring_b && !ring_a ? -1 : 0;
+				} else if (!joint && bike_a != bike_b &&
+						((bike_a && a.turn == TurnKind::Straight && car_turn(b, bike_b)) ||
+								(bike_b && b.turn == TurnKind::Straight && car_turn(a, bike_a)))) {
+					// Turning cars yield to bikes going straight.
+					prio = bike_a ? 1 : -1;
+				} else if (joint) {
 					if (ca.merge) {
 						const bool a_through = first_into[a.key.b] == i;
 						const bool b_through = first_into[b.key.b] == j;
@@ -554,6 +724,16 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 		}
 	}
 	for (const auto &kv : nodes_) {
+		const int32_t base = static_cast<int32_t>(out.lanes.size());
+		for (const NetLane &l : kv.second.ring) {
+			NetLane c = l;
+			if (c.left >= 0) c.left += base;
+			if (c.right >= 0) c.right += base;
+			out.index_[c.key] = static_cast<int32_t>(out.lanes.size());
+			out.lanes.push_back(std::move(c));
+		}
+	}
+	for (const auto &kv : nodes_) {
 		const NodePart &part = kv.second;
 		const RoadNode *rn = map.node(kv.first);
 		NetJunction j;
@@ -563,6 +743,34 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 		j.control = rn->control;
 		j.arbitrated = part.arbitrated;
 		j.joint = part.joint;
+		j.roundabout = part.roundabout;
+		if (!part.movements.empty()) {
+			// Fixed-time program in ticks (10 Hz).
+			NetSignal &sg = j.signal;
+			const SignalPlan &plan = rn->signal;
+			auto ticks = [](double sec) { return static_cast<int64_t>(std::llround(std::max(0.0, sec) * 10.0)); };
+			sg.enabled = !plan.phases.empty();
+			sg.movements = part.movements;
+			sg.amber = ticks(plan.amber);
+			sg.all_red = ticks(plan.all_red);
+			sg.right_on_red.assign(part.movements.size(), 0);
+			for (size_t m = 0; m < part.movements.size(); ++m) {
+				for (SegmentId leg : plan.right_on_red) sg.right_on_red[m] |= part.movements[m].first == leg ? 1 : 0;
+			}
+			for (const SignalPhase &ph : plan.phases) {
+				sg.green.push_back(std::max<int64_t>(10, ticks(ph.green)));
+				std::vector<uint8_t> st(part.movements.size(), 0);
+				for (const SignalMovement &mv : ph.moves) {
+					for (size_t m = 0; m < part.movements.size(); ++m) {
+						if (part.movements[m].first == mv.from && part.movements[m].second == mv.to) st[m] = mv.permissive ? 2 : 1;
+					}
+				}
+				sg.state.push_back(std::move(st));
+				sg.cycle += sg.green.back() + sg.amber + sg.all_red;
+			}
+			sg.offset = sg.cycle > 0 ? ((ticks(plan.offset) % sg.cycle) + sg.cycle) % sg.cycle : 0;
+			if (sg.enabled) j.arbitrated = true;
+		}
 		const int32_t jid = static_cast<int32_t>(out.junctions.size());
 		std::vector<int32_t> global(part.connectors.size(), -1);
 		for (size_t i = 0; i < part.connectors.size(); ++i) {
@@ -635,15 +843,143 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 		for (size_t i = 0; i < out.lanes.size(); ++i) {
 			NetLane &l = out.lanes[i];
 			if (l.kind != NetLaneKind::Road) continue;
-			if (l.start_node == n.id && !l.pocket && l.type != LaneType::Bus) {
+			if (l.start_node == n.id && !l.pocket && l.type != LaneType::Bus && l.type != LaneType::Bike) {
 				sp.spawn_lanes.push_back(static_cast<int32_t>(i));
 			}
+			if (l.start_node == n.id && l.type == LaneType::Bike) sp.bike_lanes.push_back(static_cast<int32_t>(i));
 			if (l.end_node == n.id) {
 				sp.sink_lanes.push_back(static_cast<int32_t>(i));
 				l.sink = n.spawner.sink;
 			}
 		}
+		if (sp.bike_lanes.empty()) {
+			// No bike lane: bikes ride at the kerb of the rightmost lane.
+			for (int32_t l : sp.spawn_lanes) {
+				if (out.lanes[static_cast<size_t>(l)].right < 0) sp.bike_lanes.push_back(l);
+			}
+		}
 		out.spawners.push_back(std::move(sp));
+	}
+
+	// --- 4. Transit and parking (M3) ------------------------------------------------------
+	std::map<SegmentId, std::vector<int32_t>> seg_lanes;
+	for (size_t i = 0; i < out.lanes.size(); ++i) {
+		const NetLane &l = out.lanes[i];
+		if (l.kind == NetLaneKind::Road && !l.ring) seg_lanes[l.segment].push_back(static_cast<int32_t>(i));
+	}
+	// The kerb-side motor lane of one direction of a road.
+	auto kerb_lane = [&](SegmentId seg, LaneDir dir) {
+		for (int32_t i : seg_lanes[seg]) {
+			const NetLane &l = out.lanes[static_cast<size_t>(i)];
+			if (l.dir == dir && !l.pocket && l.type != LaneType::Bike && l.right < 0) return i;
+		}
+		return -1;
+	};
+	// Distance along a road lane level with a centreline station.
+	auto lane_s = [&](int32_t lane, const SegmentGeom &sg, double station) {
+		const NetLane &l = out.lanes[static_cast<size_t>(lane)];
+		const size_t ns = sg.s.size();
+		const bool fwd = l.dir == LaneDir::Forward;
+		double best = 0.0, dmin = 1e300;
+		for (size_t j = 0; j < l.pts.size(); ++j) {
+			const size_t tj = static_cast<size_t>(l.first_sample) + j;
+			if (tj >= ns) break;
+			const size_t k = fwd ? tj : ns - 1 - tj;
+			const double d = std::fabs(sg.s[k] - station);
+			if (d < dmin) {
+				dmin = d;
+				best = l.cum[j];
+			}
+		}
+		return quantize(best);
+	};
+	for (const auto &kv : map.segments()) {
+		const RoadSegment &seg = kv.second;
+		const SegmentGeom *sg = geom.segment(seg.id);
+		if (!sg) continue;
+		for (const ParkingBay &b : sg->bays) {
+			const int32_t lane = kerb_lane(seg.id, b.list_right ? LaneDir::Forward : LaneDir::Backward);
+			if (lane < 0) continue;
+			NetBay nb;
+			nb.parking_lane = b.lane;
+			nb.index = b.index;
+			nb.lane = lane;
+			nb.s = lane_s(lane, *sg, b.s);
+			nb.pos = qv(b.pos);
+			nb.dir = qv(b.dir);
+			nb.style = b.style;
+			out.bays.push_back(nb);
+		}
+		for (const BusStop &st : seg.stops) {
+			const int32_t lane = kerb_lane(seg.id, st.side);
+			if (lane < 0) continue;
+			NetStop ns;
+			ns.id = st.id;
+			ns.segment = seg.id;
+			ns.kind = st.kind;
+			ns.name = st.name;
+			ns.lane = lane;
+			const double len = st.kind == StopKind::MainStation ? 15.0 * std::max(1, st.bays) + 5.0 : 18.0;
+			const double lo = sg->trim[0] + 0.5 * len + 2.0;
+			const double hi = std::max(lo, sg->length - sg->trim[1] - 0.5 * len - 2.0);
+			// The bus stops with its front at the far end of the box.
+			const double station = std::clamp(st.u * sg->length, lo, hi) + (st.side == LaneDir::Forward ? 0.4 : -0.4) * len;
+			ns.s = lane_s(lane, *sg, station);
+			ns.bays = st.kind == StopKind::MainStation ? std::max(1, st.bays) : 1;
+			const Pose p = out.pose(lane, ns.s);
+			const double out_off = st.kind == StopKind::Kerbside ? 0.0 : 3.2;
+			ns.pos = qv(p.pos + p.dir.right() * out_off);
+			ns.dir = qv(p.dir);
+			out.stops.push_back(ns);
+			if (st.kind == StopKind::MainStation && out.main_station < 0) {
+				out.main_station = static_cast<int32_t>(out.stops.size() - 1);
+			}
+		}
+	}
+	for (const auto &kv : map.nodes()) {
+		const RoadNode &n = kv.second;
+		if (n.depot.enabled) {
+			const NodeGeom *g = geom.node(n.id);
+			if (g && g->kind == NodeKind::End) {
+				NetDepot d;
+				d.node = n.id;
+				d.name = n.depot.name;
+				d.pos = n.pos;
+				d.level = n.level;
+				d.capacity = n.depot.capacity;
+				for (size_t i = 0; i < out.lanes.size(); ++i) {
+					const NetLane &l = out.lanes[i];
+					if (l.kind != NetLaneKind::Road || l.ring || l.type == LaneType::Bike) continue;
+					if (l.start_node == n.id && !l.pocket) d.spawn_lanes.push_back(static_cast<int32_t>(i));
+					if (l.end_node == n.id) d.sink_lanes.push_back(static_cast<int32_t>(i));
+				}
+				for (const BusRoute &r : n.depot.routes) {
+					NetRoute nr;
+					nr.id = r.id;
+					nr.name = r.name;
+					nr.color = r.color;
+					nr.headway = r.headway;
+					nr.loop = r.loop;
+					for (uint32_t sid : r.stops) {
+						const int32_t si = out.stop_index(sid);
+						if (si >= 0) nr.stops.push_back(si);
+					}
+					d.routes.push_back(std::move(nr));
+				}
+				out.depots.push_back(std::move(d));
+			}
+		}
+		if (n.spawner.enabled && out.spawner_at(n.id)) {
+			for (const CoachLine &c : n.spawner.coaches) {
+				NetCoachLine cl;
+				cl.id = c.id;
+				cl.entry = n.id;
+				cl.exit = c.exit;
+				cl.per_hour = c.per_hour;
+				cl.dwell = c.dwell;
+				out.coach_lines.push_back(cl);
+			}
+		}
 	}
 
 	stats_.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();

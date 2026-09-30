@@ -1,11 +1,16 @@
-// Traffic simulation on a compiled Network (M2).
+// Traffic simulation on a compiled Network (M2, M3).
 //
-// Cars enter at spawn points, follow an A* route on the lane graph to a sink,
-// and drive with the Intelligent Driver Model (car following) and MOBIL (lane
-// changes). Junctions hand out grants: a car may enter the box only when no
-// car on a conflicting connector is still in the way, the rules (right-hand
-// priority, priority road, all-way stop, with per-driver gap acceptance) let
-// it go, and its exit has room (don't block the box).
+// Vehicles enter at spawn points (cars, taxis, bikes), depots (city buses) and
+// coach lines, follow A* routes on the lane graph and drive with the
+// Intelligent Driver Model (car following) and MOBIL (lane changes). Junctions
+// hand out grants: a vehicle may enter the box only when no vehicle on a
+// conflicting connector is still in the way, the rules (right-hand priority,
+// priority road, all-way stop, signals, roundabout entries, with per-driver
+// gap acceptance) let it go, and its exit has room (don't block the box).
+//
+// M3 adds vehicle classes with their own lanes (bus lanes, bike lanes),
+// waypoints (bus stops, the main station, parking bays) and fixed-time
+// signals.
 //
 // Fixed 10 Hz tick, seeded RNG, and only + - * / and sqrt on doubles in the
 // tick, so the same network and seed give the same state hash everywhere.
@@ -34,6 +39,12 @@ struct TrafficConfig {
 	double impatience = 30.0; // s waiting at a line before a driver takes the next safe chance
 	int spawn_queue = 20; // cars waiting to enter at one spawn point
 	uint32_t max_vehicles = 0; // spawning pauses while this many cars are on the map (0 = no cap)
+	// M3
+	double taxi_share = 0.05; // of car trips
+	double park_share = 0.25; // of car trips that park on the street on the way (if bays exist)
+	double park_min = 300.0, park_max = 1800.0; // s parked
+	double bus_dwell = 20.0; // s at each bus stop (fixed until passengers arrive in M4)
+	double bus_lane_zone = 60.0; // m before the stop line where cars may enter a bus lane to turn
 };
 
 struct DriverParams2 {
@@ -46,7 +57,18 @@ struct DriverParams2 {
 	double two_sqrt_ab = 0.0;
 	double critical_gap = 5.0; // s, gap accepted at a yield
 	double politeness = 0.3; // MOBIL
+	double max_speed = 50.0; // m/s, the vehicle's own limit (buses, bikes)
+	double width = 1.8; // m, for drawing
 };
+
+enum class VehicleKind : uint8_t {
+	Car = 0,
+	Taxi = 1, // a car that may use bus lanes
+	Bus = 2, // city bus on a route from a depot
+	Coach = 3, // intercity coach to the main station
+	Bike = 4,
+};
+const char *vehicle_kind_name(VehicleKind k);
 
 enum class VehicleState : uint8_t {
 	Driving = 0,
@@ -58,11 +80,32 @@ enum class VehicleState : uint8_t {
 	StopSign = 6, // all-way stop: stopping or waiting for its turn
 	InJunction = 7,
 	ChangingLane = 8, // needs a lane change and is waiting for a gap
+	RedLight = 9,
+	AtStop = 10, // bus at a stop, coach at the main station
+	Parking = 11, // manoeuvring into or out of a bay
+	Parked = 12,
 };
 const char *vehicle_state_name(VehicleState s);
 
+// Something a vehicle does on the way: stop, pull into a bay, park.
+enum class WaypointAction : uint8_t {
+	KerbStop = 0, // stop in the lane
+	BayStop = 1, // pull into a lay-by (bus bay, main station)
+	Park = 2, // park in a bay for a while
+};
+
+struct Waypoint {
+	WaypointAction action = WaypointAction::KerbStop;
+	int32_t lane = -1;
+	double s = 0.0;
+	double dwell = 20.0; // s
+	int32_t stop = -1; // Network::stops index
+	int32_t bay = -1; // Network::bays index
+};
+
 struct Vehicle {
 	VehicleId id = kNoId;
+	VehicleKind kind = VehicleKind::Car;
 	int32_t lane = -1;
 	double s = 0.0; // front bumper along the lane
 	double v = 0.0;
@@ -76,6 +119,10 @@ struct Vehicle {
 	NodeId dest = kNoId;
 	std::vector<int32_t> route; // connectors still to take
 	size_t ri = 0; // next connector in route
+	std::vector<Waypoint> waypoints;
+	size_t wi = 0; // next waypoint
+	uint32_t bus_route = 0; // BusRoute id (buses)
+	uint32_t coach_line = 0; // CoachLine id (coaches)
 	int32_t grant = -1; // connector this car may enter
 	int32_t held = -1; // connector whose junction box it is still in
 	int32_t list_pos = 0; // index in its lane's car list
@@ -91,6 +138,13 @@ struct Vehicle {
 	double merge_s = 0.0;
 	VehicleState state = VehicleState::Driving;
 	VehicleId blocker = kNoId; // who it waits for, if known
+	// Waypoint actions: 0 none, 1 dwelling in the lane, 2 manoeuvring in,
+	// 3 off the lane (in a bay or parked), 4 manoeuvring out.
+	uint8_t phase = 0;
+	uint64_t phase_start = 0; // tick the current phase began
+	uint64_t phase_until = 0; // tick the current phase ends
+	Vec2 bay_pos, bay_dir; // where it is drawn while off the lane
+	bool off_lane = false;
 	bool done = false; // left the map this tick
 };
 
@@ -111,11 +165,24 @@ struct TrafficStats {
 	uint64_t lane_changes = 0;
 	uint64_t reroutes = 0;
 	uint64_t forced_grants = 0; // deadlock breaker uses
+	// M3
+	uint32_t by_kind[5] = {};
+	uint32_t parked = 0;
+	uint64_t parkings = 0; // cars that parked
+	uint64_t parking_failed = 0; // wanted a bay but none was free
+	uint64_t bus_runs = 0; // buses that finished a run back at the depot
+	uint64_t bus_stops_served = 0;
+	uint64_t coach_calls = 0; // coaches that served the main station
+	uint64_t bikes_arrived = 0;
+	double bus_lane_misuse = 0.0; // car-seconds in bus lanes outside the turning zone
+	uint64_t red_light_waits = 0; // grants refused by a red light
+	uint64_t right_on_red = 0; // right turns on red with the flashing arrow
 };
 
 struct VehicleInfo {
 	VehicleId id = kNoId;
 	bool found = false;
+	VehicleKind kind = VehicleKind::Car;
 	double speed = 0.0;
 	double desired_speed = 0.0;
 	double accel = 0.0;
@@ -132,7 +199,21 @@ struct VehicleInfo {
 	SegmentId segment = kNoId;
 	NodeId junction = kNoId; // next junction on the route
 	size_t connectors_left = 0;
+	uint32_t bus_route = 0;
+	uint32_t coach_line = 0;
+	int32_t next_stop = -1; // Network::stops index of the next stop
+	size_t stops_left = 0;
+	bool parks = false; // will park on the way
 	std::vector<Vec2> route; // polyline from the car to its destination
+};
+
+// Per bus route, for the inspector and tests.
+struct RouteStats {
+	uint32_t id = 0;
+	uint32_t active = 0; // buses out on the route now
+	uint64_t runs = 0; // finished runs
+	double round_trip = 0.0; // s, estimated at free flow including dwells
+	uint32_t fleet = 0; // buses needed: round trip / headway
 };
 
 class Traffic {
@@ -145,7 +226,7 @@ public:
 	void set_network(const Network *net);
 	const Network *network() const { return net_; }
 
-	void reset(uint64_t seed); // removes all cars, resets the clock and RNG
+	void reset(uint64_t seed); // removes all vehicles, resets the clock and RNG
 	void tick();
 
 	TrafficConfig &config() { return config_; }
@@ -160,14 +241,25 @@ public:
 	int level_of(size_t i) const;
 	VehicleInfo info(VehicleId id) const;
 	TrafficStats stats() const;
+	std::vector<RouteStats> route_stats() const;
 	uint64_t state_hash() const;
+	// Occupied bays (Network::bays indices), for drawing and tests.
+	const std::vector<VehicleId> &bay_use() const { return bay_use_; }
 
-	// For tests and tools: add a car directly (returns its id, 0 on failure).
-	// Driver parameters default to an average driver.
-	VehicleId add_vehicle(int32_t lane, double s, double v, NodeId dest, const DriverParams2 *driver = nullptr);
+	// For tests and tools: add a vehicle directly (returns its id, 0 on failure).
+	// Driver parameters default to the kind's typical driver.
+	VehicleId add_vehicle(int32_t lane, double s, double v, NodeId dest, const DriverParams2 *driver = nullptr,
+			VehicleKind kind = VehicleKind::Car, const std::vector<Waypoint> &waypoints = {});
 	// A* on the lane graph from a road lane to a sink node. Fills `route` with
 	// the connectors to take and returns false when there is no route.
-	bool find_route(int32_t start, NodeId dest, std::vector<int32_t> &route, bool allow_change_first = true) const;
+	bool find_route(int32_t start, NodeId dest, std::vector<int32_t> &route, bool allow_change_first = true,
+			VehicleKind kind = VehicleKind::Car) const;
+	// A* from a road lane to a given lane (at or beyond distance s along it).
+	bool find_route_to_lane(int32_t start, double start_s, int32_t goal, double goal_s, std::vector<int32_t> &route,
+			VehicleKind kind, bool allow_change_first = true) const;
+	// Whether a vehicle kind may drive in a lane at all.
+	static bool allowed(VehicleKind k, const NetLane &l);
+	static DriverParams2 typical_driver(VehicleKind k);
 
 private:
 	struct Candidate {
@@ -175,14 +267,22 @@ private:
 		int32_t conn = -1;
 		double dist = 0.0; // to the stop line
 	};
+	struct Goal {
+		NodeId node = kNoId; // any sink lane at this node
+		int32_t lane = -1; // or this lane
+		bool need_connector = false; // the goal lane must be reached again (it is behind)
+		Vec2 pos;
+	};
 
 	double desired_speed(const Vehicle &v, int32_t lane) const;
 	double idm(const Vehicle &v, double v0, bool has, double gap, double lead_v) const;
-	// Connector a car takes from road lane `lane` when its next route step is ri.
 	int32_t next_connector(const Vehicle &v, int32_t lane, size_t ri) const;
-	// Lanes of the same road from which the route's next step can be reached.
 	int good_direction(const Vehicle &v, int32_t lane, int &steps) const;
 	bool lane_is_good(const Vehicle &v, int32_t lane, size_t ri) const;
+	bool at_route_end(const Vehicle &v, int32_t lane, size_t ri) const; // drives off the map here
+	bool exits_at(const NetLane &l, NodeId node) const; // a lane that leaves the map at a sink or depot
+	bool goal_pos(NodeId node, Vec2 &pos) const; // false when vehicles can't end their trip there
+	const Waypoint *pending_waypoint(const Vehicle &v) const;
 	void leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &has, double &gap, double &lead_v,
 			double &v0_cap, VehicleId &who) const;
 	double accel_at(size_t i, int32_t lane, double s) const;
@@ -190,16 +290,35 @@ private:
 	bool exit_clear(int32_t conn, int32_t veh, const std::vector<int32_t> &granted) const;
 	double pos_on(const Vehicle &v, int32_t conn) const;
 	double time_to(const Vehicle &v, double dist) const;
+	bool astar(int32_t start, const Goal &goal, VehicleKind kind, bool allow_change_first,
+			std::vector<int32_t> &route) const;
+	double lane_cost(int32_t lane, VehicleKind kind) const;
+	SignalLight light_of(int32_t conn) const;
 
 	void arbitrate();
 	void change_lanes();
 	void move();
+	bool waypoints(); // true when a vehicle had to be taken off the map
+	void begin_waypoint(size_t i);
+	void complete_waypoint(Vehicle &v);
+	void skip_waypoint(Vehicle &v);
+	bool retarget(Vehicle &v); // routes to the next waypoint or the destination, dropping what can't be reached
 	void spawn();
+	void spawn_bike(size_t k);
+	NodeId pick_dest(size_t k);
+	DriverParams2 random_driver(VehicleKind k);
+	void dispatch();
+	void init_transit(bool keep);
+	void recount_use();
+	void list_insert(size_t i);
+	void list_remove(size_t i);
 	void rebuild_lists();
 	void compact();
 	bool reroute(Vehicle &v, bool allow_change_first);
 	void rebuild_reachability();
-	double lane_cost(int32_t lane) const;
+	void estimate_routes();
+	bool lane_free_at(int32_t lane, double s, double length) const;
+	VehicleId insert(Vehicle v, int32_t lane, double s); // adds a spawned vehicle to the lane lists
 
 	TrafficConfig config_;
 	const Network *net_ = nullptr;
@@ -214,6 +333,29 @@ private:
 	std::vector<std::vector<std::pair<size_t, double>>> reach_; // per spawner: (spawner, weight)
 	std::vector<uint64_t> junction_last_grant_;
 	std::vector<char> junction_waiting_;
+	// Roundabouts: circulating lanes and how many car-sized slots each lane
+	// (0 = outer) may fill, one less than it holds so it can always turn.
+	std::vector<std::vector<int32_t>> ring_lanes_; // per junction
+	std::vector<std::vector<int32_t>> ring_slots_; // per junction, per circulating lane
+	std::vector<int8_t> ring_cycle_; // per lane: which circulating lane it is (-1 = none)
+	std::vector<int32_t> ring_load(size_t j) const; // slots taken on each circulating lane, entries included
+	std::vector<VehicleId> bay_use_; // per Network::bays: who has it (0 = free)
+	std::vector<uint32_t> stop_use_; // per Network::stops: buses in the bays
+	struct RouteRun {
+		uint32_t id = 0;
+		NodeId depot = kNoId;
+		size_t depot_idx = 0, route_idx = 0; // into Network::depots and its routes
+		uint64_t next_departure = 0;
+		uint64_t runs = 0;
+		double round_trip = 0.0;
+	};
+	std::vector<RouteRun> routes_;
+	struct CoachRun {
+		uint32_t id = 0;
+		size_t line = 0; // into Network::coach_lines
+		uint64_t next_departure = 0;
+	};
+	std::vector<CoachRun> coaches_;
 	TrafficStats stats_;
 	double trip_time_sum_ = 0.0;
 };

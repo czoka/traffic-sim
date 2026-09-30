@@ -7,6 +7,8 @@
 //   3  M2: junction control per node (right-hand, priority road, all-way
 //      stop), spawn / sink points with rates and origin-destination weights.
 //      Version 2 files load unchanged (the new fields have defaults).
+//   4  M3: roundabouts, signal plans, parking styles, bus stops, depots with
+//      bus routes, coach lines, bicycle demand. Older files load unchanged.
 // Numbers are written in shortest round-trip form and keys in a fixed order,
 // so save -> load -> save gives an identical file.
 #pragma once
@@ -17,7 +19,7 @@
 
 namespace tsim {
 
-constexpr int kRoadMapVersion = 3;
+constexpr int kRoadMapVersion = 4;
 
 std::string road_map_to_json(const RoadMap &map);
 

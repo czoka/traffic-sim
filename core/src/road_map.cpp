@@ -16,6 +16,8 @@ const char *junction_control_name(JunctionControl c) {
 			return "priority_road";
 		case JunctionControl::AllWayStop:
 			return "all_way_stop";
+		case JunctionControl::Signal:
+			return "signal";
 	}
 	return "right_hand";
 }
@@ -24,6 +26,7 @@ bool junction_control_from_name(const std::string &s, JunctionControl &out) {
 	if (s == "right_hand") out = JunctionControl::RightHand;
 	else if (s == "priority_road") out = JunctionControl::PriorityRoad;
 	else if (s == "all_way_stop") out = JunctionControl::AllWayStop;
+	else if (s == "signal") out = JunctionControl::Signal;
 	else return false;
 	return true;
 }
@@ -37,6 +40,97 @@ double Spawner::weight_to(NodeId to) const {
 
 bool RoadNode::is_priority(SegmentId s) const {
 	return std::find(priority.begin(), priority.end(), s) != priority.end();
+}
+
+void RoadNode::rename_segment(SegmentId from, SegmentId to) {
+	auto fix = [&](std::vector<SegmentId> &v) {
+		for (SegmentId &x : v) {
+			if (x == from) x = to;
+		}
+		v.erase(std::remove(v.begin(), v.end(), kNoId), v.end());
+	};
+	fix(priority);
+	fix(roundabout.slip);
+	fix(signal.right_on_red);
+	for (SignalPhase &p : signal.phases) {
+		for (SignalMovement &m : p.moves) {
+			if (m.from == from) m.from = to;
+			if (m.to == from) m.to = to;
+		}
+		p.moves.erase(std::remove_if(p.moves.begin(), p.moves.end(),
+							  [](const SignalMovement &m) { return m.from == kNoId || m.to == kNoId; }),
+				p.moves.end());
+	}
+}
+
+double SignalPlan::cycle() const {
+	double c = 0.0;
+	for (const SignalPhase &p : phases) c += p.green + amber + all_red;
+	return c;
+}
+
+const char *parking_style_name(ParkingStyle s) {
+	switch (s) {
+		case ParkingStyle::Parallel:
+			return "parallel";
+		case ParkingStyle::Angle45:
+			return "angle45";
+		case ParkingStyle::Perpendicular:
+			return "perpendicular";
+	}
+	return "parallel";
+}
+
+bool parking_style_from_name(const std::string &s, ParkingStyle &out) {
+	if (s == "parallel") out = ParkingStyle::Parallel;
+	else if (s == "angle45") out = ParkingStyle::Angle45;
+	else if (s == "perpendicular") out = ParkingStyle::Perpendicular;
+	else return false;
+	return true;
+}
+
+double parking_depth(ParkingStyle s) {
+	switch (s) {
+		case ParkingStyle::Parallel:
+			return 2.0;
+		case ParkingStyle::Angle45:
+			return 5.3;
+		case ParkingStyle::Perpendicular:
+			return 5.0;
+	}
+	return 2.0;
+}
+
+double parking_bay_length(ParkingStyle s) {
+	switch (s) {
+		case ParkingStyle::Parallel:
+			return 6.0;
+		case ParkingStyle::Angle45:
+			return 3.5; // 2.5 m wide bays at 45 degrees
+		case ParkingStyle::Perpendicular:
+			return 2.5;
+	}
+	return 6.0;
+}
+
+const char *stop_kind_name(StopKind k) {
+	switch (k) {
+		case StopKind::Kerbside:
+			return "kerbside";
+		case StopKind::Bay:
+			return "bay";
+		case StopKind::MainStation:
+			return "main_station";
+	}
+	return "kerbside";
+}
+
+bool stop_kind_from_name(const std::string &s, StopKind &out) {
+	if (s == "kerbside") out = StopKind::Kerbside;
+	else if (s == "bay") out = StopKind::Bay;
+	else if (s == "main_station") out = StopKind::MainStation;
+	else return false;
+	return true;
 }
 
 bool is_travel(LaneType t) { return t == LaneType::General || t == LaneType::Bus || t == LaneType::Turn; }
@@ -112,7 +206,8 @@ double Profile::total_width() const {
 bool RoadSegment::operator==(const RoadSegment &o) const {
 	return id == o.id && from == o.from && to == o.to && kind == o.kind && level == o.level && curve == o.curve &&
 			c1 == o.c1 && c2 == o.c2 && sweep == o.sweep && profile == o.profile && speed_limit == o.speed_limit &&
-			name == o.name && ends[0] == o.ends[0] && ends[1] == o.ends[1] && no_change == o.no_change;
+			name == o.name && ends[0] == o.ends[0] && ends[1] == o.ends[1] && no_change == o.no_change &&
+			stops == o.stops;
 }
 
 // --- RoadMap -----------------------------------------------------------------
@@ -148,10 +243,11 @@ Curve RoadMap::curve_of(const RoadSegment &s) const {
 	return c;
 }
 
-void RoadMap::set_next_ids(uint32_t n, uint32_t s, uint32_t l) {
+void RoadMap::set_next_ids(uint32_t n, uint32_t s, uint32_t l, uint32_t o) {
 	next_node_id_ = std::max(next_node_id_, n);
 	next_segment_id_ = std::max(next_segment_id_, s);
 	next_lane_id_ = std::max(next_lane_id_, l);
+	next_object_id_ = std::max(next_object_id_, o);
 }
 
 void RoadMap::index_add(const RoadSegment &s) {
@@ -181,6 +277,8 @@ void RoadMap::index_remove(const RoadSegment &s) {
 void RoadMap::put_node(const RoadNode &n) {
 	nodes_[n.id] = n;
 	next_node_id_ = std::max(next_node_id_, n.id + 1);
+	for (const BusRoute &r : n.depot.routes) next_object_id_ = std::max(next_object_id_, r.id + 1);
+	for (const CoachLine &c : n.spawner.coaches) next_object_id_ = std::max(next_object_id_, c.id + 1);
 }
 
 void RoadMap::put_segment(const RoadSegment &s) {
@@ -197,6 +295,7 @@ void RoadMap::put_segment(const RoadSegment &s) {
 	for (const EndRules &e : s.ends) {
 		next_lane_id_ = std::max({ next_lane_id_, e.left_lane + 1, e.right_lane + 1 });
 	}
+	for (const BusStop &b : s.stops) next_object_id_ = std::max(next_object_id_, b.id + 1);
 }
 
 void RoadMap::erase_node(NodeId id) { nodes_.erase(id); }
@@ -214,7 +313,7 @@ void RoadMap::clear() {
 	nodes_.clear();
 	segments_.clear();
 	adjacency_.clear();
-	next_node_id_ = next_segment_id_ = next_lane_id_ = 1;
+	next_node_id_ = next_segment_id_ = next_lane_id_ = next_object_id_ = 1;
 }
 
 // --- Profiles ------------------------------------------------------------------
@@ -303,6 +402,7 @@ Profile build_profile(const ProfileParams &p, const Profile *previous, RoadMap &
 		l.type = type;
 		l.dir = dir;
 		l.width = width;
+		if (type == LaneType::Parking) l.parking = p.parking_style;
 		auto it = old.find(role);
 		if (it != old.end()) {
 			l.id = it->second->id;
@@ -317,7 +417,8 @@ Profile build_profile(const ProfileParams &p, const Profile *previous, RoadMap &
 	};
 
 	if (p.sidewalk_left) add(Role{ kSidewalk, 0, 0 }, LaneType::Sidewalk, LaneDir::None, p.sidewalk_width);
-	if (p.parking_left) add(Role{ kParking, 0, 0 }, LaneType::Parking, LaneDir::None, 2.5);
+	const double park_w = parking_depth(p.parking_style);
+	if (p.parking_left) add(Role{ kParking, 0, 0 }, LaneType::Parking, LaneDir::None, park_w);
 	if (p.bike_left) add(Role{ kBike, 0, 0 }, LaneType::Bike, left_dir, 1.5);
 	for (int k = backward - 1; k >= 0; --k) {
 		const bool bus = p.bus_left && k == backward - 1;
@@ -330,7 +431,7 @@ Profile build_profile(const ProfileParams &p, const Profile *previous, RoadMap &
 				bus ? std::max(3.5, p.lane_width) : p.lane_width);
 	}
 	if (p.bike_right) add(Role{ kBike, 1, 0 }, LaneType::Bike, right_dir, 1.5);
-	if (p.parking_right) add(Role{ kParking, 1, 0 }, LaneType::Parking, LaneDir::None, 2.5);
+	if (p.parking_right) add(Role{ kParking, 1, 0 }, LaneType::Parking, LaneDir::None, park_w);
 	if (p.sidewalk_right) add(Role{ kSidewalk, 1, 0 }, LaneType::Sidewalk, LaneDir::None, p.sidewalk_width);
 	return out;
 }
@@ -352,6 +453,7 @@ ProfileParams params_of(const Profile &p) {
 			r.sidewalk_width = l.width;
 		} else if (l.type == LaneType::Parking) {
 			(side == 0 ? r.parking_left : r.parking_right) = true;
+			r.parking_style = l.parking;
 		} else if (l.type == LaneType::Bike) {
 			(side == 0 ? r.bike_left : r.bike_right) = true;
 		} else if (kind == kMotor && l.type == LaneType::General && !width_set) {

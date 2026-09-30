@@ -49,14 +49,26 @@ enum class TurnRule : uint8_t {
 	TurnLane = 2, // a dedicated pocket lane for the last N metres
 };
 
+// How cars park in a parking lane (M3).
+enum class ParkingStyle : uint8_t {
+	Parallel = 0, // 2.0 x 6.0 m bays, pull past and reverse in
+	Angle45 = 1, // 2.5 x 5.0 m bays at 45 degrees, forward in, reverse out
+	Perpendicular = 2, // 2.5 x 5.0 m bays at 90 degrees
+};
+const char *parking_style_name(ParkingStyle s);
+bool parking_style_from_name(const std::string &s, ParkingStyle &out);
+double parking_depth(ParkingStyle s); // lane width for the style (m)
+double parking_bay_length(ParkingStyle s); // bay length along the kerb (m)
+
 struct LaneSpec {
 	LaneId id = kNoId;
 	LaneType type = LaneType::General;
 	LaneDir dir = LaneDir::Forward;
 	double width = 3.25;
+	ParkingStyle parking = ParkingStyle::Parallel; // parking lanes only
 
 	bool operator==(const LaneSpec &o) const {
-		return id == o.id && type == o.type && dir == o.dir && width == o.width;
+		return id == o.id && type == o.type && dir == o.dir && width == o.width && parking == o.parking;
 	}
 };
 
@@ -113,11 +125,13 @@ struct NoChangeZone {
 	}
 };
 
-// How a junction decides who goes first (M2). Signals and roundabouts are M3.
+// How a junction decides who goes first. Roundabouts are a node shape of
+// their own (RoadNode::roundabout) and ignore this.
 enum class JunctionControl : uint8_t {
 	RightHand = 0, // yield to the right (European default for unmarked junctions)
 	PriorityRoad = 1, // the legs listed in RoadNode::priority have right of way
 	AllWayStop = 2, // everyone stops; first come, first served
+	Signal = 3, // fixed-time traffic lights (RoadNode::signal)
 };
 
 const char *junction_control_name(JunctionControl c);
@@ -133,17 +147,109 @@ struct OdWeight {
 	bool operator==(const OdWeight &o) const { return to == o.to && weight == o.weight; }
 };
 
+// An intercity coach line (M3): coaches enter at the spawn point that holds
+// the line, dwell at the map's main station and leave at `exit`.
+struct CoachLine {
+	uint32_t id = 0;
+	NodeId exit = kNoId;
+	double per_hour = 2.0;
+	double dwell = 600.0; // s at the main station
+
+	bool operator==(const CoachLine &o) const {
+		return id == o.id && exit == o.exit && per_hour == o.per_hour && dwell == o.dwell;
+	}
+};
+
 // Spawn / sink point for traffic from outside the map, on a road end.
 struct Spawner {
 	bool enabled = false;
-	double rate = 300.0; // vehicles per hour entering here (0 = sink only)
+	double rate = 300.0; // cars per hour entering here (0 = sink only)
 	bool sink = true; // vehicles may leave the map here
 	std::vector<OdWeight> od;
+	double bikes = 0.0; // bicycles per hour entering here (M3)
+	std::vector<CoachLine> coaches; // coach lines entering here (M3)
 
 	bool operator==(const Spawner &o) const {
-		return enabled == o.enabled && rate == o.rate && sink == o.sink && od == o.od;
+		return enabled == o.enabled && rate == o.rate && sink == o.sink && od == o.od && bikes == o.bikes &&
+				coaches == o.coaches;
 	}
 	double weight_to(NodeId to) const;
+};
+
+// A roundabout in place of a junction (M3). Legs are the roads that end at
+// the node. Traffic circulates counter-clockwise (right-hand traffic).
+struct Roundabout {
+	bool enabled = false;
+	double radius = 20.0; // outer edge of the circulating carriageway (m)
+	int lanes = 1; // circulating lanes, 1..3
+	bool turbo = false; // raised lane dividers: lane chosen at entry, no changes inside
+	std::vector<SegmentId> slip; // legs with a right-turn bypass to the next exit
+
+	bool operator==(const Roundabout &o) const {
+		return enabled == o.enabled && radius == o.radius && lanes == o.lanes && turbo == o.turbo && slip == o.slip;
+	}
+};
+
+// Signals (M3): a movement is the traffic from one leg into another.
+struct SignalMovement {
+	SegmentId from = kNoId;
+	SegmentId to = kNoId;
+	bool permissive = false; // green, but yields to conflicting green traffic
+
+	bool operator==(const SignalMovement &o) const {
+		return from == o.from && to == o.to && permissive == o.permissive;
+	}
+};
+
+struct SignalPhase {
+	double green = 20.0; // s
+	std::vector<SignalMovement> moves;
+
+	bool operator==(const SignalPhase &o) const { return green == o.green && moves == o.moves; }
+};
+
+// Fixed-time plan: each phase is green, then amber, then all-red.
+struct SignalPlan {
+	std::vector<SignalPhase> phases;
+	double amber = 3.0;
+	double all_red = 2.0;
+	double offset = 0.0; // s into the cycle at time zero
+	// Legs whose right turns have the EU flashing green arrow: right on red
+	// after stopping and yielding to everyone.
+	std::vector<SegmentId> right_on_red;
+
+	bool operator==(const SignalPlan &o) const {
+		return phases == o.phases && amber == o.amber && all_red == o.all_red && offset == o.offset &&
+				right_on_red == o.right_on_red;
+	}
+	double cycle() const;
+};
+
+// A city bus route (M3), run from a depot.
+struct BusRoute {
+	uint32_t id = 0;
+	std::string name;
+	uint32_t color = 0x2f7fd8; // 0xRRGGBB
+	std::vector<uint32_t> stops; // stop ids in order
+	double headway = 600.0; // s between departures
+	bool loop = false; // loop (back to the first stop) or end to end
+
+	bool operator==(const BusRoute &o) const {
+		return id == o.id && name == o.name && color == o.color && stops == o.stops && headway == o.headway &&
+				loop == o.loop;
+	}
+};
+
+// A bus depot on a road end (M3): buses leave and return through it.
+struct Depot {
+	bool enabled = false;
+	int capacity = 20;
+	std::string name;
+	std::vector<BusRoute> routes;
+
+	bool operator==(const Depot &o) const {
+		return enabled == o.enabled && capacity == o.capacity && name == o.name && routes == o.routes;
+	}
 };
 
 struct RoadNode {
@@ -154,12 +260,39 @@ struct RoadNode {
 	// Segments whose legs form the main road (PriorityRoad only).
 	std::vector<SegmentId> priority;
 	Spawner spawner;
+	Roundabout roundabout;
+	SignalPlan signal;
+	Depot depot;
 
 	bool operator==(const RoadNode &o) const {
 		return id == o.id && pos == o.pos && level == o.level && control == o.control && priority == o.priority &&
-				spawner == o.spawner;
+				spawner == o.spawner && roundabout == o.roundabout && signal == o.signal && depot == o.depot;
 	}
 	bool is_priority(SegmentId s) const;
+	// Replaces or (with to == kNoId) drops every reference to a segment.
+	void rename_segment(SegmentId from, SegmentId to);
+};
+
+// Bus stops (M3) sit on a road, on the kerb of one travel direction.
+enum class StopKind : uint8_t {
+	Kerbside = 0, // the bus stops in its lane
+	Bay = 1, // the bus pulls into a lay-by
+	MainStation = 2, // the coach terminal, several bays, one per map
+};
+const char *stop_kind_name(StopKind k);
+bool stop_kind_from_name(const std::string &s, StopKind &out);
+
+struct BusStop {
+	uint32_t id = 0;
+	double u = 0.5; // fraction of the centreline length
+	LaneDir side = LaneDir::Forward; // the direction of travel it serves
+	StopKind kind = StopKind::Kerbside;
+	std::string name;
+	int bays = 1; // buses at once (main station: several)
+
+	bool operator==(const BusStop &o) const {
+		return id == o.id && u == o.u && side == o.side && kind == o.kind && name == o.name && bays == o.bays;
+	}
 };
 
 struct RoadSegment {
@@ -179,6 +312,7 @@ struct RoadSegment {
 	std::string name;
 	EndRules ends[2]; // [0] lanes arriving at the from-node, [1] at the to-node
 	std::vector<NoChangeZone> no_change;
+	std::vector<BusStop> stops;
 
 	bool operator==(const RoadSegment &o) const;
 };
@@ -199,12 +333,15 @@ public:
 	uint32_t next_node_id() const { return next_node_id_; }
 	uint32_t next_segment_id() const { return next_segment_id_; }
 	uint32_t next_lane_id() const { return next_lane_id_; }
+	uint32_t next_object_id() const { return next_object_id_; }
 
 	// ID allocation (IDs are never reused, even after undo).
 	NodeId alloc_node_id() { return next_node_id_++; }
 	SegmentId alloc_segment_id() { return next_segment_id_++; }
 	LaneId alloc_lane_id() { return next_lane_id_++; }
-	void set_next_ids(uint32_t n, uint32_t s, uint32_t l);
+	// Stops, bus routes and coach lines.
+	uint32_t alloc_object_id() { return next_object_id_++; }
+	void set_next_ids(uint32_t n, uint32_t s, uint32_t l, uint32_t o = 1);
 
 	// Raw writes. Use Document for undoable edits.
 	void put_node(const RoadNode &n);
@@ -227,6 +364,7 @@ private:
 	uint32_t next_node_id_ = 1;
 	uint32_t next_segment_id_ = 1;
 	uint32_t next_lane_id_ = 1;
+	uint32_t next_object_id_ = 1;
 };
 
 // --- Profiles ---------------------------------------------------------------
@@ -247,6 +385,7 @@ struct ProfileParams {
 	bool bike_right = false;
 	bool bus_left = false; // outermost backward lane is a bus lane
 	bool bus_right = false; // outermost forward lane is a bus lane
+	ParkingStyle parking_style = ParkingStyle::Parallel;
 };
 
 // Builds a profile from params. Lanes are matched to `previous` by role
