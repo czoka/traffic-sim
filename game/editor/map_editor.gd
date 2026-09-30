@@ -1,7 +1,8 @@
 class_name MapEditor
 extends Node2D
-## M1 road editor (main scene). Owns the C++ RoadEditor, the tools, selection,
-## snapping, autosave and file import/export. The UI lives in EditorUI.
+## Road editor and simulation (main scene). Owns the C++ RoadEditor, the tools,
+## selection, snapping, autosave and file import/export. The simulation clock
+## and car rendering live in SimController, the UI in EditorUI.
 
 const AUTOSAVE_PATH := "user://autosave.json"
 const PRESETS_PATH := "user://profiles.json"
@@ -23,6 +24,7 @@ var speed_kmh := 50.0
 var user_presets: Array = [] # [{name, profile}]
 
 var view: MapView
+var sim: SimController
 var overlay: EditorOverlay
 var camera: CameraController
 var ui: EditorUI
@@ -50,6 +52,10 @@ func _ready() -> void:
 	view = MapView.new()
 	view.name = "MapView"
 	add_child(view)
+	sim = SimController.new()
+	sim.name = "Sim"
+	sim.editor = self
+	add_child(sim)
 	overlay = EditorOverlay.new()
 	overlay.name = "Overlay"
 	overlay.editor = self
@@ -65,6 +71,7 @@ func _ready() -> void:
 		"road": RoadDrawTool.new(self),
 		"curve": CurveDrawTool.new(self),
 		"lane": LanePaintTool.new(self),
+		"spawner": SpawnerTool.new(self),
 	}
 	_load_user_presets()
 	ui = EditorUI.new()
@@ -76,6 +83,7 @@ func _ready() -> void:
 	set_template({"preset": "Street 1+1"}, "Street 1+1")
 	set_tool("select")
 	_refresh_map()
+	sim.reset()
 	fit_view()
 	_apply_cmdline()
 
@@ -92,8 +100,12 @@ func _wants_ring_benchmark() -> bool:
 func _load_startup_map() -> void:
 	var args := OS.get_cmdline_user_args()
 	if args.has("--grid"):
-		road.load_test_grid(7, 8, 120.0)
+		road.load_example("grid")
 		return
+	for arg in args:
+		if arg.begins_with("--example="):
+			road.load_example(arg.trim_prefix("--example="))
+			return
 	if args.has("--demo"):
 		road.load_demo_town()
 		return
@@ -123,6 +135,14 @@ func _apply_cmdline() -> void:
 			select("nodes", int(arg.trim_prefix("--select-node=")), false)
 		elif arg == "--connectors":
 			show_connectors = true
+		elif arg == "--play":
+			sim.play.call_deferred()
+		elif arg.begins_with("--sim-seconds="):
+			sim.reset()
+			for i in int(float(arg.trim_prefix("--sim-seconds=")) * 10.0 / 50.0):
+				road.sim_step(50)
+		elif arg.begins_with("--select-car="):
+			sim.select_car.call_deferred(int(arg.trim_prefix("--select-car=")))
 		elif arg.begins_with("--screenshot="):
 			_screenshot_path = arg.trim_prefix("--screenshot=")
 			_screenshot_frames = 30
@@ -200,6 +220,8 @@ func tool_name() -> String:
 
 
 func select(kind: String, id: int, additive: bool) -> void:
+	if sim.selected_car != 0:
+		sim.select_car(0)
 	if not additive:
 		selection = {"nodes": [], "segments": []}
 	var list: Array = selection[kind]
@@ -236,6 +258,7 @@ func delete_selection() -> void:
 func set_level(l: int) -> void:
 	level = clampi(l, -1, 1)
 	view.apply_level_style(level)
+	sim.apply_level_style(level)
 	ui.refresh()
 	overlay.queue_redraw()
 
@@ -341,17 +364,17 @@ func autosave() -> void:
 func new_map() -> void:
 	road.new_map()
 	clear_selection()
+	sim.reset()
 	notify("New empty map. Undo history cleared.")
 
 
+## "town", "grid", "t_junction", "lane_drop" or "one_way_pair".
 func load_demo(which: String) -> void:
-	match which:
-		"town":
-			road.load_demo_town()
-		"grid":
-			road.load_test_grid(7, 8, 120.0)
+	road.load_example(which)
 	clear_selection()
 	_refresh_map()
+	sim.pause()
+	sim.reset()
 	fit_view()
 
 
@@ -367,9 +390,11 @@ func import_map() -> void:
 			return
 		clear_selection()
 		_refresh_map()
+		sim.pause()
+		sim.reset()
 		fit_view()
 		if r.migrated_from > 0:
-			notify("Imported a version %d map and upgraded it to version 2." % r.migrated_from)
+			notify("Imported a version %d map and upgraded it to version 3." % r.migrated_from)
 		else:
 			notify("Map imported."))
 
@@ -466,6 +491,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			set_tool("curve")
 		KEY_L:
 			set_tool("lane")
+		KEY_N:
+			set_tool("spawner")
+		KEY_SPACE:
+			sim.toggle()
+		KEY_PERIOD:
+			sim.step()
 		KEY_F:
 			fit_view()
 		KEY_G:
@@ -482,6 +513,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			delete_selection()
 		KEY_ESCAPE:
 			clear_selection()
+			sim.select_car(0)
 		_:
 			handled = false
 	if handled:

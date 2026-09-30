@@ -112,7 +112,7 @@ func _run() -> void:
 
 	# The POC's version 1 ring file is upgraded on import.
 	var v1: Dictionary = road.load_json(FileAccess.get_file_as_string("res://maps/poc_ring_v1.json"))
-	_check(v1.ok and int(v1.migrated_from) == 1, "v1 map file migrates to version 2")
+	_check(v1.ok and int(v1.migrated_from) == 1, "v1 map file migrates to version 3")
 	# The committed gate network loads and has no errors.
 	var grid: Dictionary = road.load_json(FileAccess.get_file_as_string("res://maps/test_grid_v2.json"))
 	_check(grid.ok and int(road.get_stats().errors) == 0, "maps/test_grid_v2.json loads without errors")
@@ -130,7 +130,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(MapEditor.PRESETS_PATH)
 
 	# Every tool activates and deactivates cleanly.
-	for t in ["road", "curve", "lane", "select"]:
+	for t in ["road", "curve", "lane", "spawner", "select"]:
 		ed.set_tool(t)
 	_check(ed.tool_name() == "select", "tools switch")
 

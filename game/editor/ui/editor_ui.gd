@@ -1,13 +1,14 @@
 class_name EditorUI
 extends CanvasLayer
-## Editor chrome: tool palette (left), inspector (right), bottom bar with
-## history, level, snapping and status, and the problems panel.
+## Editor chrome: tool palette (left), inspector (right), simulation bar and
+## bottom bar (history, level, snapping, status), and the problems panel.
 
 const TOOLS := [
 	["select", "Select", "V"],
 	["road", "Road", "R"],
 	["curve", "Curve road", "C"],
 	["lane", "Lane paint", "L"],
+	["spawner", "Spawn point", "N"],
 ]
 const PANEL_BG := Color(0.08, 0.09, 0.1, 0.92)
 
@@ -34,6 +35,15 @@ var _problems: Array = []
 var _toast: Label
 var _toast_time := 0.0
 
+# Simulation bar
+var _play: Button
+var _speed_opt: OptionButton
+var _seed: SpinBox
+var _demand: HSlider
+var _demand_label: Label
+var _max_cars: SpinBox
+var _sim_label: Label
+
 
 func _ready() -> void:
 	var root := Control.new()
@@ -47,6 +57,7 @@ func _ready() -> void:
 	inspector.position = Vector2(-12, 12)
 	root.add_child(inspector)
 	_build_bottom_bar(root)
+	_build_sim_bar(root)
 	_build_problems(root)
 	_toast = Label.new()
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -152,14 +163,17 @@ func _build_palette(root: Control) -> void:
 	demos.flat = false
 	demos.focus_mode = Control.FOCUS_NONE
 	demos.get_popup().add_item("Demo town", 0)
-	demos.get_popup().add_item("Test grid (56 junctions)", 1)
+	demos.get_popup().add_item("Test grid (56 junctions, M2 gate)", 1)
+	demos.get_popup().add_item("T junction (priority road)", 3)
+	demos.get_popup().add_item("Lane drop", 4)
+	demos.get_popup().add_item("One-way pair", 5)
 	demos.get_popup().add_separator()
 	demos.get_popup().add_item("POC ring benchmark", 2)
 	demos.get_popup().id_pressed.connect(_on_example)
 	box.add_child(demos)
 
 	var help := Label.new()
-	help.text = "Wheel zoom · right-drag pan · F fit\nCtrl+Z undo · Ctrl+Shift+Z redo\nG grid · A angles · PgUp/PgDn level"
+	help.text = "Wheel zoom · right-drag pan · F fit\nCtrl+Z undo · Ctrl+Shift+Z redo\nG grid · A angles · PgUp/PgDn level\nSpace play/pause · . step 1 s"
 	help.add_theme_font_size_override("font_size", 11)
 	help.add_theme_color_override("font_color", Color(0.6, 0.62, 0.65))
 	box.add_child(help)
@@ -173,6 +187,12 @@ func _on_example(id: int) -> void:
 			editor.load_demo("grid")
 		2:
 			editor.open_ring_benchmark()
+		3:
+			editor.load_demo("t_junction")
+		4:
+			editor.load_demo("lane_drop")
+		5:
+			editor.load_demo("one_way_pair")
 
 
 func _confirm_new() -> void:
@@ -274,13 +294,121 @@ func _toggle_problems() -> void:
 	_problems_panel.visible = not _problems_panel.visible
 
 
+# --- Simulation bar ------------------------------------------------------------------
+
+func _build_sim_bar(root: Control) -> void:
+	var sim := editor.sim
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.offset_top = -96
+	panel.offset_bottom = -52
+	panel.add_theme_stylebox_override("panel", _panel_style(PANEL_BG))
+	root.add_child(panel)
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 8)
+	panel.add_child(bar)
+	_play = _button("▶ Play", sim.toggle, bar)
+	_play.custom_minimum_size = Vector2(90, 0)
+	_play.tooltip_text = "Play / pause (Space). Editing pauses; Play resumes with the changes."
+	var step := _button("Step", sim.step, bar)
+	step.tooltip_text = "One sim second (.)"
+	var restart := _button("Restart", sim.reset, bar)
+	restart.tooltip_text = "Remove every car and start again with the seed"
+	bar.add_child(VSeparator.new())
+	var sl := Label.new()
+	sl.text = "Speed"
+	bar.add_child(sl)
+	_speed_opt = OptionButton.new()
+	_speed_opt.focus_mode = Control.FOCUS_NONE
+	for i in SimController.MULTIPLIERS.size():
+		_speed_opt.add_item(sim.speed_label(i))
+	_speed_opt.select(sim.speed_index)
+	_speed_opt.item_selected.connect(sim.set_speed_index)
+	bar.add_child(_speed_opt)
+	var seed_label := Label.new()
+	seed_label.text = "Seed"
+	bar.add_child(seed_label)
+	_seed = SpinBox.new()
+	_seed.min_value = 0
+	_seed.max_value = 999999
+	_seed.value = sim.seed_value
+	_seed.tooltip_text = "Same map + same seed = same run. Restart to apply."
+	_seed.value_changed.connect(func(v: float) -> void: sim.seed_value = int(v))
+	bar.add_child(_seed)
+	bar.add_child(VSeparator.new())
+	_demand_label = Label.new()
+	_demand_label.custom_minimum_size = Vector2(92, 0)
+	bar.add_child(_demand_label)
+	_demand = HSlider.new()
+	_demand.min_value = 0.0
+	_demand.max_value = 3.0
+	_demand.step = 0.05
+	_demand.value = sim.demand
+	_demand.custom_minimum_size = Vector2(110, 0)
+	_demand.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_demand.focus_mode = Control.FOCUS_NONE
+	_demand.tooltip_text = "Multiplies every spawn point's rate"
+	_demand.value_changed.connect(func(v: float) -> void:
+		sim.set_demand(v)
+		_demand_label.text = "Density ×%.2f" % v)
+	_demand_label.text = "Density ×%.2f" % sim.demand
+	bar.add_child(_demand)
+	var cap_label := Label.new()
+	cap_label.text = "Max cars"
+	bar.add_child(cap_label)
+	_max_cars = SpinBox.new()
+	_max_cars.min_value = 0
+	_max_cars.max_value = 20000
+	_max_cars.step = 50
+	_max_cars.value = sim.max_cars
+	_max_cars.tooltip_text = "Spawning pauses while this many cars are on the map (0 = no limit)"
+	_max_cars.value_changed.connect(func(v: float) -> void: sim.set_max_cars(int(v)))
+	bar.add_child(_max_cars)
+	bar.add_child(VSeparator.new())
+	_sim_label = Label.new()
+	_sim_label.custom_minimum_size = Vector2(430, 0)
+	_sim_label.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
+	bar.add_child(_sim_label)
+	sim.state_changed.connect(_refresh_sim_buttons)
+	_refresh_sim_buttons()
+
+
+func _refresh_sim_buttons() -> void:
+	if _play == null:
+		return
+	_play.text = "⏸ Pause" if editor.sim.playing else "▶ Play"
+	_speed_opt.select(editor.sim.speed_index)
+
+
+static func clock(seconds: float) -> String:
+	var s := int(seconds)
+	return "%d:%02d:%02d" % [s / 3600, (s / 60) % 60, s % 60]
+
+
+func refresh_sim(st: Dictionary) -> void:
+	if _sim_label == null or st.is_empty():
+		return
+	var text := "%s · %d cars · %d trips · %.0f km/h · %d stopped" % [
+		clock(st.sim_time), st.vehicles, st.arrived, st.mean_speed_kmh, st.stopped]
+	if int(st.waiting_to_enter) > 0:
+		text += " · %d waiting to enter" % st.waiting_to_enter
+	if editor.sim.playing:
+		text += " · %.0fx" % st.effective_speed
+		if st.behind:
+			text += " (CPU-limited)"
+	_sim_label.text = text
+	_sim_label.tooltip_text = "Sim %.0f µs per tick, %.1f ms per frame · %d lane changes · %d re-routes · longest stop %.0f s · %d cars taken off (stuck)" % [
+		st.tick_us, st.frame_sim_ms, st.lane_changes, st.reroutes, st.max_stopped, st.removed_stuck]
+
+
 func _build_problems(root: Control) -> void:
 	_problems_panel = PanelContainer.new()
 	_problems_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_problems_panel.offset_left = -520
-	_problems_panel.offset_top = -300
+	_problems_panel.offset_top = -344
 	_problems_panel.offset_right = -12
-	_problems_panel.offset_bottom = -52
+	_problems_panel.offset_bottom = -100
 	_problems_panel.add_theme_stylebox_override("panel", _panel_style(PANEL_BG))
 	_problems_panel.visible = false
 	root.add_child(_problems_panel)
