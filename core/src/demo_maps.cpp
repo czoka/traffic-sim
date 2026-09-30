@@ -349,6 +349,13 @@ void build_showcase(Document &doc) {
 	const SegmentId ab = road(doc, a, b, bus, 50);
 	road(doc, b, e, avenue, 60);
 	pockets(doc, wa, true, false, 40);
+	{
+		// Westbound left turns into the bike street get a pocket at the signal.
+		EndRules r;
+		r.left = TurnRule::TurnLane;
+		r.turn_lane_length = 45;
+		doc.set_end_rules(ab, 0, r);
+	}
 	// North-south bike street through A.
 	const NodeId n1 = node(-220, -320), s1 = node(-220, 300), s3 = node(-220, 480);
 	road(doc, n1, a, bike, 40);

@@ -553,7 +553,8 @@ TEST_CASE("M3 determinism: the showcase replays bit for bit") {
 	const uint64_t a = run(42), b = run(42);
 	CHECK(a == b);
 	CHECK(run(43) != a);
-	std::printf("M3 golden: %016llx\n", static_cast<unsigned long long>(a));
+	std::printf("M3 golden: %016llx (expected 69e85f1801f703bf)\n", static_cast<unsigned long long>(a));
+	CHECK(a == 0x69e85f1801f703bfull); // same on every platform, like the M2 golden
 }
 
 TEST_CASE("M3 gate: the showcase runs a full sim day") {

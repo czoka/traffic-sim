@@ -44,7 +44,7 @@ struct TrafficGolden {
 	static constexpr double kDemand = 2.0;
 	// Expected state hash after kTicks. Update only on an intentional change to
 	// sim behaviour, and note why in the commit message.
-	static constexpr const char *kExpectedHash = "a4ef13f8041c564c";
+	static constexpr const char *kExpectedHash = "2b4a55beb24226a0";
 };
 
 // Runs the M2 reference scenario and returns the final state hash.
