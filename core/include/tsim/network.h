@@ -16,6 +16,7 @@
 // to a full compile.
 #pragma once
 
+#include "tsim/city_data.h"
 #include "tsim/road_geometry.h"
 #include "tsim/road_map.h"
 
@@ -263,6 +264,18 @@ struct NetSpawner {
 	std::vector<int32_t> sink_lanes; // road lanes arriving at it
 };
 
+// A building as the sim sees it (M5): its type from the city data and the
+// pedestrian node at its door.
+struct NetBuilding {
+	uint32_t id = 0;
+	int type = -1; // CityData::types index (-1: unknown type, ignored by the sim)
+	BuildingKind kind = BuildingKind::Home;
+	Vec2 pos, dir; // front centre, into the lot
+	Vec2 centre;
+	int level = 0;
+	int32_t entrance = -1; // ped node on the sidewalk or path in front (-1: none within reach)
+};
+
 class Network {
 public:
 	std::vector<NetLane> lanes;
@@ -274,7 +287,9 @@ public:
 	std::vector<NetCoachLine> coach_lines;
 	int32_t main_station = -1; // index into stops
 	PedGraph ped; // M4
+	std::vector<NetBuilding> buildings; // M5, ascending id
 	int32_t stop_index(uint32_t id) const;
+	int32_t building_index(uint32_t id) const;
 	double max_speed = 13.9; // fastest speed limit, for the routing heuristic
 
 	int32_t find(const LaneKey &k) const;
@@ -346,6 +361,7 @@ struct NetProblem {
 	Vec2 pos;
 	int level = 0;
 	NodeId node = kNoId;
+	uint32_t building = 0; // M5
 };
 std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net);
 

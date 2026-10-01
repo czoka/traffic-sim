@@ -9,6 +9,9 @@
 //      Version 2 files load unchanged (the new fields have defaults).
 //   4  M3: roundabouts, signal plans, parking styles, bus stops, depots with
 //      bus routes, coach lines, bicycle demand. Older files load unchanged.
+//   5  M4: segment kinds (paths), ramps and stairs, crossings, fences, walk
+//      legs per signal phase, people per spawn point.
+//   6  M5: buildings (type from the city data, lot position and facing).
 // Numbers are written in shortest round-trip form and keys in a fixed order,
 // so save -> load -> save gives an identical file.
 #pragma once
@@ -19,7 +22,7 @@
 
 namespace tsim {
 
-constexpr int kRoadMapVersion = 5;
+constexpr int kRoadMapVersion = 6;
 
 std::string road_map_to_json(const RoadMap &map);
 

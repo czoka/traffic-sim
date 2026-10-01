@@ -42,6 +42,7 @@ void Document::reset(const RoadMap &map) {
 	open_ = Change{};
 	open_nodes_.clear();
 	open_segments_.clear();
+	open_buildings_.clear();
 	++revision_;
 	dirty_all_ = true;
 	dirty_nodes_.clear();
@@ -56,6 +57,7 @@ void Document::begin(const std::string &label) {
 		open_.label = label;
 		open_nodes_.clear();
 		open_segments_.clear();
+		open_buildings_.clear();
 	}
 	++depth_;
 }
@@ -83,10 +85,18 @@ bool Document::commit() {
 			c.segments.push_back(s);
 		}
 	}
+	for (BuildingChange &b : open_.buildings) {
+		const Building *now = map_.building(b.id);
+		b.after = now ? std::optional<Building>(*now) : std::nullopt;
+		if (!(b.before == b.after)) {
+			c.buildings.push_back(b);
+		}
+	}
 	open_ = Change{};
 	open_nodes_.clear();
 	open_segments_.clear();
-	if (c.nodes.empty() && c.segments.empty()) {
+	open_buildings_.clear();
+	if (c.nodes.empty() && c.segments.empty() && c.buildings.empty()) {
 		return false;
 	}
 	undo_.push_back(std::move(c));
@@ -103,6 +113,7 @@ void Document::cancel() {
 	open_ = Change{};
 	open_nodes_.clear();
 	open_segments_.clear();
+	open_buildings_.clear();
 	apply(c, false);
 }
 
@@ -124,6 +135,14 @@ void Document::apply(const Change &c, bool forward) {
 			map_.erase_node(n.id);
 		}
 		dirty_nodes_.insert(n.id);
+	}
+	for (const BuildingChange &b : c.buildings) {
+		const std::optional<Building> &v = forward ? b.after : b.before;
+		if (v) {
+			map_.put_building(*v);
+		} else {
+			map_.erase_building(b.id);
+		}
 	}
 	++revision_;
 }
@@ -175,6 +194,46 @@ void Document::touch_segment(SegmentId id) {
 	const RoadSegment *s = map_.segment(id);
 	open_.segments.push_back(
 			SegmentChange{ id, s ? std::optional<RoadSegment>(*s) : std::nullopt, std::nullopt });
+}
+
+void Document::touch_building(uint32_t id) {
+	if (depth_ == 0 || !open_buildings_.insert(id).second) {
+		return;
+	}
+	const Building *b = map_.building(id);
+	open_.buildings.push_back(BuildingChange{ id, b ? std::optional<Building>(*b) : std::nullopt, std::nullopt });
+}
+
+uint32_t Document::add_building(const std::string &type, Vec2 pos, Vec2 dir, int level, const std::string &name) {
+	Scope scope(*this, "Add building");
+	Building b;
+	b.id = map_.alloc_object_id();
+	b.type = type;
+	b.pos = pos;
+	const double len = dir.length();
+	b.dir = len > 1e-9 ? dir * (1.0 / len) : Vec2{ 0.0, -1.0 };
+	b.level = level;
+	b.name = name;
+	touch_building(b.id);
+	map_.put_building(b);
+	++revision_;
+	return b.id;
+}
+
+void Document::set_building(const Building &b) {
+	if (!map_.building(b.id)) return;
+	Scope scope(*this, "Edit building");
+	touch_building(b.id);
+	map_.put_building(b);
+	++revision_;
+}
+
+void Document::remove_building(uint32_t id) {
+	if (!map_.building(id)) return;
+	Scope scope(*this, "Remove building");
+	touch_building(id);
+	map_.erase_building(id);
+	++revision_;
 }
 
 void Document::put_node(const RoadNode &n) {

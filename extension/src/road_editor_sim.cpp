@@ -324,6 +324,10 @@ Dictionary RoadEditor::sim_stats() {
 	d["crossings"] = static_cast<int64_t>(st.crossings);
 	d["mean_crossing_wait"] = st.mean_crossing_wait;
 	d["cars_yielded"] = static_cast<int64_t>(st.cars_yielded);
+	d["city_on"] = t.city_on();
+	d["clock_day"] = t.day();
+	d["clock_minute"] = t.minute_of_day();
+	d["residents"] = static_cast<int64_t>(st.residents);
 	d["tick_us"] = tick_us_ema_;
 	d["frame_sim_ms"] = frame_sim_ms_ema_;
 	d["behind"] = behind_;

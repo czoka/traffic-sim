@@ -1,5 +1,8 @@
 #include "tsim/road_geometry.h"
 
+#include "tsim/buildings.h"
+#include "tsim/city_data.h"
+
 #include "clipper2/clipper.h"
 
 #include <algorithm>
@@ -1986,6 +1989,28 @@ void RoadGeometry::build(const RoadMap &map) {
 			disc.push_back(kv.second.pos + Vec2{ std::cos(th), std::sin(th) } * (0.5 * width));
 		}
 		triangulate(disc, mesh.get(kv.second.level, Layer::Ground), kPath);
+	}
+
+	// --- 7b. Buildings (M5): a rim, the roof in the type's colour, a door on the street side.
+	const CityData &city = default_city_data();
+	for (const auto &kv : map.buildings()) {
+		const Building &b = kv.second;
+		const BuildingType *t = city.type(b.type);
+		const uint32_t c = t ? t->color : 0xb0b0b0u;
+		const Color roof{ static_cast<float>((c >> 16) & 0xff) / 255.0f, static_cast<float>((c >> 8) & 0xff) / 255.0f,
+			static_cast<float>(c & 0xff) / 255.0f, 1.0f };
+		const Color rim{ roof.r * 0.55f, roof.g * 0.55f, roof.b * 0.55f, 1.0f };
+		const std::array<Vec2, 4> lot = lot_corners(b, city);
+		MeshBatch &batch = mesh.get(b.level, Layer::Ground);
+		MeshSet::quad(batch, lot[0], lot[1], lot[2], lot[3], rim);
+		Building inner = b;
+		inner.pos = b.pos + b.dir * 0.8;
+		const double w = t ? t->width : 10.0, d = t ? t->depth : 10.0;
+		const std::array<Vec2, 4> r = lot_corners(inner, std::max(0.5, w - 1.6), std::max(0.5, d - 1.6));
+		MeshSet::quad(batch, r[0], r[1], r[2], r[3], roof);
+		Building door = b;
+		const std::array<Vec2, 4> dq = lot_corners(door, std::min(2.4, w * 0.5), 1.2);
+		MeshSet::quad(batch, dq[0], dq[1], dq[2], dq[3], Color{ 0.18f, 0.16f, 0.14f, 1.0f });
 	}
 
 	// --- 8. Assemble meshes by level, then layer ---------------------------------------

@@ -78,6 +78,10 @@ func _draw() -> void:
 					TURN_COLORS.get(c.turn, Color.WHITE))
 	for id in editor.selection.segments:
 		_outline(road.segment_outline(id), SELECT, 2.5)
+	for id in editor.selection.get("buildings", []):
+		var b: Dictionary = road.get_building(id)
+		if not b.is_empty():
+			_outline(b.corners, SELECT, 2.5)
 	for id in editor.selection.nodes:
 		_outline(road.node_outline(id), SELECT, 2.5)
 		var n: Dictionary = road.get_node(id)
@@ -96,6 +100,7 @@ func _draw() -> void:
 		draw_circle(at, maxf(px(4.5), 0.9), Color(0.05, 0.05, 0.06, 0.9))
 		draw_circle(at, maxf(px(3.2), 0.65), LIGHTS.get(h.light, Color.WHITE))
 	_draw_people(font)
+	_draw_buildings(font)
 	var car: Dictionary = editor.sim.car_info if editor.sim and editor.sim.selected_car != 0 else {}
 	if not car.is_empty():
 		var route: PackedVector2Array = car.route
@@ -204,6 +209,30 @@ func _draw_people(font: Font) -> void:
 			draw_polyline(route, PERSON, px(2.5))
 			draw_circle(route[route.size() - 1], px(5), PERSON)
 		draw_circle(ped.pos, maxf(px(9), 1.5), PERSON, false, px(2.5))
+
+
+## Businesses: green open, grey shut (outside hours), red "!" closed unexpectedly.
+## Homes: households / units when zoomed in.
+func _draw_buildings(font: Font) -> void:
+	if editor.sim == null or editor.sim.building_states.is_empty():
+		return
+	var zoom: float = editor.camera.zoom.x
+	for b in editor.sim.building_states:
+		var c: Vector2 = b.centre
+		if b.kind == "home":
+			if zoom > 1.2:
+				draw_string(font, c + Vector2(-px(10), px(4)), "%d/%d" % [b.households, b.units], HORIZONTAL_ALIGNMENT_LEFT, -1,
+					int(px(11)), Color(1, 1, 1, 0.85))
+			continue
+		var r := maxf(px(6), 1.2)
+		var col := Color(0.25, 0.85, 0.35) if b.open else (ERROR if b.closed_unexpectedly else Color(0.55, 0.57, 0.6))
+		draw_circle(c, r, Color(0.05, 0.05, 0.06, 0.9))
+		draw_circle(c, r * 0.75, col)
+		if b.closed_unexpectedly:
+			draw_string(font, c + Vector2(-px(2.5), px(4.5)), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(13)), Color.WHITE)
+		elif zoom > 1.2:
+			draw_string(font, c + Vector2(r + px(3), px(4)), "%d in" % b.inside, HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(11)),
+				Color(1, 1, 1, 0.85))
 
 
 func _outline(pts: PackedVector2Array, col: Color, width: float) -> void:

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "tsim/document.h"
+#include "tsim/road_geometry.h"
 
 namespace tsim {
 
@@ -36,6 +37,19 @@ void build_people_town(Document &doc);
 // M4 gate: the test grid at a larger size with people at every spawn point,
 // signals with walk phases on the avenues and zebras on some streets.
 void build_people_city(Document &doc, int cols, int rows);
+
+// M5: what a new map starts with: a street from the west edge to the east
+// edge with the main station, a coach line through it, and the city offices.
+void build_new_city(Document &doc);
+// M5 test town: the new city plus a cross street with homes (townhouses,
+// houses, apartment blocks), a grocery, fast food, a restaurant and an office.
+void build_city_town(Document &doc);
+// M5 gate: a 6 x 6 block town for about 5,000 residents, with shops, offices,
+// a bus loop, the main station and coaches.
+void build_city_week(Document &doc);
+// Places a building of `type` on the street edge nearest `near` (level 0).
+// Returns its id, 0 when there is no street within 60 m.
+uint32_t place_building(Document &doc, const RoadGeometry &geom, const char *type, Vec2 near);
 
 // Profile for a preset name (see profile_presets()); falls back to the first.
 Profile preset_profile(const char *name, RoadMap &map);

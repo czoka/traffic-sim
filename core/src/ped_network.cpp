@@ -7,6 +7,8 @@
 // only, like the rest of the network, so the graph is identical everywhere.
 #include "tsim/network.h"
 
+#include "tsim/buildings.h"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -412,6 +414,38 @@ struct Builder {
 		}
 	}
 
+	// Building doors (M5): the nearest sidewalk or path within a few metres of
+	// the lot's front.
+	void buildings() {
+		const CityData &city = default_city_data();
+		for (const auto &kv : map.buildings()) {
+			const Building &b = kv.second;
+			NetBuilding nb;
+			nb.id = b.id;
+			nb.type = city.type_index(b.type);
+			if (nb.type >= 0) nb.kind = city.types[static_cast<size_t>(nb.type)].kind;
+			nb.pos = qv(b.pos);
+			nb.dir = b.dir;
+			nb.level = b.level;
+			const std::array<Vec2, 4> lot = lot_corners(b, city);
+			nb.centre = qv((lot[0] + lot[2]) * 0.5);
+			double best = 12.0;
+			Chain *bc = nullptr;
+			double bs = 0.0;
+			for (Chain &c : chains) {
+				double d = 0.0;
+				const double st = c.project(b.pos, &d);
+				if (d < best && c.level_at(st) == b.level) {
+					best = d;
+					bc = &c;
+					bs = st;
+				}
+			}
+			if (bc) nb.entrance = node_at(*bc, bs);
+			net.buildings.push_back(nb);
+		}
+	}
+
 	void path_links() {
 		for (const auto &kv : path_node) {
 			const NodeId nid = kv.first;
@@ -551,12 +585,14 @@ void PedGraph::clear() {
 
 void build_ped_network(const RoadMap &map, const RoadGeometry &geom, Network &out) {
 	out.ped.clear();
+	out.buildings.clear();
 	Builder b(map, geom, out);
 	b.build_chains();
 	b.corners();
 	b.leg_crossings();
 	b.mid_block();
 	b.stops();
+	b.buildings();
 	b.path_links();
 	b.spawners();
 	b.chain_edges();

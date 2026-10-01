@@ -17,6 +17,7 @@ const TOOLS := [
 	["crosswalk", "Crossing", "W"],
 	["fence", "Fence", "E"],
 	["bridge", "Bridge / tunnel", "B"],
+	["building", "Building", "H"],
 ]
 const PANEL_BG := Color(0.08, 0.09, 0.1, 0.92)
 
@@ -179,6 +180,9 @@ func _build_palette(root: Control) -> void:
 	demos.get_popup().add_item("Showcase (M3: signals, roundabout, buses, bikes, parking)", 6)
 	demos.get_popup().add_item("People town (M4: crossings, bridge, overpass, passengers)", 7)
 	demos.get_popup().add_item("People city (M4 gate: 2,000 vehicles, 1,000 people)", 8)
+	demos.get_popup().add_item("City town (M5: homes, shops, offices, residents)", 9)
+	demos.get_popup().add_item("City week (M5 gate: 5,000 residents)", 10)
+	demos.get_popup().add_item("Empty map", 11)
 	demos.get_popup().add_separator()
 	demos.get_popup().add_item("POC ring benchmark", 2)
 	demos.get_popup().id_pressed.connect(_on_example)
@@ -211,11 +215,17 @@ func _on_example(id: int) -> void:
 			editor.load_demo("people")
 		8:
 			editor.load_demo("people_city")
+		9:
+			editor.load_demo("city_town")
+		10:
+			editor.load_demo("city_week")
+		11:
+			editor.load_demo("empty")
 
 
 func _confirm_new() -> void:
 	var d := ConfirmationDialog.new()
-	d.dialog_text = "Start an empty map? The current map stays in the autosave until the next save, and undo history is cleared."
+	d.dialog_text = "Start a new city? It begins with High Street, the main station with a coach line, and the city offices. The current map stays in the autosave until the next save, and undo history is cleared. (Examples → Empty map starts from nothing.)"
 	d.confirmed.connect(func() -> void:
 		editor.new_map()
 		d.queue_free())
@@ -270,7 +280,7 @@ func _build_bottom_bar(root: Control) -> void:
 		_levels.append(b)
 	_level_only = _button("Only this level", func() -> void: editor.set_level_filter(not editor.level_filter), bar)
 	_level_only.toggle_mode = true
-	_level_only.tooltip_text = "Hide the other levels (H)"
+	_level_only.tooltip_text = "Hide the other levels (J)"
 	bar.add_child(VSeparator.new())
 	_grid = _button("Grid 1 m", _toggle_grid, bar)
 	_grid.toggle_mode = true
@@ -425,6 +435,9 @@ func refresh_sim(st: Dictionary) -> void:
 		return
 	var text := "%s · %d vehicles · %d trips · %.0f km/h · %d stopped" % [
 		clock(st.sim_time), st.vehicles, st.arrived, st.mean_speed_kmh, st.stopped]
+	if st.get("city_on", false):
+		text = "%s · %d residents · %d vehicles · %.0f km/h" % [SimController.clock_text(st.clock_day, st.clock_minute),
+			st.residents, st.vehicles, st.mean_speed_kmh]
 	var extra: Array = []
 	if int(st.buses) + int(st.coaches) > 0:
 		extra.append("%d bus%s" % [int(st.buses) + int(st.coaches), "" if int(st.buses) + int(st.coaches) == 1 else "es"])
@@ -447,6 +460,13 @@ func refresh_sim(st: Dictionary) -> void:
 		st.tick_us, st.frame_sim_ms, st.lane_changes, st.reroutes, st.max_stopped, st.removed_stuck,
 		st.cars, st.taxis, st.buses, st.coaches, st.bikes, st.bus_runs, st.bus_stops_served, st.coach_calls,
 		st.parkings, st.parking_failed, st.right_on_red]
+	var c: Dictionary = editor.sim.city
+	if not c.is_empty():
+		_sim_label.tooltip_text += "\nCity: %d residents in %d households (%d of %d units vacant), %d visitors · %d asleep, %d at work, %d travelling, %d outside the map\nJobs: %d local, %d outside, %d looking · %d shifts (%d late), %d left to visitors · %d of %d businesses open, %d closed unexpectedly, %d late openings\n%d meals out, %d at home, %d grocery trips · %d immigrants · mean hunger %.0f, energy %.0f, money %.0f" % [
+			c.residents, c.households, c.vacant_units, c.units, c.visitors, c.sleeping, c.working, c.travelling, c.outside,
+			c.employed, c.employed_outside, c.unemployed, c.shifts, c.late_shifts, c.unfilled_shifts, c.open, c.businesses,
+			c.closed_unexpectedly, c.late_openings, c.meals_out, c.home_meals, c.groceries, c.immigrants, c.mean_hunger,
+			c.mean_energy, c.mean_money]
 	if int(st.trips) > 0:
 		_sim_label.tooltip_text += "\n%d people trips: %d walk, %d bus, %d bike, %d car, %d coach · %d arrived\n%d boarded, %d got off, %d left behind, mean wait at stops %.0f s · %d crossings, mean wait at the kerb %.1f s, %d times cars gave way" % [
 			st.trips, st.trips_walk, st.trips_bus, st.trips_bike, st.trips_car, st.trips_coach, st.people_arrived,
@@ -479,7 +499,9 @@ func _on_problem_selected(i: int) -> void:
 	var p: Dictionary = _problems[i]
 	editor.set_level(int(p.level))
 	editor.focus(p.pos)
-	if not p.segments.is_empty():
+	if not (p.get("buildings", []) as Array).is_empty():
+		editor.select("buildings", p.buildings[0], false)
+	elif not p.segments.is_empty():
 		editor.select("segments", p.segments[0], false)
 		for k in range(1, p.segments.size()):
 			editor.select("segments", p.segments[k], true)

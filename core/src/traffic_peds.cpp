@@ -128,11 +128,11 @@ void Traffic::ped_costs() {
 	if (!net_) return;
 	const PedGraph &g = net_->ped;
 	const size_t N = g.nodes.size();
-	for (const PedSpawner &sp : g.spawners) {
+	for (const std::vector<int32_t> &entries : place_entries_) {
 		std::vector<double> best(N, kInf);
 		using Entry = std::pair<double, int32_t>;
 		std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> open;
-		for (int32_t e : sp.entries) {
+		for (int32_t e : entries) {
 			best[static_cast<size_t>(e)] = 0.0;
 			open.push({ 0.0, e });
 		}
@@ -455,16 +455,95 @@ double od_weight(const PedSpawner &o, NodeId to) {
 
 } // namespace
 
+int32_t Traffic::platform_of(int32_t stop) const {
+	if (!net_) return -1;
+	for (const PedStop &ps : net_->ped.stops) {
+		if (ps.stop == stop) return ps.node;
+	}
+	return -1;
+}
+
+double Traffic::best_bus(size_t from, size_t to, BusChoice &out) const {
+	double bus = kInf;
+	if (from >= ped_cost_.size() || to >= ped_cost_.size()) return bus;
+	const std::vector<double> &cf = ped_cost_[from];
+	const std::vector<double> &ct = ped_cost_[to];
+	for (size_t a = 0; a < rides_.size(); ++a) {
+		const RideTimes &ra = rides_[a];
+		for (size_t i = 0; i + 1 < ra.stops.size(); ++i) {
+			const int32_t pi = platform_of(ra.stops[i]);
+			if (pi < 0) continue;
+			const double w0 = cf[static_cast<size_t>(pi)];
+			if (w0 >= kInf) continue;
+			for (size_t j = i + 1; j < ra.stops.size(); ++j) {
+				const int32_t pj = platform_of(ra.stops[j]);
+				if (pj < 0 || ra.stops[j] == ra.stops[i]) continue;
+				const double ride = ra.at[j] - ra.at[i];
+				const double w1 = ct[static_cast<size_t>(pj)];
+				if (w1 < kInf) {
+					const double c = 2.0 * (w0 + w1) + ra.headway + ride;
+					if (c < bus) {
+						bus = c;
+						out = BusChoice{};
+						out.r1 = a;
+						out.i1 = i;
+						out.j1 = j;
+					}
+				}
+				// Transfer at stop j to another route.
+				for (size_t b = 0; b < rides_.size(); ++b) {
+					if (b == a) continue;
+					const RideTimes &rb = rides_[b];
+					for (size_t i2 = 0; i2 + 1 < rb.stops.size(); ++i2) {
+						if (rb.stops[i2] != ra.stops[j]) continue;
+						for (size_t j2 = i2 + 1; j2 < rb.stops.size(); ++j2) {
+							const int32_t pj2 = platform_of(rb.stops[j2]);
+							if (pj2 < 0) continue;
+							const double w2 = ct[static_cast<size_t>(pj2)];
+							if (w2 >= kInf) continue;
+							const double c = 2.0 * (w0 + w2) + ra.headway + rb.headway + ride + (rb.at[j2] - rb.at[i2]) +
+									config_.transfer_penalty;
+							if (c < bus) {
+								bus = c;
+								out.r1 = a;
+								out.i1 = i;
+								out.j1 = j;
+								out.r2 = b;
+								out.i2 = i2;
+								out.j2 = j2;
+								out.transfer = true;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return bus;
+}
+
+void Traffic::apply_bus_choice(Pedestrian &p, const BusChoice &c) const {
+	const RideTimes &ra = rides_[c.r1];
+	p.route = ra.route;
+	p.board = ra.stops[c.i1];
+	p.alight = ra.stops[c.j1];
+	if (c.transfer) {
+		const RideTimes &rb = rides_[c.r2];
+		p.route2 = rb.route;
+		p.board2 = rb.stops[c.i2];
+		p.alight2 = rb.stops[c.j2];
+	}
+}
+
 void Traffic::people_demand() {
 	if (!net_ || !people_on_) return;
 	const Network &n = *net_;
 	const PedGraph &g = n.ped;
 	const size_t ns = g.spawners.size();
-	if (ped_cost_.size() != ns) ped_costs();
+	if (ped_cost_.size() != place_count()) ped_costs();
 	auto walk_cost = [&](size_t from_spawner, int32_t node) {
 		return ped_cost_[from_spawner][static_cast<size_t>(node)];
 	};
-	auto to_dest = [&](size_t dest, int32_t node) { return ped_cost_[dest][static_cast<size_t>(node)]; };
 	auto platform = [&](int32_t stop) {
 		for (const PedStop &ps : g.stops) {
 			if (ps.stop == stop) return ps.node;
@@ -548,58 +627,8 @@ void Traffic::people_demand() {
 			mode = 0;
 		}
 		// Bus: one route, or two with a transfer at a shared stop.
-		struct Ride {
-			size_t r;
-			size_t i, j;
-		};
-		Ride r1{ 0, 0, 0 }, r2{ 0, 0, 0 };
-		bool transfer = false;
-		double bus = kInf;
-		for (size_t a = 0; a < rides_.size(); ++a) {
-			const RideTimes &ra = rides_[a];
-			for (size_t i = 0; i + 1 < ra.stops.size(); ++i) {
-				const int32_t pi = platform(ra.stops[i]);
-				if (pi < 0) continue;
-				const double w0 = walk_cost(k, pi);
-				if (w0 >= kInf) continue;
-				for (size_t j = i + 1; j < ra.stops.size(); ++j) {
-					const int32_t pj = platform(ra.stops[j]);
-					if (pj < 0 || ra.stops[j] == ra.stops[i]) continue;
-					const double ride = ra.at[j] - ra.at[i];
-					const double w1 = to_dest(dest, pj);
-					if (w1 < kInf) {
-						const double c = 2.0 * (w0 + w1) + ra.headway + ride;
-						if (c < bus) {
-							bus = c;
-							r1 = Ride{ a, i, j };
-							transfer = false;
-						}
-					}
-					// Transfer at stop j to another route.
-					for (size_t b = 0; b < rides_.size(); ++b) {
-						if (b == a) continue;
-						const RideTimes &rb = rides_[b];
-						for (size_t i2 = 0; i2 + 1 < rb.stops.size(); ++i2) {
-							if (rb.stops[i2] != ra.stops[j]) continue;
-							for (size_t j2 = i2 + 1; j2 < rb.stops.size(); ++j2) {
-								const int32_t pj2 = platform(rb.stops[j2]);
-								if (pj2 < 0) continue;
-								const double w2 = to_dest(dest, pj2);
-								if (w2 >= kInf) continue;
-								const double c = 2.0 * (w0 + w2) + ra.headway + rb.headway + ride +
-										(rb.at[j2] - rb.at[i2]) + config_.transfer_penalty;
-								if (c < bus) {
-									bus = c;
-									r1 = Ride{ a, i, j };
-									r2 = Ride{ b, i2, j2 };
-									transfer = true;
-								}
-							}
-						}
-					}
-				}
-			}
-		}
+		BusChoice choice;
+		const double bus = best_bus(k, dest, choice);
 		if (bus < kInf) {
 			const double c = bus * vary();
 			if (c < best) {
@@ -651,16 +680,7 @@ void Traffic::people_demand() {
 		int32_t target = -1;
 		if (mode == 1) {
 			++stats_.trips_bus;
-			const RideTimes &ra = rides_[r1.r];
-			ped.route = ra.route;
-			ped.board = ra.stops[r1.i];
-			ped.alight = ra.stops[r1.j];
-			if (transfer) {
-				const RideTimes &rb = rides_[r2.r];
-				ped.route2 = rb.route;
-				ped.board2 = rb.stops[r2.i];
-				ped.alight2 = rb.stops[r2.j];
-			}
+			apply_bus_choice(ped, choice);
 			target = platform(ped.board);
 		} else {
 			++stats_.trips_walk;
@@ -709,18 +729,20 @@ void Traffic::ped_arrived(size_t i) {
 		p.pi = 0;
 		return;
 	}
-	if (p.dest >= 0) {
-		const PedSpawner &d = g.spawners[static_cast<size_t>(p.dest)];
+	if (p.dest >= 0 && static_cast<size_t>(p.dest) < place_entries_.size() &&
+			!place_entries_[static_cast<size_t>(p.dest)].empty()) {
+		const std::vector<int32_t> &entries = place_entries_[static_cast<size_t>(p.dest)];
 		const int32_t at = p.edge >= 0 ? other_end(g.edges[static_cast<size_t>(p.edge)], p.from) : p.from;
-		if (std::find(d.entries.begin(), d.entries.end(), at) != d.entries.end()) {
+		if (std::find(entries.begin(), entries.end(), at) != entries.end()) {
 			p.done = true;
-			++stats_.people_arrived;
+			if (p.resident != 0) city_arrivals_.push_back(p.resident);
+			else ++stats_.people_arrived;
 			return;
 		}
 		// Off the planned path (after a ride, say): walk on to the destination.
-		int32_t best = d.entries[0];
+		int32_t best = entries[0];
 		double bd = kInf;
-		for (int32_t e : d.entries) {
+		for (int32_t e : entries) {
 			const double c = (g.nodes[static_cast<size_t>(e)].pos - g.nodes[static_cast<size_t>(at)].pos).length();
 			if (c < bd) {
 				bd = c;
@@ -734,10 +756,12 @@ void Traffic::ped_arrived(size_t i) {
 		if (p.path.empty()) {
 			p.done = true;
 			++stats_.unroutable;
+			if (p.resident != 0) city_arrivals_.push_back(p.resident); // lost: the city puts them somewhere
 		}
 		return;
 	}
 	p.done = true;
+	if (p.resident != 0) city_arrivals_.push_back(p.resident);
 }
 
 void Traffic::peds_tick() {
@@ -864,8 +888,11 @@ int Traffic::serve_stop(Vehicle &v, int32_t stop, Waypoint &wp, bool late) {
 		}
 	}
 	v.riders = std::move(stay);
-	// Coaches bring people to the city.
-	if (!late && coach && stop == n.main_station && pl >= 0) {
+	// Coaches bring people to the city: residents coming back, immigrants and
+	// visitors (M5), or random people for the spawn points.
+	if (!late && coach && stop == n.main_station && pl >= 0 && city_on_) {
+		alighted += city_coach_arrives(cap);
+	} else if (!late && coach && stop == n.main_station && pl >= 0) {
 		const int arrivals = static_cast<int>(rng_.range(10.0, 41.0));
 		std::vector<size_t> sinks;
 		for (size_t j = 0; j < g.spawners.size(); ++j) {
@@ -948,7 +975,8 @@ void Traffic::bus_departs(Vehicle &v, int32_t stop) {
 			const int32_t pi = find_pedestrian(pid);
 			if (pi < 0) continue;
 			peds_[static_cast<size_t>(pi)].done = true;
-			++stats_.people_arrived;
+			if (peds_[static_cast<size_t>(pi)].resident != 0) city_boarded_.push_back(peds_[static_cast<size_t>(pi)].resident);
+			else ++stats_.people_arrived;
 		}
 		v.riders.clear();
 	}
@@ -985,6 +1013,12 @@ std::vector<Traffic::PedSaved> Traffic::peds_save() const {
 		sv.alight2 = stop_id(p.alight2);
 		sv.origin = spawner_node(p.origin);
 		sv.dest = spawner_node(p.dest);
+		const int32_t ns = static_cast<int32_t>(g.spawners.size());
+		if (p.dest >= ns && p.dest < ns + static_cast<int32_t>(n.buildings.size())) {
+			sv.dest_building = n.buildings[static_cast<size_t>(p.dest - ns)].id;
+		} else if (p.dest >= 0 && p.dest == station_place_) {
+			sv.dest_station = true;
+		}
 		out.push_back(sv);
 	}
 	return out;
@@ -1000,8 +1034,20 @@ void Traffic::peds_reset_network() {
 	people_on_ = false;
 	ped_cost_.clear();
 	rides_.clear();
+	place_entries_.clear();
+	station_place_ = -1;
 	if (!net_) return;
 	for (const PedSpawner &sp : net_->ped.spawners) people_on_ |= sp.people > 0.0;
+	// Places: spawn points, then buildings (their door), then the main station.
+	for (const PedSpawner &sp : net_->ped.spawners) place_entries_.push_back(sp.entries);
+	for (const NetBuilding &b : net_->buildings) {
+		place_entries_.push_back(b.entrance >= 0 ? std::vector<int32_t>{ b.entrance } : std::vector<int32_t>{});
+	}
+	const int32_t station = platform_of(net_->main_station);
+	if (station >= 0) {
+		station_place_ = static_cast<int32_t>(place_entries_.size());
+		place_entries_.push_back({ station });
+	}
 	if (stop_acc_.size() != net_->stops.size()) stop_acc_.assign(net_->stops.size(), StopAcc{});
 	if (people_on_) {
 		ped_costs();
@@ -1048,6 +1094,13 @@ void Traffic::peds_restore(const std::vector<PedSaved> &saved) {
 		p.origin = sv.origin != kNoId ? spawner_idx(sv.origin) : -1;
 		p.dest = sv.dest != kNoId ? spawner_idx(sv.dest) : -1;
 		if (sv.dest != kNoId && p.dest < 0) continue; // its destination is gone
+		if (sv.dest_building != 0) {
+			p.dest = building_place(sv.dest_building);
+			if (p.dest < 0) continue;
+		} else if (sv.dest_station) {
+			p.dest = station_place_;
+			if (p.dest < 0) continue;
+		}
 		if ((sv.board && p.board < 0) || (sv.alight && p.alight < 0)) continue;
 		if (p.state == PedState::Riding) {
 			if (find_vehicle(p.vehicle) < 0) continue;
@@ -1073,7 +1126,9 @@ void Traffic::peds_restore(const std::vector<PedSaved> &saved) {
 		p.wait_since = 0;
 		int32_t target = sv.has_target ? node_at(sv.target, sv.target_level) : -1;
 		if (target < 0 && p.board >= 0) target = platform(p.board);
-		if (target < 0 && p.dest >= 0) target = g.spawners[static_cast<size_t>(p.dest)].entries[0];
+		if (target < 0 && p.dest >= 0 && !place_entries_[static_cast<size_t>(p.dest)].empty()) {
+			target = place_entries_[static_cast<size_t>(p.dest)][0];
+		}
 		if (target < 0) continue;
 		start_walk(p, target);
 		if (p.path.empty() && at != target) continue;
@@ -1159,8 +1214,10 @@ PedInfo Traffic::ped_info(uint32_t id) const {
 	out.speed = p.speed;
 	out.waited = p.wait_since ? static_cast<double>(tick_ - std::min(tick_, p.wait_since)) * config_.dt : 0.0;
 	out.trip_time = static_cast<double>(tick_ - std::min(tick_, p.spawn_tick)) * config_.dt;
-	out.origin = p.origin >= 0 ? g.spawners[static_cast<size_t>(p.origin)].node : kNoId;
-	out.dest = p.dest >= 0 ? g.spawners[static_cast<size_t>(p.dest)].node : kNoId;
+	const int32_t ns = static_cast<int32_t>(g.spawners.size());
+	out.origin = p.origin >= 0 && p.origin < ns ? g.spawners[static_cast<size_t>(p.origin)].node : kNoId;
+	out.dest = p.dest >= 0 && p.dest < ns ? g.spawners[static_cast<size_t>(p.dest)].node : kNoId;
+	out.resident = p.resident;
 	out.board = p.board;
 	out.alight = p.alight;
 	out.route = p.route;

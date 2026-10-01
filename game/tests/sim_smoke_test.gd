@@ -1,5 +1,5 @@
 extends SceneTree
-## Simulation smoke test (M2, M3, M4): loads the real editor scene and drives the
+## Simulation smoke test (M2, M3, M4, M5): loads the real editor scene and drives the
 ## sim through the calls the sim bar, the tools, the inspector and car picking
 ## make.
 ## Run headless:
@@ -150,10 +150,11 @@ func _run() -> void:
 	# Save -> load keeps spawn points and controls (map format v4).
 	var text: String = road.save_json()
 	var r: Dictionary = road.load_json(text)
-	_check(r.ok and road.save_json() == text and text.contains("\"version\": 5"), "v5 save -> load -> save is identical")
+	_check(r.ok and road.save_json() == text and text.contains("\"version\": 6"), "v6 save -> load -> save is identical")
 
 	await _m3(ed, road)
 	await _m4(ed, road)
+	await _m5(ed, road)
 
 	# Errors block Play.
 	road.new_map()
@@ -362,3 +363,78 @@ func _m4(ed: MapEditor, road) -> void:
 	var r: Dictionary = road.load_json(text)
 	_check(r.ok and road.save_json() == text, "M4 objects survive save -> load -> save")
 	ed.clear_selection()
+
+
+## M5: buildings and city life - the new city, the city town with residents,
+## the building tool and inspector, resident details, the clock and night.
+func _m5(ed: MapEditor, road) -> void:
+	ed.new_map()
+	await _frames(2)
+	var blds: Array = road.get_buildings(0)
+	_check(blds.size() == 1 and blds[0].type == "city_offices" and int(road.get_stats().errors) == 0, "a new city has the city offices and no errors")
+	_check(road.get_stops().any(func(st): return st.kind == "main_station"), "a new city has the main station")
+	ed.load_demo("city_town")
+	await _frames(2)
+	_check(int(road.get_stats().errors) == 0 and road.get_buildings(0).size() > 15, "city town: %d buildings, no errors" % road.get_buildings(0).size())
+	road.sim_set_city({"prefill": 1.0})
+	ed.sim.reset()
+	road.sim_step(36000 * 11) # 06:00 -> 17:00 (36,000 ticks an hour)
+	var c: Dictionary = road.sim_city_stats()
+	_check(c.on and int(c.residents) > 50, "%d residents, %d households, %d at work, %d asleep" % [c.residents, c.households, c.working, c.sleeping])
+	_check(int(c.shifts) > 0 and int(c.home_meals) > 0, "%d shifts, %d meals at home, %d out" % [c.shifts, c.home_meals, c.meals_out])
+	ed.sim._refresh_stats()
+	var states: Array = ed.sim.building_states
+	var open := 0
+	for b in states:
+		open += 1 if b.kind != "home" and b.open else 0
+	_check(open >= 2, "%d businesses open at %s" % [open, SimController.clock_text(ed.sim.stats.clock_day, ed.sim.stats.clock_minute)])
+	# The building inspector.
+	var grocery := 0
+	for b in road.get_buildings(0):
+		if b.type == "grocery":
+			grocery = b.id
+	ed.select("buildings", grocery, false)
+	await _frames(1)
+	var insp: Inspector = ed.ui.inspector
+	_check(insp._building_box.visible and insp._bld_live.text.contains("Staff in"), "the inspector shows the grocery live")
+	_check(road.pick_building(road.get_building(grocery).centre, 0) == grocery, "clicking a lot picks its building")
+	# Someone walking: their resident details.
+	var who := 0
+	var buf: PackedFloat32Array = road.sim_ped_buffer(0, 1.0)
+	for i in road.sim_ped_count(0):
+		var id: int = road.sim_pick_ped(Vector2(buf[i * 12 + 3], buf[i * 12 + 7]), 0.5, 0)
+		if id != 0 and int(road.sim_ped_info(id).get("resident", 0)) != 0:
+			who = id
+			break
+	if who != 0:
+		var r: Dictionary = road.sim_resident_info(road.sim_ped_info(who).resident)
+		_check(not r.is_empty() and String(r.activity) != "", "a walking resident: %s" % r.activity)
+	else:
+		_check(true, "nobody walking right now (fine)")
+	# The building tool: a snap beside the cross street and a placement.
+	ed.camera.zoom = Vector2.ONE * 2.0
+	var bt: BuildingTool = ed.tools["building"]
+	ed.set_tool("building")
+	var snap: Dictionary = road.snap_building("townhouse", Vector2(135, 160), 0)
+	_check(snap.ok and not snap.blocked, "the building tool finds a free lot")
+	var before: int = road.get_buildings(0).size()
+	var id2: int = road.add_building("townhouse", snap.pos, snap.dir, 0)
+	_check(id2 != 0 and road.get_buildings(0).size() == before + 1, "a townhouse placed")
+	var blocked: Dictionary = road.snap_building("apartment_block", Vector2(165, -60), 0)
+	_check(blocked.ok and blocked.blocked, "a lot on another building is blocked")
+	ed.undo()
+	_check(road.get_buildings(0).size() == before, "undo takes it away")
+	ed.set_tool("select")
+	void_ok(bt)
+	# Night: the map gets darker.
+	road.sim_step(36000 * 5) # to 22:00
+	ed.sim._refresh_stats()
+	_check(ed.sim.daylight.color.r < 0.8, "night falls (%s)" % SimController.clock_text(ed.sim.stats.clock_day, ed.sim.stats.clock_minute))
+	var text: String = road.save_json()
+	var r2: Dictionary = road.load_json(text)
+	_check(r2.ok and road.save_json() == text, "buildings survive save -> load -> save")
+	ed.clear_selection()
+
+
+func void_ok(_x) -> void:
+	pass

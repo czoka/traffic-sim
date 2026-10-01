@@ -141,6 +141,14 @@ public:
 	};
 	LiftPlan plan_lift(SegmentId seg, Vec2 at, int delta) const;
 
+	// --- Buildings (M5) ----------------------------------------------------
+	// A building of a city-data type on a lot whose front edge is centred on
+	// pos, facing the street (dir points from the street into the lot).
+	// Returns its id.
+	uint32_t add_building(const std::string &type, Vec2 pos, Vec2 dir, int level, const std::string &name = {});
+	void set_building(const Building &b);
+	void remove_building(uint32_t id);
+
 	// Fresh lane IDs for a profile template.
 	Profile instantiate(const Profile &proto);
 
@@ -155,16 +163,23 @@ private:
 		std::optional<RoadSegment> before;
 		std::optional<RoadSegment> after;
 	};
+	struct BuildingChange {
+		uint32_t id;
+		std::optional<Building> before;
+		std::optional<Building> after;
+	};
 	struct Change {
 		std::string label;
 		std::vector<NodeChange> nodes;
 		std::vector<SegmentChange> segments;
+		std::vector<BuildingChange> buildings;
 	};
 
 	PointRef footpath_ref(const PointRef &p, SegmentKind kind) const;
 	void retarget_ends(RoadSegment &s, bool from_end, bool to_end); // node levels follow level / rise
 	void touch_node(NodeId id);
 	void touch_segment(SegmentId id);
+	void touch_building(uint32_t id);
 	void put_node(const RoadNode &n);
 	void put_segment(const RoadSegment &s);
 	void erase_node(NodeId id);
@@ -184,6 +199,7 @@ private:
 	Change open_;
 	std::set<NodeId> open_nodes_;
 	std::set<SegmentId> open_segments_;
+	std::set<uint32_t> open_buildings_;
 	std::vector<Change> undo_;
 	std::vector<Change> redo_;
 	uint64_t revision_ = 0;

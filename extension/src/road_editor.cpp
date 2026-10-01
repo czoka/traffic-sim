@@ -174,6 +174,9 @@ bool RoadEditor::load_example(const String &name) {
 	else if (name == "showcase") build_showcase(d);
 	else if (name == "people") build_people_town(d);
 	else if (name == "people_city") build_people_city(d, 12, 12);
+	else if (name == "new_city") build_new_city(d);
+	else if (name == "city_town") build_city_town(d);
+	else if (name == "city_week") build_city_week(d);
 	else return false;
 	doc_.reset(d.map());
 	return true;
@@ -740,8 +743,11 @@ Array RoadEditor::get_problems() {
 		d["level"] = p.level;
 		d["segments"] = PackedInt64Array();
 		PackedInt64Array nodes;
-		nodes.push_back(p.node);
+		if (p.node != kNoId) nodes.push_back(p.node);
 		d["nodes"] = nodes;
+		PackedInt64Array blds;
+		if (p.building != 0) blds.push_back(p.building);
+		d["buildings"] = blds;
 		net.push_back(d);
 	}
 	for (const Problem &p : problems_) {
@@ -756,6 +762,9 @@ Array RoadEditor::get_problems() {
 		for (NodeId n : p.nodes) nodes.push_back(n);
 		d["segments"] = segs;
 		d["nodes"] = nodes;
+		PackedInt64Array blds;
+		for (uint32_t b : p.buildings) blds.push_back(b);
+		d["buildings"] = blds;
 		out.push_back(d);
 	}
 	// Errors first (problems_ is sorted that way), then network warnings.
@@ -796,6 +805,7 @@ Dictionary RoadEditor::get_stats() {
 
 void RoadEditor::_bind_methods() {
 	bind_m4_methods();
+	bind_m5_methods();
 	ClassDB::bind_method(D_METHOD("new_map"), &RoadEditor::new_map);
 	ClassDB::bind_method(D_METHOD("load_demo_town"), &RoadEditor::load_demo_town);
 	ClassDB::bind_method(D_METHOD("load_test_grid", "cols", "rows", "spacing"), &RoadEditor::load_test_grid);

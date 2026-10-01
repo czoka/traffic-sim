@@ -1,5 +1,8 @@
 #include "tsim/validation.h"
 
+#include "tsim/buildings.h"
+#include "tsim/city_data.h"
+
 #include "clipper2/clipper.h"
 
 #include <algorithm>
@@ -218,6 +221,55 @@ std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom) {
 			p.pos = sg->curve.point(e == 0 ? 0.15 : 0.85);
 			p.level = s.level;
 			p.segments = { s.id };
+			out.push_back(p);
+		}
+	}
+
+	// Buildings (M5): known type, not on a road, not on each other.
+	const CityData &city = default_city_data();
+	std::vector<std::pair<const Building *, std::array<Vec2, 4>>> lots;
+	for (const auto &kv : map.buildings()) {
+		const Building &b = kv.second;
+		if (!city.type(b.type)) {
+			Problem p;
+			p.severity = Severity::Error;
+			p.code = "building_type";
+			p.message = "Unknown building type \"" + b.type + "\" (not in the city data).";
+			p.pos = b.pos;
+			p.level = b.level;
+			p.buildings = { b.id };
+			out.push_back(p);
+			continue;
+		}
+		lots.push_back({ &b, lot_corners(b, city) });
+	}
+	for (size_t i = 0; i < lots.size(); ++i) {
+		const Building &b = *lots[i].first;
+		const std::array<Vec2, 4> &lot = lots[i].second;
+		const Vec2 centre = (lot[0] + lot[2]) * 0.5;
+		for (const auto &kv : geom.segments()) {
+			if (kv.second.level != b.level && kv.second.level - kv.second.rise != b.level) continue;
+			if (!lot_overlaps_road(lot, kv.second)) continue;
+			Problem p;
+			p.severity = Severity::Error;
+			p.code = "building_on_road";
+			p.message = "A building stands on a road. Move it back from the street.";
+			p.pos = centre;
+			p.level = b.level;
+			p.buildings = { b.id };
+			p.segments = { kv.first };
+			out.push_back(p);
+			break;
+		}
+		for (size_t j = i + 1; j < lots.size(); ++j) {
+			if (lots[j].first->level != b.level || !quads_overlap(lot, lots[j].second)) continue;
+			Problem p;
+			p.severity = Severity::Error;
+			p.code = "building_overlap";
+			p.message = "Two buildings overlap.";
+			p.pos = centre;
+			p.level = b.level;
+			p.buildings = { b.id, lots[j].first->id };
 			out.push_back(p);
 		}
 	}

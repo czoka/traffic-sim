@@ -22,6 +22,7 @@ struct Problem {
 	int level = 0;
 	std::vector<SegmentId> segments;
 	std::vector<NodeId> nodes;
+	std::vector<uint32_t> buildings; // M5
 };
 
 std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom);

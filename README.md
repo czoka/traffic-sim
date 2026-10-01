@@ -2,7 +2,7 @@
 
 A traffic simulation map builder: a C++ simulation core running inside Godot 4, targeting desktop and the browser.
 
-**Status: M4 (people and levels) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals with walk phases) or turn it into a roundabout, place bus stops, depots and routes, footpaths and bike paths, crossings and fences, and lift roads onto bridges or into tunnels. Press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue, and people walk, wait at the kerb, cross, and ride the bus. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
+**Status: M5 (city life) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals with walk phases) or turn it into a roundabout, place bus stops, depots and routes, footpaths and bike paths, crossings and fences, lift roads onto bridges or into tunnels, and place homes, shops and offices along the streets. Press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue, people walk, wait at the kerb, cross, and ride the bus, and residents live through the week: they sleep, eat, shop and go to work, and shops and offices open only when their staff have arrived. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
 
 The design lives in the Game Design Document (claude.ai artifact "Traffic Sim Map Builder — Game Design Document"). Its *Implementation plan* tab has the checklists and gates.
 
@@ -98,6 +98,20 @@ The problems panel also lists stops with no lane for their direction, depots tha
 
 **Levels.** A road can be a ramp (up or down one level, 5 m per level) or, for a footpath, stairs. The grade check flags ramps steeper than 6 % for roads and bike paths, 8 % for footpaths and 50 % for stairs, and ramps that end in a junction. The bridge / tunnel tool lifts the part of a road that crosses another: it finds the road below, keeps a flat span of half its width plus 4 m on each side, and adds ramps at the grade limit (83 m for a road, 63 m for a footpath). The lower half of a ramp still collides with its lower level, so a ramp can't start in the middle of a road it crosses. People and cars change level halfway along a ramp; the level filter and shadows keep stacked levels readable.
 
+## City life (M5)
+
+**Buildings.** The building tool (`H`) places lots along a street: `1` homes, `2` shops, `3` offices, `Tab` cycles the variant (detached house, townhouse, apartment block; grocery, fast food, restaurant; small, medium and tower offices). A lot snaps to the edge of the nearest flat road on the level being edited, faces it, and has its entrance on the sidewalk; the preview turns red when it would overlap a road or another lot. Shift-click removes one. Placing, moving, renaming and removing are undoable. Building types, sizes, households, wages, opening hours, shift plans, minimum staff and what each one offers come from `game/data/city_data.json` (embedded in the build), not from code. *New* starts a city with High Street, the main station with a coach line, and the city offices.
+
+**The clock.** In a city the sim has a clock: the week starts on Monday at 06:00, and the map is tinted for dusk, night and dawn. A sim minute is 600 ticks.
+
+**Residents.** Each household (1–4 people, from the data table) lives in a home. Residents have hunger, energy, money and a shared pantry. Every sim minute each resident inside a building is updated once (in slices, a few per tick), and when they are free they score what they could do next on utility: sleep (more at night, less when hungry), a meal at home from the pantry, a fast-food or restaurant meal, grocery shopping (chained onto the way home), or going home, each against the travel time, personal preferences and what they remember. A booked shift is a fixed commitment: they leave in time for it, eat before it if they will get hungry, take a break in it, and are paid at the end (double at weekends). A business is open only within its hours and with its minimum staff clocked in; when it is not, it shows a *closed unexpectedly* marker, people turned away remember it for three days, and they go elsewhere. Residents walk or take the bus between buildings (car trips come with vehicle ownership in M6).
+
+**Jobs.** Every morning, residents without a job pick one by wage, commute and taste, including unlimited jobs outside the map (reached by coach from the main station). Shifts are booked a day ahead, weekend shifts mostly by people short of money. Shifts nobody in town takes go to visitors, who come in by coach to work and leave afterwards; coaches also bring visitors who come to shop.
+
+**Immigration.** Each coach brings newcomers while there are vacant homes reachable from the main station, up to six a coach. Each household arrives with 10,000 credits and no vehicle.
+
+The inspector shows a building's state (open, closed or closed unexpectedly, staff in and needed, people inside, households) and, for a resident, their needs, money, job, booked shifts, what they are doing and where they are going. The sim bar shows the day and time, residents and open businesses.
+
 ## The simulation (M2)
 
 The bar above the bottom bar runs the sim: **Play/Pause** (`Space`), **Step** one sim second (`.`), **Restart** (remove all cars and start again with the seed), **Speed** (16x real time by default, multipliers 0.25–8 for 4x–128x), **Seed**, **Density** (multiplies every spawn rate) **Max cars** (spawning pauses at that many cars) and **Max people** (new trips on foot pause at that many people, 1,000 by default). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
@@ -111,7 +125,7 @@ How it works:
 * **Demand.** Spawn points release cars as a Poisson process at their rate × density, towards destinations drawn from the origin-destination weights (only reachable ones). Cars queue at the map edge when the entry lane is full, and leave the map at their destination's road end.
 * **Editing while paused.** Vehicles, routes and grants are carried over to the recompiled network by stable lane IDs; cars on lanes that no longer exist are removed and every other car re-routes.
 
-**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, the M4 people town and people city, or the POC ring benchmark.
+**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, the M4 people town and people city, the M5 new city, city town and city week, or the POC ring benchmark.
 
 ### Other controls
 
@@ -123,12 +137,12 @@ How it works:
 | Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y) | Undo, redo |
 | Ctrl/Cmd+S, Ctrl/Cmd+O | Export, open a map file |
 | PgUp / PgDn | Edit the level above / below |
-| `H` | Show only the level being edited (also *Only this level* in the bottom bar) |
+| `J` | Show only the level being edited (also *Only this level* in the bottom bar) |
 | Esc | Cancel the current drawing, then clear the selection |
 
 ## Map files
 
-Format `"traffic-sim-map"`, version **5**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–4 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v5.json` are written by `tsim_bench --write-maps game/maps`).
+Format `"traffic-sim-map"`, version **6**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences, and buildings (id, type, position, facing, level and name). Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–5 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v6.json` are written by `tsim_bench --write-maps game/maps`).
 
 ## M1 gate and measurements
 
@@ -158,7 +172,7 @@ The golden scenario (the grid, seed 42, density ×2, 500-car cap, 6,000 ticks) h
 
 The gate is that **a showcase map using every M3 feature passes validation and runs a full sim day.** It is checked by the C++ tests `showcase map` and `M3 gate` and by `game/tests/sim_smoke_test.gd`:
 
-* **The map** (`build_showcase`, *Examples → Showcase*, `game/maps/showcase_v5.json`): an avenue with bus lanes and parking into a signalized junction (default plan, a left-turn pocket, right on red from the south) and on to a two-lane roundabout with a slip lane; a bike street; roads with parallel, 45° and 90° parking; kerbside stops, two bus bays and a three-bay main station; a depot with a loop route (5 min headway) and an end-to-end route (8 min); a coach line (3 an hour, 5 min at the station); cars in and out at six edges and bikes at two. It has no errors, warnings or network problems.
+* **The map** (`build_showcase`, *Examples → Showcase*, `game/maps/showcase_v6.json`): an avenue with bus lanes and parking into a signalized junction (default plan, a left-turn pocket, right on red from the south) and on to a two-lane roundabout with a slip lane; a bike street; roads with parallel, 45° and 90° parking; kerbside stops, two bus bays and a three-bay main station; a depot with a loop route (5 min headway) and an end-to-end route (8 min); a coach line (3 an hour, 5 min at the station); cars in and out at six edges and bikes at two. It has no errors, warnings or network problems.
 * **The run:** 24 sim hours with seed 2026. About 41,600 trips (1,600–1,800 an hour), 466 bus runs serving 1,800 stops, 72 coach calls, 5,500 bike trips, 5,700 parkings and 1,100 right turns on red.
 * **Checks:** no vehicle taken off the map as stuck, none stopped for 10 minutes (the longest stop is under 4 minutes), no junction stuck by itself for 90 s, trips per hour never below half of the first full hour, no overlaps in any lane, and the bus, coach, bike and parking counts above their floors.
 
@@ -170,7 +184,7 @@ Cost: the showcase (100–250 vehicles) runs a sim day in about 12 s on one core
 
 The gate is **2,000 vehicles and 1,000 pedestrians at 60 fps on the web build.** It is checked by the C++ test `M4 gate` (which also runs in wasm under Node in CI) and by `game/tests/sim_smoke_test.gd`:
 
-* **The map** (`build_people_city`, *Examples → People city*, `game/maps/people_city_v5.json`): the test grid at 12 × 12 junctions (1.4 km across; 2,330 sim lanes, 145 junctions) with 900 people an hour at every spawn point, signals with walk phases on every other avenue junction and zebras on some streets: 861 crossings (marked and informal) and 3,544 nodes in the pedestrian network.
+* **The map** (`build_people_city`, *Examples → People city*, `game/maps/people_city_v6.json`): the test grid at 12 × 12 junctions (1.4 km across; 2,330 sim lanes, 145 junctions) with 900 people an hour at every spawn point, signals with walk phases on every other avenue junction and zebras on some streets: 861 crossings (marked and informal) and 3,544 nodes in the pedestrian network.
 * **The run:** density ×3, capped at 2,000 vehicles and 1,000 people; both caps are reached after 4.5 sim minutes, then 5 sim minutes are timed with at least 1,990 vehicles and 1,000 people on the map all the time.
 * **Checks:** at least 1,800 vehicles and 900 people at every sample, people arriving, fewer than 20 vehicles taken off as stuck (none in practice), nobody standing at a kerb for 2 minutes (the longest wait is under a minute, the mean 6 s, with about 3,000 cars giving way in 5 minutes).
 
@@ -182,6 +196,23 @@ The gate is **2,000 vehicles and 1,000 pedestrians at 60 fps on the web build.**
 At the editor's default 16x (160 ticks a second) that is about 1.8 ms of sim work per 60 fps frame in wasm; at 1x, 0.1 ms. Drawing is one MultiMesh each for vehicles and people per level. **The frame rate itself has not been measured in a desktop browser on real hardware** (this environment only has headless and software rendering), so the 60 fps part of the gate still needs that check: open the exported page, load *Examples → People city*, press Play and watch the sim tooltip and the browser's frame rate.
 
 Other M4 tests cover the people town (every crossing kind, the network joins up, the bridge and its ramps), people walking, crossing, riding and arriving there, zebra priority and cars giving way, uncontrolled crossings waiting for gaps (and none without traffic), push-button signals (cars stop, nobody runs the red, back to green), walk lights following the plan with a flashing clearance, bus capacity and people left behind, mode choice (and no car or bike trips without owners), ramp grades and stairs, the bridge tool (plan, build, undo, cars driving over it), fences removing informal crossings, and determinism: same seed same hash, people carried over when the map changes, and a golden hash of 10 people-town minutes (`7fbf36952357709f`, checked on every CI platform). The M2 and M3 golden hashes are unchanged: a map without people runs exactly as before.
+
+## M5 gate and measurements
+
+The gate is **5,000 residents live a full sim week at 16x with no stalls, and shops open late when their staff are stuck in traffic.** It is checked by the C++ test `M5 gate` (which also runs in wasm under Node in CI) and by `game/tests/sim_smoke_test.gd`:
+
+* **The map** (`build_city_week`, *Examples → City week*, `game/maps/city_week_v6.json`): a 7 × 7 street grid at 140 m with 103 apartment blocks, 36 townhouses, 26 groceries, 23 fast-food places, 7 restaurants, 14 medium offices and 7 office towers, the main station with coaches, and a 16-stop bus loop.
+* **The run:** the homes start 95 % full (about 4,900 residents); coaches bring immigrants until every home is taken (about 5,170 residents), then the sim runs a full week, Monday 06:00 to Monday 06:00.
+* **Checks:** nobody stuck (a resident's state unchanged for 24 sim hours, or travelling for 3 hours: none), every business open by 13:00 on weekdays, at most 5 people starving at any sample (0–1 in practice), more than 20,000 shifts worked (20,294, 146 of them late), and no sim minute taking more than a second of real time (at 16x a sim minute has 3.75 s).
+
+| City week, ~5,170 residents | Week | Tick (mean) | Worst sim minute |
+| --- | --- | --- | --- |
+| Native C++ (one core of a 2.1 GHz Xeon) | 50 s | 8.2 µs | 35 ms |
+| wasm in Node (V8) | 73 s | 12.0 µs | 38 ms |
+
+99.9 % of ticks take under 0.2 ms; the slowest single ticks (the daily job and shift planning at 06:00, coach arrivals) take 6–40 ms, which at 16x is still under a frame's budget spread across the second. **Late openings in traffic** are checked by the test `late staff open the shop late`: on a small loop with a short-green signal and all car trips ending at the far end of High Street, the shop's staff on the bus arrive 33 minutes late and the shop opens late (3 late shifts); with the roads free it opens on time.
+
+Other M5 tests cover the data table, the city town (valid, saves and loads as v6, every building has a door, undo), two days over three seeds, immigration filling reachable homes, visitors staffing the city offices, opening rules and closure memory, jobs outside the map by coach, weekends (offices closed, weekend shifts paid double), removing a building while the sim runs, and determinism: same seed same hash, and a golden hash of 4 city-town hours (`95f0620c3af461e3`, checked on every CI platform). The M2, M3 and M4 golden hashes are unchanged: a map without buildings runs exactly as before.
 
 ## POC ring benchmark
 
@@ -200,7 +231,7 @@ These numbers come from the cloud build environment; the gate numbers must come 
 ```
 core/                 pure C++17, no Godot includes
   include/tsim/
-    road_map.h        editable map: nodes, segments, profiles, turn rules, zones
+    road_map.h        editable map: nodes, segments, profiles, turn rules, zones, buildings
     document.h        undoable edits (command log) and editing operations
     road_map_json.h   save files, v1 -> v2 migration
     curve.h           straight / arc / Bézier curves, deterministic lengths
@@ -210,17 +241,21 @@ core/                 pure C++17, no Godot includes
                       the pedestrian network and crossings (M4, ped_network.cpp)
     traffic.h         traffic sim: routing, IDM, MOBIL, junction grants, signals,
                       vehicle kinds, parking, buses and coaches, demand (M2, M3),
-                      people, crossings, mode choice and passengers (M4, traffic_peds.cpp)
+                      people, crossings, mode choice and passengers (M4, traffic_peds.cpp),
+                      residents, households, jobs, shifts and immigration (M5, traffic_city.cpp)
+    city_data.h       building types, offerings and needs from city_data.json (M5)
+    buildings.h       lot shapes, snapping lots to streets, overlap checks (M5)
     traffic_run.h     keeps network and sim in step with the map; M2 golden scenario
     demo_maps.h       demo town, the gate test grid, the M2 test maps, the M3 showcase,
-                      the M4 people town and people city
+                      the M4 people town and people city, the M5 cities
     map.h, sim.h      POC runtime lane network and IDM simulation
-extension/src/        GDExtension: RoadEditor (editor + sim bridge), TrafficSim (POC)
+extension/src/        GDExtension: RoadEditor (editor + sim bridge, road_editor_m5.cpp for the city), TrafficSim (POC)
 game/                 Godot 4.7 project (Compatibility renderer)
   editor/             main scene, map view, sim controller, overlay, tools/, ui/, file I/O
   poc/                ring benchmark scene
   common/             camera controller
-  maps/               example maps (v5, a few v2) and the POC ring (v1)
+  data/               city_data.json: building types, offerings, needs, jobs
+  maps/               example maps (v6, a few v2) and the POC ring (v1)
   tests/              headless smoke tests (editor, sim, POC)
 tests/                C++ unit tests (doctest)
 tools/                headless sim benchmark (tsim_bench)
@@ -267,7 +302,10 @@ CI (`.github/workflows/ci.yml`) builds Linux, Windows (MSVC) and macOS (Apple Si
 * Signals are fixed-time only: no actuated or coordinated plans yet (mid-block push buttons are the only demand-responsive signals).
 * Cars may use a bus lane within 60 m of the stop line (the GDD says 30 m; 60 m leaves room to merge in at speed). Bikes ride in the kerb lane where there is no bike lane, and cars can't overtake them in a single-lane road.
 * People walk along the pedestrian network without bumping into each other (no crowding or sidewalk capacity), and waiting people stand in a small ring around their spot. Coaches dwell their line's fixed time however many people get on. Parking trips pick a bay on their way rather than near a destination, and people who drive simply join their spawn point's car queue.
-* Spawn points are the only trip ends for people (the GDD's placeholder spawn points); land use comes later.
+* Spawn points are still trip ends for people next to the residents' trips between buildings. Rent, prices of homes, vehicle purchases and residents driving come in M6; for now residents walk or ride the bus, and money only moves through wages and purchases.
+* Buildings don't move with their road: after moving or reshaping a road, a lot that now overlaps it or lost its door is flagged in the problems panel.
+* Packed lunches: a resident at work on a break eats from the household pantry if it has food (it is not carried along), otherwise buys a meal nearby.
+* Outside the map, jobs and shops are unlimited and abstract: residents leave by coach and come back after the commute, shift or visit.
 * When the map is edited while people are out, they are carried over by position, stop and spawn point, and anyone on a crossing or path that changed starts again from the nearest node.
 * Route lines on the map are the free-flow routes; running buses re-route with traffic.
 * A lane change is instant in the sim and drawn as a 3 s sideways slide. There are no U-turns, and cars never turn around at a dead end: routes only lead to spawn points.

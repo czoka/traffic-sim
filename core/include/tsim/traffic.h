@@ -16,6 +16,7 @@
 // tick, so the same network and seed give the same state hash everywhere.
 #pragma once
 
+#include "tsim/city_data.h"
 #include "tsim/network.h"
 #include "tsim/rng.h"
 
@@ -57,6 +58,9 @@ struct TrafficConfig {
 	int bus_doors = 2, coach_doors = 1;
 	double board_time = 2.0; // s per passenger per door
 	double door_time = 3.0; // s to open and close
+	// M5: city life
+	double city_prefill = 0.0; // share of home units filled with households at reset (tests, the gate)
+	double employment_share = 0.8; // residents who look for a job
 };
 
 struct DriverParams2 {
@@ -204,6 +208,8 @@ struct TrafficStats {
 	uint64_t crossings = 0; // crossings started on foot
 	double mean_crossing_wait = 0.0; // s at the kerb
 	uint64_t cars_yielded = 0; // cars that stopped for someone on a crossing
+	// M5
+	uint32_t residents = 0;
 };
 
 enum class PedState : uint8_t {
@@ -227,7 +233,10 @@ struct Pedestrian {
 	std::vector<int32_t> path; // edges still to walk
 	size_t pi = 0;
 	double speed = 1.35; // m/s
-	int32_t origin = -1, dest = -1; // PedGraph::spawners indices (dest -1: leaves by coach)
+	// Places (spawn points, then buildings, then the main station; see
+	// Traffic::place_count). dest -1: leaves by coach.
+	int32_t origin = -1, dest = -1;
+	uint32_t resident = 0; // M5: the resident or visitor making this trip (0 none)
 	int32_t target = -1; // ped node this leg of the trip ends at
 	// Transit: board `route` at stop `board`, ride to `alight`; then the second ride (one transfer).
 	uint32_t route = 0, route2 = 0;
@@ -237,6 +246,115 @@ struct Pedestrian {
 	uint64_t wait_since = 0; // tick it started waiting (kerb or stop)
 	uint64_t spawn_tick = 0;
 	bool done = false;
+};
+
+// --- City life (M5) -----------------------------------------------------------
+
+constexpr uint32_t kOutside = 0xFFFFFFFFu; // "outside the map" as a building id
+
+enum class ResidentState : uint8_t {
+	Inside = 0, // in a building (cheap: updated once per sim minute)
+	Travelling = 1, // a pedestrian (or riding a bus or coach)
+	Outside = 2, // away outside the map, back by coach
+};
+enum class Doing : uint8_t {
+	Idle = 0,
+	Sleep = 1,
+	Offering = 2, // a meal, shopping
+	Work = 3,
+};
+const char *doing_name(Doing d);
+
+// A shift a resident (or visitor) has taken.
+struct Booking {
+	uint32_t building = 0; // 0 none, kOutside for a job outside the map
+	uint64_t start = 0, end = 0; // ticks
+	bool weekend = false;
+	bool clocked = false; // at work now
+	bool break_taken = false;
+	bool second_break = false; // very hungry later in the shift
+	bool done = false;
+};
+
+struct Resident {
+	uint32_t id = 0;
+	int32_t household = -1; // index in households (-1: a visitor)
+	bool visitor = false;
+	bool works = true; // looks for a job
+	ResidentState state = ResidentState::Inside;
+	uint32_t at = 0; // building id while inside
+	uint32_t ped = 0; // pedestrian id while travelling
+	int32_t going = -1; // place the trip ends at
+	uint32_t going_building = 0; // building id the trip ends at (0: none, kOutside: away)
+	Doing doing = Doing::Idle;
+	int offering = -1; // current or intended offering (CityData index)
+	uint64_t until = 0; // tick the current activity ends
+	uint64_t next_plan = 0;
+	uint64_t updated = 0; // tick the needs were last brought up to date
+	double hunger = 80.0, energy = 80.0, money = 0.0;
+	uint32_t employer = 0; // building id, kOutside, or 0 none
+	int week_minutes = 0; // booked this week
+	Booking shift;
+	uint32_t then = 0; // trip chaining: building to go on to after this stop
+	uint64_t outside_until = 0; // back at the main station from then on
+	std::vector<std::pair<uint32_t, uint64_t>> closed; // (building, remembered until tick)
+	uint32_t late = 0; // shifts started late
+	bool leaving = false; // visitor on the way out
+};
+
+struct Household {
+	uint32_t id = 0;
+	uint32_t home = 0; // building id
+	int unit = 0;
+	double pantry = 7.0; // portions
+	std::vector<uint32_t> members; // resident ids
+};
+
+struct ResidentInfo {
+	bool found = false;
+	uint32_t id = 0;
+	bool visitor = false;
+	ResidentState state = ResidentState::Inside;
+	Doing doing = Doing::Idle;
+	std::string activity; // what it is doing or going to
+	uint32_t at = 0, home = 0, employer = 0, going = 0;
+	double hunger = 0.0, energy = 0.0, money = 0.0, pantry = 0.0;
+	int household_size = 0;
+	uint64_t shift_start = 0, shift_end = 0; // ticks (0: no shift booked)
+	uint32_t shift_building = 0;
+	double until = 0.0; // s left in the activity
+	uint32_t late = 0;
+};
+
+struct BuildingInfo {
+	bool found = false;
+	uint32_t id = 0;
+	int type = -1;
+	int households = 0, units = 0, residents = 0, inside = 0;
+	int employees = 0, headcount = 0, staff_in = 0, customers = 0, booked_today = 0, unfilled_today = 0;
+	bool in_hours = false, open = false, closed_unexpectedly = false;
+	int opened_at = -1; // minute of the day it first opened today (-1: not yet)
+	int late_minutes_today = 0; // opened this much after its opening time
+	int unexpected_minutes_today = 0;
+	uint64_t served = 0, turned_away = 0, late_openings = 0;
+};
+
+struct CityStats {
+	bool on = false;
+	int day = 0; // since the start
+	int weekday = 0; // 0 Monday
+	int minute = 0; // of the day
+	uint32_t residents = 0, households = 0, visitors = 0;
+	uint32_t inside = 0, travelling = 0, outside = 0, sleeping = 0, working = 0;
+	uint32_t employed = 0, employed_outside = 0, unemployed = 0;
+	uint32_t homes = 0, units = 0, vacant_units = 0;
+	uint32_t businesses = 0, open = 0, closed_unexpectedly = 0;
+	uint64_t immigrants = 0, visitor_trips = 0;
+	uint64_t meals_out = 0, home_meals = 0, groceries = 0, sleeps = 0;
+	uint64_t shifts = 0, late_shifts = 0, late_openings = 0, turned_away = 0, unfilled_shifts = 0;
+	uint64_t turned_away_full = 0, turned_away_closed = 0; // of turned_away (the rest: outside opening hours)
+	double mean_hunger = 0.0, mean_energy = 0.0, min_hunger = 0.0, mean_money = 0.0;
+	uint32_t starving = 0; // hunger at 0
 };
 
 struct PedInfo {
@@ -250,6 +368,7 @@ struct PedInfo {
 	int32_t board = -1, alight = -1; // stops
 	uint32_t route = 0;
 	VehicleId vehicle = kNoId;
+	uint32_t resident = 0; // M5
 	std::vector<Vec2> route_line; // where it will walk
 };
 
@@ -348,6 +467,34 @@ public:
 	uint32_t add_pedestrian(int32_t from_node, int32_t to_node, double speed = 1.35);
 	// Shortest perceived route on foot (edge list); false when there is none.
 	bool find_walk(int32_t from_node, int32_t to_node, std::vector<int32_t> &path, double *cost = nullptr) const;
+
+	// --- City life (M5) -------------------------------------------------------------
+	// On when the map has buildings: residents live in homes, work shifts and
+	// shop; immigrants and visitors come by coach.
+	bool city_on() const { return city_on_; }
+	const CityData &city_data() const { return *city_data_; }
+	// Another data table (the default is the built-in one). Takes effect at the next reset.
+	void set_city_data(const CityData *data) { city_data_ = data ? data : &default_city_data(); }
+	int64_t ticks_per_minute() const;
+	int64_t clock_minutes() const; // minutes since Monday 00:00 of week 0
+	int64_t clock_at(uint64_t tick) const; // the clock at a tick
+	int day() const { return static_cast<int>(clock_minutes() / 1440); }
+	int minute_of_day() const { return static_cast<int>(clock_minutes() % 1440); }
+	bool is_weekend() const { return day() % 7 >= 5; }
+	const std::vector<Resident> &residents() const { return res_; }
+	const std::vector<Household> &households() const { return hh_; }
+	int32_t find_resident(uint32_t id) const;
+	ResidentInfo resident_info(uint32_t id) const;
+	BuildingInfo building_info(uint32_t building_id) const;
+	std::vector<BuildingInfo> building_infos() const; // every building, in Network::buildings order (one pass)
+	CityStats city_stats() const;
+	// Places people travel between: spawn points, buildings, the main station.
+	size_t place_count() const { return place_entries_.size(); }
+	int32_t building_place(uint32_t building_id) const;
+	int32_t station_place() const { return station_place_; }
+	double travel_estimate(int32_t from_place, int32_t to_place) const; // s (1e9: no way)
+	// For tests: a household moves into a home unit now (returns its index, -1 if full).
+	int32_t add_household(uint32_t home, int people, bool works = true);
 
 	// For tests and tools: add a vehicle directly (returns its id, 0 on failure).
 	// Driver parameters default to the kind's typical driver.
@@ -476,7 +623,7 @@ private:
 	// Alight and board (sets a bus's dwell); `late`: only people who just arrived board. Returns boarders.
 	int serve_stop(Vehicle &v, int32_t stop, Waypoint &wp, bool late = false);
 	bool serves_people(const Vehicle &v, const Waypoint &wp) const {
-		return people_on_ && wp.stop >= 0 && (v.kind == VehicleKind::Bus || v.kind == VehicleKind::Coach);
+		return (people_on_ || city_on_) && wp.stop >= 0 && (v.kind == VehicleKind::Bus || v.kind == VehicleKind::Coach);
 	}
 	void bus_departs(Vehicle &v, int32_t stop);
 	uint64_t boarding_ticks(const Vehicle &v, int people) const;
@@ -486,10 +633,65 @@ private:
 		bool has_target = false;
 		uint32_t board = 0, alight = 0, board2 = 0, alight2 = 0; // stop ids (0 none)
 		NodeId origin = kNoId, dest = kNoId; // spawn point nodes
+		uint32_t dest_building = 0; // or a building id
+		bool dest_station = false; // or the main station
 	};
 	std::vector<PedSaved> peds_save() const; // before the network changes
 	void peds_restore(const std::vector<PedSaved> &saved); // after: by position, stop id and spawn point
 	void peds_reset_network(); // per-network people state
+	// Bus legs between two places (one transfer at most): generalized cost
+	// (walking x2, headway, ride, transfer penalty), or 1e300 with no bus.
+	struct BusChoice {
+		size_t r1 = 0, i1 = 0, j1 = 0; // rides_ index and stop positions
+		size_t r2 = 0, i2 = 0, j2 = 0;
+		bool transfer = false;
+	};
+	double best_bus(size_t from_place, size_t to_place, BusChoice &out) const;
+	int32_t platform_of(int32_t stop) const;
+	void apply_bus_choice(Pedestrian &p, const BusChoice &c) const;
+
+	// City (traffic_city.cpp)
+	struct BState { // per Network::buildings
+		std::vector<int32_t> units; // household index per unit (-1 vacant)
+		std::vector<uint32_t> employees; // resident ids
+		int staff_in = 0, customers = 0;
+		bool in_hours = false, open = false, unexpected = false;
+		int opened_at = -1, late_minutes = 0, unexpected_minutes = 0;
+		int booked_today = 0, unfilled_today = 0;
+		std::vector<int> slot_booked; // today's plan: staff booked per shift
+		uint64_t served = 0, turned_away = 0, late_openings = 0;
+	};
+	struct VisitorJob {
+		uint32_t building = 0;
+		uint64_t start = 0, end = 0;
+		int count = 0; // still to send
+	};
+	void city_reset_network(); // places, costs, travel times; carries city state over by building id
+	void city_init(); // at reset: the households of city_prefill, today's shifts
+	void city_tick(); // after the people moved
+	void city_daily();
+	void city_minute();
+	void city_update(size_t i);
+	void city_plan(size_t i);
+	void city_arrive(uint32_t resident);
+	void city_board_coach(uint32_t resident);
+	int city_coach_arrives(int seats); // returns people brought
+	void city_finish(size_t i); // the current activity is over
+	void city_clock_in(Resident &r, BState &b, uint64_t now);
+	void city_clock_out(Resident &r);
+	bool city_trip(size_t i, int32_t to_place, uint32_t to_building, bool by_coach);
+	bool city_start_offering(size_t i, int offering);
+	void city_choose_job(size_t i);
+	bool city_book(size_t i); // a shift today at its employer, if one is still open
+	int32_t city_add_household(uint32_t home, int people, double work_share);
+	void city_leave_building(Resident &r);
+	void city_recount();
+	BState *bstate(uint32_t building_id);
+	const BState *bstate(uint32_t building_id) const;
+	uint64_t tick_of(int day, int minute) const; // clock -> tick (0 when before the start)
+	bool coaches_run() const;
+	int32_t new_resident(bool visitor);
+	double minutes_between(int32_t from_place, uint32_t to_building) const; // estimate, minutes
 	std::vector<Pedestrian> peds_;
 	uint32_t next_ped_id_ = 1;
 	bool people_on_ = false; // some demand on foot: dwell comes from boarding
@@ -519,6 +721,22 @@ private:
 	std::map<uint32_t, std::vector<std::pair<double, uint64_t>>> load_acc_; // route -> per stop index (sum, count)
 	double crossing_wait_sum_ = 0.0;
 	double wait_sum_ = 0.0;
+	// --- City life (M5) ---------------------------------------------------------------
+	const CityData *city_data_ = &default_city_data();
+	bool city_on_ = false;
+	std::vector<std::vector<int32_t>> place_entries_; // per place: ped nodes
+	int32_t station_place_ = -1;
+	std::vector<float> travel_; // place x place, s
+	std::vector<BState> bstate_;
+	std::vector<Resident> res_; // ascending id
+	uint32_t next_res_id_ = 1;
+	std::vector<Household> hh_;
+	uint32_t next_hh_id_ = 1;
+	std::vector<VisitorJob> visitor_jobs_;
+	CityStats city_acc_; // running counters
+	uint64_t city_last_day_ = ~0ull;
+	std::vector<uint32_t> city_arrivals_; // residents whose trip ended this tick
+	std::vector<uint32_t> city_boarded_; // residents who left on a coach this tick
 	TrafficStats stats_;
 	double trip_time_sum_ = 0.0;
 };
