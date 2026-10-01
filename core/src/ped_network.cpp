@@ -427,6 +427,11 @@ struct Builder {
 			nb.pos = qv(b.pos);
 			nb.dir = b.dir;
 			nb.level = b.level;
+			nb.rent = b.rent;
+			nb.price_factor = b.price_factor;
+			nb.wage = b.wage;
+			nb.for_sale = b.for_sale;
+			nb.asking = b.asking;
 			const std::array<Vec2, 4> lot = lot_corners(b, city);
 			nb.centre = qv((lot[0] + lot[2]) * 0.5);
 			double best = 12.0;

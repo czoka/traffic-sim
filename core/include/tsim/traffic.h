@@ -113,6 +113,7 @@ enum class WaypointAction : uint8_t {
 	KerbStop = 0, // stop in the lane
 	BayStop = 1, // pull into a lay-by (bus bay, main station)
 	Park = 2, // park in a bay for a while
+	Arrive = 3, // M6: a resident's car or bike pulls in at a building and is put away
 };
 
 struct Waypoint {
@@ -173,6 +174,8 @@ struct Vehicle {
 	bool off_lane = false;
 	bool ped_yield = false; // stopping for people on a crossing (counts yields)
 	bool done = false; // left the map this tick
+	uint32_t resident = 0; // M6: the resident driving or cycling it (0: none)
+	uint8_t res_end = 0; // how its trip ended: 1 put away at the building, 2 left the map
 };
 
 struct TrafficStats {
@@ -274,6 +277,16 @@ enum class Doing : uint8_t {
 };
 const char *doing_name(Doing d);
 
+// How a resident travels (M6).
+enum class TripMode : uint8_t {
+	Walk = 0,
+	Bus = 1,
+	Bike = 2,
+	Car = 3,
+	Coach = 4,
+};
+const char *trip_mode_name(TripMode m);
+
 // A shift a resident (or visitor) has taken.
 struct Booking {
 	uint32_t building = 0; // 0 none, kOutside for a job outside the map
@@ -309,6 +322,15 @@ struct Resident {
 	std::vector<std::pair<uint32_t, uint64_t>> closed; // (building, remembered until tick)
 	uint32_t late = 0; // shifts started late
 	bool leaving = false; // visitor on the way out
+	// M6: vehicles (parked at a building, or kOutside with their owner), the
+	// city bus pass and how the current trip goes.
+	bool has_bike = false, has_car = false;
+	uint32_t bike_at = 0, car_at = 0;
+	VehicleId veh = kNoId; // driving or cycling now
+	TripMode mode = TripMode::Walk;
+	uint64_t pass_until = 0; // the bus pass is valid until this tick
+	NodeId out_edge = kNoId; // the map edge a car left by (back the same way)
+	bool evicted = false; // leaving the map for good
 };
 
 struct Household {
@@ -317,6 +339,10 @@ struct Household {
 	int unit = 0;
 	double pantry = 7.0; // portions
 	std::vector<uint32_t> members; // resident ids
+	// M6
+	bool owns = false; // bought the home it lives in (no rent)
+	int debt_months = 0; // rent days in a row it was in debt
+	double rent = 0.0; // what it paid last rent day
 };
 
 struct ResidentInfo {
@@ -333,6 +359,12 @@ struct ResidentInfo {
 	uint32_t shift_building = 0;
 	double until = 0.0; // s left in the activity
 	uint32_t late = 0;
+	// M6
+	bool has_bike = false, has_car = false, has_pass = false, owns_home = false;
+	uint32_t car_at = 0, bike_at = 0;
+	TripMode mode = TripMode::Walk;
+	double household_money = 0.0, rent = 0.0;
+	int debt_months = 0;
 };
 
 struct BuildingInfo {
@@ -346,6 +378,19 @@ struct BuildingInfo {
 	int late_minutes_today = 0; // opened this much after its opening time
 	int unexpected_minutes_today = 0;
 	uint64_t served = 0, turned_away = 0, late_openings = 0;
+	// M6: ownership and money.
+	uint32_t owner = 0; // 0 the city, else an NPC owner id
+	uint32_t owner_household = 0; // a household owns the home it lives in
+	double location = 1.0; // price factor from the distance to the city centre
+	double rent = 0.0; // per unit and month (homes)
+	double base_rent = 0.0, price = 0.0; // the city-data rent and purchase price here, per unit
+	double price_factor = 1.0; // of the offerings' prices (shops)
+	double wage = 0.0; // per hour (businesses)
+	bool listed = false; // for sale (by the player or its NPC owner)
+	double asking = 0.0, value = 0.0; // asking price, and what buyers think it is worth
+	double income_month = 0.0, expense_month = 0.0; // so far this month
+	double net_month = 0.0; // last month's income minus expenses
+	uint64_t sales = 0; // times it changed hands
 };
 
 struct CityStats {
@@ -364,6 +409,36 @@ struct CityStats {
 	uint64_t turned_away_full = 0, turned_away_closed = 0; // of turned_away (the rest: outside opening hours)
 	double mean_hunger = 0.0, mean_energy = 0.0, min_hunger = 0.0, mean_money = 0.0;
 	uint32_t starving = 0; // hunger at 0
+	// M6: money, vehicles, housing and the market.
+	int month = 0; // since the start (month 0 = the first)
+	int day_of_month = 0; // 0 = the 1st
+	double treasury_income = 0.0, treasury_spending = 0.0; // the city, all time (its money is unlimited)
+	double income_rent = 0.0, income_sales = 0.0, income_passes = 0.0, income_buildings = 0.0;
+	double spending_wages = 0.0, spending_buildings = 0.0;
+	double month_income = 0.0, month_spending = 0.0; // the city, this month so far
+	double outside_fares = 0.0, outside_fuel = 0.0, outside_shopping = 0.0, outside_goods = 0.0; // money that left the map
+	double spending_goods = 0.0; // the city's shops buying stock
+	double rent_paid = 0.0, wages_paid = 0.0, sales_total = 0.0; // all owners
+	uint64_t evictions = 0, households_evicted = 0;
+	uint32_t in_debt = 0; // households with negative savings now
+	uint32_t bikes = 0, cars = 0, passes = 0; // owned / valid now
+	uint64_t bikes_bought = 0, cars_bought = 0, passes_sold = 0, day_passes = 0;
+	uint64_t trips_walk = 0, trips_bus = 0, trips_bike = 0, trips_car = 0, trips_coach = 0;
+	uint32_t homes_owned = 0; // households that own their home
+	uint64_t homes_bought = 0;
+	uint32_t npc_owned = 0, city_owned = 0, listed = 0;
+	uint64_t buildings_sold = 0, buildings_bought = 0;
+	double price_factor_min = 1.0, price_factor_max = 1.0, wage_factor_min = 1.0, wage_factor_max = 1.0,
+		   rent_factor_min = 1.0, rent_factor_max = 1.0; // NPC owners' numbers, of the defaults
+};
+
+// A building on the market (M6).
+struct Listing {
+	uint32_t building = 0;
+	bool by_city = false; // the player listed it
+	uint32_t owner = 0; // seller (0: the city)
+	double asking = 0.0, value = 0.0;
+	int days = 0; // on the market
 };
 
 struct PedInfo {
@@ -505,6 +580,16 @@ public:
 	// For tests: a household moves into a home unit now (returns its index, -1 if full).
 	int32_t add_household(uint32_t home, int people, bool works = true);
 
+	// --- Economy (M6) -----------------------------------------------------------------
+	// Buildings for sale now: the player's listings and NPC owners'.
+	std::vector<Listing> market() const;
+	// The player buys a building an NPC owner has listed (the city's money is
+	// unlimited). False when it isn't for sale.
+	bool buy_building(uint32_t building_id);
+	double building_value(uint32_t building_id) const; // what buyers would pay
+	// For tests: a resident gets a bike or a car, parked where they are.
+	bool give_vehicle(uint32_t resident, bool car);
+
 	// For tests and tools: add a vehicle directly (returns its id, 0 on failure).
 	// Driver parameters default to the kind's typical driver.
 	VehicleId add_vehicle(int32_t lane, double s, double v, NodeId dest, const DriverParams2 *driver = nullptr,
@@ -587,7 +672,8 @@ private:
 	uint64_t tick_ = 0;
 	VehicleId next_id_ = 1;
 	std::vector<Vehicle> veh_; // ascending id
-	std::vector<std::vector<int32_t>> cars_; // per lane, front (largest s) first
+	std::vector<std::vector<int32_t>> cars_;
+	std::vector<int32_t> used_lanes_; // lanes with cars at the last rebuild_lists() // per lane, front (largest s) first
 	std::vector<double> lane_time_; // observed travel time per road lane (s)
 	std::vector<uint32_t> pending_; // per spawner, cars waiting to enter
 	std::vector<std::vector<std::pair<size_t, double>>> reach_; // per spawner: (spawner, weight)
@@ -672,11 +758,34 @@ private:
 		int booked_today = 0, unfilled_today = 0;
 		std::vector<int> slot_booked; // today's plan: staff booked per shift
 		uint64_t served = 0, turned_away = 0, late_openings = 0;
+		// M6: from its type and its distance to the city centre.
+		double location = 1.0, base_rent = 0.0, base_price = 0.0; // per unit
 	};
 	struct VisitorJob {
 		uint32_t building = 0;
 		uint64_t start = 0, end = 0;
 		int count = 0; // still to send
+	};
+	// M6: a building's ownership and money, by building id (kept across map edits).
+	struct BEcon {
+		uint32_t owner = 0; // 0 the city, else an NPC owner
+		uint32_t household = 0; // owner-occupier (household id)
+		double price_factor = 1.0, wage = 0.0, rent = 0.0; // set by an NPC owner
+		bool listed = false; // by its NPC owner (the player lists in the map)
+		double asking = 0.0;
+		uint64_t listed_at = 0;
+		double income = 0.0, expense = 0.0; // this month
+		double net = 0.0; // last month
+		int served = 0, full = 0, unfilled = 0; // this month: customers, turned away full, shifts nobody took
+		double vacant_days = 0.0; // unit-days vacant this month
+		uint64_t sales = 0;
+		bool player_sold = false; // the player's listing sold: off the market until the map's tick is cleared
+	};
+	struct VehDone {
+		uint32_t resident = 0;
+		bool arrived = false; // at its destination (else lost on the way)
+		bool at_edge = false; // left the map by car
+		double metres = 0.0; // driven
 	};
 	void city_reset_network(); // places, costs, travel times; carries city state over by building id
 	void city_init(); // at reset: the households of city_prefill, today's shifts
@@ -687,6 +796,8 @@ private:
 	void city_plan(size_t i);
 	void city_arrive(uint32_t resident);
 	void city_board_coach(uint32_t resident);
+	void city_back_outside(Resident &r); // a shift or shopping outside is over (M6)
+	void econ_info(size_t bi, BuildingInfo &out) const;
 	int city_coach_arrives(int seats); // returns people brought
 	void city_finish(size_t i); // the current activity is over
 	void city_clock_in(Resident &r, BState &b, uint64_t now);
@@ -704,6 +815,29 @@ private:
 	bool coaches_run() const;
 	int32_t new_resident(bool visitor);
 	double minutes_between(int32_t from_place, uint32_t to_building) const; // estimate, minutes
+	// M6: economy (traffic_economy.cpp)
+	void econ_reset_network(); // after the buildings changed: prices by location, ownership kept by id
+	void econ_init();
+	void econ_daily(int today); // the market; the 1st of the month: rent, evictions, NPC owners
+	void econ_monthly(int month);
+	BEcon &econ(uint32_t building_id);
+	double rent_of(size_t bi) const; // per unit and month
+	double wage_of(size_t bi) const; // per hour
+	double price_factor_of(size_t bi) const;
+	double offering_price(size_t bi, int offering) const;
+	double value_of(size_t bi) const;
+	void econ_credit(uint32_t building_id, double amount, int kind); // income of its owner (kind: 0 sales, 1 rent, 2 office)
+	void econ_debit(uint32_t building_id, double amount); // its owner pays (wages)
+	void econ_sell(size_t bi, double price); // to a new NPC owner
+	void econ_evict(size_t household);
+	bool econ_pass(Resident &r); // has or buys a bus pass for this trip
+	// M6: residents' cars and bikes (traffic_drive.cpp)
+	void drive_costs(); // building to building by car, and to and from the map edges
+	double drive_s(uint32_t from_building, uint32_t to_building) const; // s by car (1e9: no way)
+	double drive_m(uint32_t from_building, uint32_t to_building) const; // m by car
+	bool city_drive(size_t i, uint32_t to_building, bool bike, bool to_edge, bool *busy = nullptr); // a car or bike trip (busy: the kerb lane is taken now)
+	bool city_drive_in(size_t i); // back from outside by car
+	void city_vehicle_done(const VehDone &d);
 	std::vector<Pedestrian> peds_;
 	uint32_t next_ped_id_ = 1;
 	bool people_on_ = false; // some demand on foot: dwell comes from boarding
@@ -749,6 +883,17 @@ private:
 	uint64_t city_last_day_ = ~0ull;
 	std::vector<uint32_t> city_arrivals_; // residents whose trip ended this tick
 	std::vector<uint32_t> city_boarded_; // residents who left on a coach this tick
+	// M6
+	std::map<uint32_t, BEcon> econ_;
+	std::map<uint32_t, double> npc_cash_; // NPC owners' money (buyers bring their own)
+	uint32_t next_owner_id_ = 1;
+	uint64_t econ_last_day_ = ~0ull;
+	std::vector<VehDone> city_vehicle_done_; // residents' cars and bikes that finished this tick
+	std::vector<float> drive_t_, drive_d_; // building x building: s and m by car
+	std::vector<NodeId> edges_; // car sinks (map edges) residents can drive out of
+	std::vector<float> edge_t_, edge_d_; // building x edge
+	std::vector<int32_t> edge_in_; // per edge: a lane cars enter by (-1 none)
+	std::vector<float> edge_in_t_; // edge x building: s
 	TrafficStats stats_;
 	double trip_time_sum_ = 0.0;
 };

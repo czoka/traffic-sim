@@ -9,6 +9,7 @@
 #include "tsim/types.h"
 
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -394,9 +395,17 @@ struct Building {
 	Vec2 dir{ 0.0, -1.0 }; // unit vector from the street into the lot
 	int level = 0;
 	std::string name;
+	// M6: the player's numbers while the city owns it (0 = the default from the
+	// city data: rent and price by type and location, the type's wage).
+	double rent = 0.0; // per unit and month (homes)
+	double price_factor = 1.0; // multiplies the offerings' prices (shops)
+	double wage = 0.0; // per hour (businesses)
+	bool for_sale = false; // listed by the player
+	double asking = 0.0; // asking price (0 = what buyers value it at)
 	bool operator==(const Building &o) const {
 		return id == o.id && type == o.type && pos.x == o.pos.x && pos.y == o.pos.y && dir.x == o.dir.x &&
-				dir.y == o.dir.y && level == o.level && name == o.name;
+				dir.y == o.dir.y && level == o.level && name == o.name && rent == o.rent && price_factor == o.price_factor &&
+				wage == o.wage && for_sale == o.for_sale && asking == o.asking;
 	}
 };
 
@@ -408,6 +417,10 @@ public:
 	const RoadSegment *segment(SegmentId id) const;
 	const std::map<uint32_t, Building> &buildings() const { return buildings_; }
 	const Building *building(uint32_t id) const;
+	// M6: the city centre marker that sets housing prices (none: the centroid of
+	// the shops and offices).
+	const std::optional<Vec2> &city_centre() const { return centre_; }
+	void set_city_centre(const std::optional<Vec2> &c) { centre_ = c; }
 
 	// Segments that start or end at a node, in ascending ID order.
 	std::vector<SegmentId> segments_at(NodeId id) const;
@@ -438,7 +451,8 @@ public:
 	void clear();
 
 	bool operator==(const RoadMap &o) const {
-		return nodes_ == o.nodes_ && segments_ == o.segments_ && buildings_ == o.buildings_;
+		return nodes_ == o.nodes_ && segments_ == o.segments_ && buildings_ == o.buildings_ &&
+				centre_.has_value() == o.centre_.has_value() && (!centre_ || (centre_->x == o.centre_->x && centre_->y == o.centre_->y));
 	}
 
 private:
@@ -448,6 +462,7 @@ private:
 	std::map<NodeId, RoadNode> nodes_;
 	std::map<SegmentId, RoadSegment> segments_;
 	std::map<uint32_t, Building> buildings_; // ids from the object counter
+	std::optional<Vec2> centre_;
 	std::map<NodeId, std::vector<SegmentId>> adjacency_;
 	uint32_t next_node_id_ = 1;
 	uint32_t next_segment_id_ = 1;

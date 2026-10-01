@@ -285,7 +285,7 @@ TEST_CASE("json: save -> load -> save is identical; errors leave the target alon
 
 	RoadMap target = loaded;
 	CHECK_FALSE(road_map_from_json("{", target, &err));
-	CHECK_FALSE(road_map_from_json(R"({"format":"traffic-sim-map","version":7})", target, &err));
+	CHECK_FALSE(road_map_from_json(R"({"format":"traffic-sim-map","version":8})", target, &err));
 	CHECK(err.find("newer") != std::string::npos);
 	CHECK_FALSE(road_map_from_json(
 			R"({"format":"traffic-sim-map","version":2,"nodes":[{"id":1,"x":0,"y":0,"level":0}],
@@ -319,7 +319,7 @@ TEST_CASE("json: v1 (POC) ring migrates to a v2 map") {
 	g.build(m);
 	for (const auto &kv : g.nodes()) CHECK(kv.second.kind == NodeKind::Continuation);
 	// Re-saving writes the current version.
-	CHECK(road_map_to_json(m).find("\"version\": 6") != std::string::npos);
+	CHECK(road_map_to_json(m).find("\"version\": 7") != std::string::npos);
 }
 
 TEST_CASE("geometry: four-way junction is trimmed, filled and connected") {

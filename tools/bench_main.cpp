@@ -40,17 +40,18 @@ int write_maps(const std::string &dir) {
 		void (*build)(Document &);
 	};
 	const Entry maps[] = {
-		{ "demo_town_v6.json", [](Document &d) { build_demo_town(d); } },
-		{ "test_grid_v6.json", [](Document &d) { build_test_grid(d, 7, 8, 120.0); } },
-		{ "t_junction_v6.json", [](Document &d) { build_t_junction(d); } },
-		{ "lane_drop_v6.json", [](Document &d) { build_lane_drop(d); } },
-		{ "one_way_pair_v6.json", [](Document &d) { build_one_way_pair(d); } },
-		{ "showcase_v6.json", [](Document &d) { build_showcase(d); } },
-		{ "people_town_v6.json", [](Document &d) { build_people_town(d); } },
-		{ "people_city_v6.json", [](Document &d) { build_people_city(d, 12, 12); } },
-		{ "new_city_v6.json", [](Document &d) { build_new_city(d); } },
-		{ "city_town_v6.json", [](Document &d) { build_city_town(d); } },
-		{ "city_week_v6.json", [](Document &d) { build_city_week(d); } },
+		{ "demo_town_v7.json", [](Document &d) { build_demo_town(d); } },
+		{ "test_grid_v7.json", [](Document &d) { build_test_grid(d, 7, 8, 120.0); } },
+		{ "t_junction_v7.json", [](Document &d) { build_t_junction(d); } },
+		{ "lane_drop_v7.json", [](Document &d) { build_lane_drop(d); } },
+		{ "one_way_pair_v7.json", [](Document &d) { build_one_way_pair(d); } },
+		{ "showcase_v7.json", [](Document &d) { build_showcase(d); } },
+		{ "people_town_v7.json", [](Document &d) { build_people_town(d); } },
+		{ "people_city_v7.json", [](Document &d) { build_people_city(d, 12, 12); } },
+		{ "new_city_v7.json", [](Document &d) { build_new_city(d); } },
+		{ "city_town_v7.json", [](Document &d) { build_city_town(d); } },
+		{ "city_week_v7.json", [](Document &d) { build_city_week(d); } },
+		{ "city_market_v7.json", [](Document &d) { build_city_market(d); } },
 	};
 	for (const Entry &e : maps) {
 		Document doc;

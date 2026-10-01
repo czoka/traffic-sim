@@ -154,6 +154,7 @@ func _draw() -> void:
 		draw_circle(at, maxf(px(3.2), 0.65), LIGHTS.get(h.light, Color.WHITE))
 	_draw_people()
 	_draw_buildings()
+	_draw_centre()
 	var car: Dictionary = editor.sim.car_info if editor.sim and editor.sim.selected_car != 0 else {}
 	if not car.is_empty():
 		var route: PackedVector2Array = car.route
@@ -285,6 +286,23 @@ func _draw_buildings() -> void:
 		elif zoom > 1.2:
 			text(c + Vector2(r + px(3), px(4)), "%d in" % b.inside, 11,
 				Color(1, 1, 1, 0.85))
+
+
+func _draw_centre() -> void:
+	var cc: Dictionary = editor.road.get_city_centre()
+	if not cc.placed:
+		return
+	var p: Vector2 = cc.pos
+	var col := Color(1.0, 0.82, 0.3)
+	var s := px(9)
+	var star := PackedVector2Array()
+	for i in 10:
+		var a := -PI / 2.0 + i * PI / 5.0
+		star.append(p + Vector2(cos(a), sin(a)) * (s if i % 2 == 0 else s * 0.45))
+	draw_colored_polygon(star, col)
+	star.append(star[0])
+	draw_polyline(star, Color(0.05, 0.05, 0.06, 0.9), px(1.5))
+	text(p + Vector2(s + px(3), px(4)), "City centre", 11, col)
 
 
 func _outline(pts: PackedVector2Array, col: Color, width: float) -> void:

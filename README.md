@@ -2,7 +2,7 @@
 
 A traffic simulation map builder: a C++ simulation core running inside Godot 4, targeting desktop and the browser.
 
-**Status: M5 (city life) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals with walk phases) or turn it into a roundabout, place bus stops, depots and routes, footpaths and bike paths, crossings and fences, lift roads onto bridges or into tunnels, and place homes, shops and offices along the streets. Press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue, people walk, wait at the kerb, cross, and ride the bus, and residents live through the week: they sleep, eat, shop and go to work, and shops and offices open only when their staff have arrived. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
+**Status: M6 (economy and ownership) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals with walk phases) or turn it into a roundabout, place bus stops, depots and routes, footpaths and bike paths, crossings and fences, lift roads onto bridges or into tunnels, and place homes, shops and offices along the streets. Press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue, people walk, wait at the kerb, cross, and ride the bus, and residents live through the week: they sleep, eat, shop and go to work, and shops and offices open only when their staff have arrived. Money moves between residents and the owners of buildings: wages, prices, rent, fares and fuel; residents buy bikes and cars, households buy their homes, and NPC owners buy, tune and sell buildings on a market the player can trade on. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
 
 The design lives in the Game Design Document (claude.ai artifact "Traffic Sim Map Builder — Game Design Document"). Its *Implementation plan* tab has the checklists and gates.
 
@@ -112,6 +112,16 @@ The problems panel also lists stops with no lane for their direction, depots tha
 
 The inspector shows a building's state (open, closed or closed unexpectedly, staff in and needed, people inside, households) and, for a resident, their needs, money, job, booked shifts, what they are doing and where they are going. The sim bar shows the day and time, residents and open businesses.
 
+## Money and ownership (M6)
+
+**Money.** Every building has an owner: the city (the player, whose money is unlimited but counted) or an NPC owner. Wages are paid by the employer's owner at the end of each shift; offices earn a revenue per staff hour; shop prices and rent go to the owner, and shops pay a stock cost per sale. Coach fares (12 credits each way) and car running costs (0.25 a km, and 15 km each way for a drive outside the map) leave the map. A household keeps its savings together. All the numbers are in the `economy` section of `game/data/city_data.json`.
+
+**Transport.** City buses need a pass: 40 credits for 30 days for residents, a 4-credit day pass for visitors (bought at the first bus trip; without one the price counts in the mode choice, spread over a month of rides). The **bike shop** sells bikes (800) and the **car dealership** cars (15,000); a resident buys one when it would save at least 8 minutes on the daily commute and they can afford it with savings to spare (a car also needs parking at home: the home type's `parking` is not `none`). An owned bike or car is parked where its owner left it, at home overnight: trips from there can go by bike (4.5 m/s) or car (with 2 minutes to park at each end), driven on the road network from the building's kerb to the destination's kerb, and residents away from home take their vehicle with them. Commuters with a car drive outside the map by the quickest road edge with a sink spawn point and come back the same way.
+
+**Housing.** A home's rent and price are its type's base times a **location factor**: 1.0 at the city centre, falling to 0.5 at 3 km and beyond. The **city centre tool** (`T`) places the centre marker (Shift-click removes it; without one the middle of the shops and offices counts). Rent is due on day 1 of each 30-day month (people moving in mid-month pay the rest of it); a household in debt on 2 rent days in a row is evicted and leaves by coach. A household in a single-family home that has saved its price plus a cushion buys it and pays no more rent.
+
+**Ownership and the market.** In the building inspector the player sets, for a city-owned building, the rent (homes), a price factor (shops) and the wage (businesses), and can tick *For sale* with an asking price (0: the valuation). A listed building keeps working until it sells; buyers value a building at about 10 years of its net income (at least its base price), and a listing sells sooner the cheaper it is against that value. Rented homes sell with their tenants. On the 1st of each month NPC owners look at last month: shops that were full or losing money raise prices and quiet ones lower them, businesses with shifts nobody took raise wages (otherwise they drift down), landlords raise rents when full and lower them when units stood empty, all within set ranges; and now and then an owner lists its building. The *Market* panel in the bottom bar lists every building for sale; an NPC listing can be bought with *Buy* in its inspector. A building's use never changes. The sim bar's tooltip has the city's income and spending this month (rent, sales, passes, building sales; wages, stock, purchases), ownership counts, evictions and households in debt, and the vehicles and passes owned.
+
 ## The simulation (M2)
 
 The bar above the bottom bar runs the sim: **Play/Pause** (`Space`), **Step** one sim second (`.`), **Restart** (remove all cars and start again with the seed), **Speed** (16x real time by default, multipliers 0.25–8 for 4x–128x), **Seed**, **Density** (multiplies every spawn rate) **Max cars** (spawning pauses at that many cars) and **Max people** (new trips on foot pause at that many people, 1,000 by default). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
@@ -125,7 +135,7 @@ How it works:
 * **Demand.** Spawn points release cars as a Poisson process at their rate × density, towards destinations drawn from the origin-destination weights (only reachable ones). Cars queue at the map edge when the entry lane is full, and leave the map at their destination's road end.
 * **Editing while paused.** Vehicles, routes and grants are carried over to the recompiled network by stable lane IDs; cars on lanes that no longer exist are removed and every other car re-routes.
 
-**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, the M4 people town and people city, the M5 new city, city town and city week, or the POC ring benchmark.
+**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, the M4 people town and people city, the M5 new city, city town and city week, the M6 city market, or the POC ring benchmark.
 
 ### Other controls
 
@@ -144,7 +154,7 @@ Map labels and markers (spawn points, stops, depots, problems, building markers)
 
 ## Map files
 
-Format `"traffic-sim-map"`, version **6**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences, and buildings (id, type, position, facing, level and name). Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–5 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v6.json` are written by `tsim_bench --write-maps game/maps`).
+Format `"traffic-sim-map"`, version **7**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences, buildings (id, type, position, facing, level and name, and the player's rent, price factor, wage, for-sale flag and asking price), and the city centre marker. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–6 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v7.json` are written by `tsim_bench --write-maps game/maps`).
 
 ## M1 gate and measurements
 
@@ -203,7 +213,7 @@ Other M4 tests cover the people town (every crossing kind, the network joins up,
 
 The gate is **5,000 residents live a full sim week at 16x with no stalls, and shops open late when their staff are stuck in traffic.** It is checked by the C++ test `M5 gate` (which also runs in wasm under Node in CI) and by `game/tests/sim_smoke_test.gd`:
 
-* **The map** (`build_city_week`, *Examples → City week*, `game/maps/city_week_v6.json`): a 7 × 7 street grid at 140 m with 103 apartment blocks, 36 townhouses, 26 groceries, 23 fast-food places, 7 restaurants, 14 medium offices and 7 office towers, the main station with coaches, and a 16-stop bus loop.
+* **The map** (`build_city_week`, *Examples → City week*, `game/maps/city_week_v7.json`): a 7 × 7 street grid at 140 m with 103 apartment blocks, 36 townhouses, 26 groceries, 23 fast-food places, 7 restaurants, 14 medium offices and 7 office towers, the main station with coaches, and a 16-stop bus loop.
 * **The run:** the homes start 95 % full (about 4,900 residents); coaches bring immigrants until every home is taken (about 5,170 residents), then the sim runs a full week, Monday 06:00 to Monday 06:00.
 * **Checks:** nobody stuck (a resident's state unchanged for 24 sim hours, or travelling for 3 hours: none), every business open by 13:00 on weekdays, at most 5 people starving at any sample (0–1 in practice), more than 20,000 shifts worked (20,294, 146 of them late), and no sim minute taking more than a second of real time (at 16x a sim minute has 3.75 s).
 
@@ -214,7 +224,22 @@ The gate is **5,000 residents live a full sim week at 16x with no stalls, and sh
 
 99.9 % of ticks take under 0.2 ms; the slowest single ticks (the daily job and shift planning at 06:00, coach arrivals) take 6–40 ms, which at 16x is still under a frame's budget spread across the second. **Late openings in traffic** are checked by the test `late staff open the shop late`: on a small loop with a short-green signal and all car trips ending at the far end of High Street, the shop's staff on the bus arrive 33 minutes late and the shop opens late (3 late shifts); with the roads free it opens on time.
 
-Other M5 tests cover the data table, the city town (valid, saves and loads as v6, every building has a door, undo), two days over three seeds, immigration filling reachable homes, visitors staffing the city offices, opening rules and closure memory, jobs outside the map by coach, weekends (offices closed, weekend shifts paid double), removing a building while the sim runs, and determinism: same seed same hash, and a golden hash of 4 city-town hours (`95f0620c3af461e3`, checked on every CI platform). The M2, M3 and M4 golden hashes are unchanged: a map without buildings runs exactly as before.
+Other M5 tests cover the data table, the city town (valid, saves and loads as v7, every building has a door, undo), two days over three seeds, immigration filling reachable homes, visitors staffing the city offices, opening rules and closure memory, jobs outside the map by coach, weekends (offices closed, weekend shifts paid double), removing a building while the sim runs, and determinism: same seed same hash, and a golden hash of 4 city-town hours (`7ca7601c9fbb356f`, changed in M6 now that rent, prices and fares move money; it was `95f0620c3af461e3`). The M2, M3 and M4 golden hashes are unchanged: a map without buildings runs exactly as before.
+
+## M6 gate and measurements
+
+The gate is **a reference city runs 2 sim months with no runaway prices and no mass evictions.** It is checked by the C++ test `M6 gate` (also in wasm under Node in CI) and by `game/tests/sim_smoke_test.gd`:
+
+* **The map** (`build_city_market`, *Examples → City market*, `game/maps/city_market_v7.json`): a 5 × 5 street grid at 140 m with 96 buildings (apartment blocks, townhouses and detached houses, groceries, fast food, restaurants, a bike shop, a car dealership and offices), the city centre marker in the middle, a north road out of the map, the main station with coaches and a bus loop. Every fifth building is listed for sale by the city.
+* **The run:** the homes start 95 % full (1,100 residents in 532 households, about 1,165 in 567 once immigrants fill the rest), then 60 sim days.
+* **Checks:** NPC prices, wages and rents stay well inside their ranges (prices ×1.00–1.10 of the defaults after two months, wages ×0.98–1.00, rents ×1.06), fewer than 2 % of households evicted (none), fewer than 5 % in debt at any day's end (none), households and mean money within bounds (money 9,757 → 7,713 a resident), nobody starving, more than 3 buildings sold (19), bikes bought (45), passes in use (about 950) and no vehicle taken off as stuck.
+
+| City market, ~1,165 residents | 60 sim days | Tick (mean) |
+| --- | --- | --- |
+| Native C++ (one core of a 2.1 GHz Xeon) | 65 s | 1.3 µs |
+| wasm in Node (V8) | 94 s | 1.8 µs |
+
+Other M6 tests cover the data table, map v7 (economy settings and the centre round-trip, centre undo, bad numbers refused, v6 files load with the defaults), location prices (the factor from the centre, a moved centre, the player's rent), money flows (rent on day 1, wages, sales, stock, fares, and the city's accounts adding up), the bus pass and day pass, eviction after two rent days in debt, cars (everyone given one: 4,000 car trips in 40 hours, commuters driving out by the map edge, every car at home or with its owner in the evening, nothing stuck), bikes, the market (a cheap player listing sells with its tenants, the new owner tunes the rent and lists it, the player buys it back), households buying their home, and determinism: same seed same hash, and a golden hash of 4 city-market hours with some residents given bikes and cars (`04d04d8a98ca699d`, checked on every CI platform).
 
 ## POC ring benchmark
 
@@ -244,20 +269,22 @@ core/                 pure C++17, no Godot includes
     traffic.h         traffic sim: routing, IDM, MOBIL, junction grants, signals,
                       vehicle kinds, parking, buses and coaches, demand (M2, M3),
                       people, crossings, mode choice and passengers (M4, traffic_peds.cpp),
-                      residents, households, jobs, shifts and immigration (M5, traffic_city.cpp)
+                      residents, households, jobs, shifts and immigration (M5, traffic_city.cpp),
+                      money, owners and the market (M6, traffic_economy.cpp),
+                      resident car and bike trips (M6, traffic_drive.cpp)
     city_data.h       building types, offerings and needs from city_data.json (M5)
     buildings.h       lot shapes, snapping lots to streets, overlap checks (M5)
     traffic_run.h     keeps network and sim in step with the map; M2 golden scenario
     demo_maps.h       demo town, the gate test grid, the M2 test maps, the M3 showcase,
-                      the M4 people town and people city, the M5 cities
+                      the M4 people town and people city, the M5 cities, the M6 city market
     map.h, sim.h      POC runtime lane network and IDM simulation
-extension/src/        GDExtension: RoadEditor (editor + sim bridge, road_editor_m5.cpp for the city), TrafficSim (POC)
+extension/src/        GDExtension: RoadEditor (editor + sim bridge, road_editor_m5.cpp for the city, road_editor_m6.cpp for the economy), TrafficSim (POC)
 game/                 Godot 4.7 project (Compatibility renderer)
   editor/             main scene, map view, sim controller, overlay, tools/, ui/, file I/O
   poc/                ring benchmark scene
   common/             camera controller
   data/               city_data.json: building types, offerings, needs, jobs
-  maps/               example maps (v6, a few v2) and the POC ring (v1)
+  maps/               example maps (v7, a few v2) and the POC ring (v1)
   tests/              headless smoke tests (editor, sim, POC)
 tests/                C++ unit tests (doctest)
 tools/                headless sim benchmark (tsim_bench)
@@ -305,7 +332,10 @@ CI (`.github/workflows/ci.yml`) builds Linux, Windows (MSVC) and macOS (Apple Si
 * Signals are fixed-time only: no actuated or coordinated plans yet (mid-block push buttons are the only demand-responsive signals).
 * Cars may use a bus lane within 60 m of the stop line (the GDD says 30 m; 60 m leaves room to merge in at speed). Bikes ride in the kerb lane where there is no bike lane, and cars can't overtake them in a single-lane road.
 * People walk along the pedestrian network without bumping into each other (no crowding or sidewalk capacity), and waiting people stand in a small ring around their spot. Coaches dwell their line's fixed time however many people get on. Parking trips pick a bay on their way rather than near a destination, and people who drive simply join their spawn point's car queue.
-* Spawn points are still trip ends for people next to the residents' trips between buildings. Rent, prices of homes, vehicle purchases and residents driving come in M6; for now residents walk or ride the bus, and money only moves through wages and purchases.
+* Spawn points are still trip ends for people next to the residents' trips between buildings.
+* Money: residents' savings drift down over the months (about 1,000 credits a resident a month in the city market), so a 15,000-credit car is out of reach for the reference city's residents (none bought in two months; the tests give cars); the treasury is only counted, so the player can't run out. NPC owners have no cash limits: buyers bring their own money.
+* Driving residents park at the destination's kerb in the lane (a short dwell) and their car is then "inside" with them; there is no search for a bay or a car park yet. Someone with both a bike and a car rides one and leaves the other where it was.
+* The map's *For sale* tick stays on after the building sells (the sim then ignores it until it is cleared); the player's settings apply only while the city owns a building, and the sim's owners and prices start again on Restart.
 * Buildings don't move with their road: after moving or reshaping a road, a lot that now overlaps it or lost its door is flagged in the problems panel.
 * Packed lunches: a resident at work on a break eats from the household pantry if it has food (it is not carried along), otherwise buys a meal nearby.
 * Outside the map, jobs and shops are unlimited and abstract: residents leave by coach and come back after the commute, shift or visit.

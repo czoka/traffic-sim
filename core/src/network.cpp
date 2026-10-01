@@ -1033,6 +1033,66 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 	// --- 5. Pedestrian network (M4) ---------------------------------------------------------
 	build_ped_network(map, geom, out);
 
+	// --- 6. Building access (M6): the kerb-side lanes of the street in front ------------------
+	out.has_city_centre = map.city_centre().has_value();
+	if (out.has_city_centre) out.city_centre = qv(*map.city_centre());
+	for (NetBuilding &b : out.buildings) {
+		// The nearest road lane, then that road's kerb lanes in both directions.
+		double best = 16.0;
+		SegmentId seg = kNoId;
+		for (const NetLane &l : out.lanes) {
+			if (l.kind != NetLaneKind::Road || l.ring || l.level != b.level || l.pts.size() < 2) continue;
+			for (size_t k = 0; k + 1 < l.pts.size(); ++k) {
+				const Vec2 a = l.pts[k], ab = l.pts[k + 1] - a;
+				const double l2 = ab.dot(ab);
+				const double t = l2 > 1e-12 ? std::clamp((b.pos - a).dot(ab) / l2, 0.0, 1.0) : 0.0;
+				const double d = (b.pos - (a + ab * t)).length();
+				if (d < best) {
+					best = d;
+					seg = l.segment;
+				}
+			}
+		}
+		if (seg == kNoId) continue;
+		for (int side = 0; side < 2; ++side) {
+			const LaneDir dir = side == 0 ? LaneDir::Forward : LaneDir::Backward;
+			for (int bike = 0; bike < 2; ++bike) {
+				// The rightmost lane of that direction a car (or bike) may use.
+				int32_t pick = -1;
+				for (size_t i = 0; i < out.lanes.size(); ++i) {
+					const NetLane &l = out.lanes[i];
+					if (l.kind != NetLaneKind::Road || l.segment != seg || l.dir != dir || l.ring || l.pocket) continue;
+					if (l.right >= 0) continue;
+					int32_t q = static_cast<int32_t>(i);
+					while (q >= 0) {
+						const LaneType ty = out.lanes[static_cast<size_t>(q)].type;
+						if (bike ? (ty == LaneType::Bike || ty == LaneType::General || ty == LaneType::Bus) : ty == LaneType::General) break;
+						q = out.lanes[static_cast<size_t>(q)].left;
+					}
+					pick = q;
+					break;
+				}
+				if (pick < 0) continue;
+				const NetLane &l = out.lanes[static_cast<size_t>(pick)];
+				double bs = 0.0, bd = 1e300;
+				for (size_t k = 0; k + 1 < l.pts.size(); ++k) {
+					const Vec2 a = l.pts[k], ab = l.pts[k + 1] - a;
+					const double l2 = ab.dot(ab);
+					const double t = l2 > 1e-12 ? std::clamp((b.pos - a).dot(ab) / l2, 0.0, 1.0) : 0.0;
+					const double d = (b.pos - (a + ab * t)).length();
+					if (d < bd) {
+						bd = d;
+						bs = l.cum[k] + (l.cum[k + 1] - l.cum[k]) * t;
+					}
+				}
+				// Room to pull in and out: not right at the ends of the lane.
+				bs = quantize(std::clamp(bs, std::min(8.0, 0.5 * l.length), std::max(0.0, l.length - 6.0)));
+				(bike ? b.bike_lane : b.car_lane)[side] = pick;
+				(bike ? b.bike_s : b.car_s)[side] = bs;
+			}
+		}
+	}
+
 	stats_.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 

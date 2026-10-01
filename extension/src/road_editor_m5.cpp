@@ -187,6 +187,18 @@ Dictionary RoadEditor::get_building(int64_t id) {
 	ensure_network();
 	const int32_t bi = check_net_.building_index(b->id);
 	d["door"] = bi >= 0 && check_net_.buildings[static_cast<size_t>(bi)].entrance >= 0;
+	// M6: the player's numbers (0 = the default).
+	d["rent"] = b->rent;
+	d["price_factor"] = b->price_factor;
+	d["wage"] = b->wage;
+	d["for_sale"] = b->for_sale;
+	d["asking"] = b->asking;
+	if (t) {
+		d["type_rent"] = t->rent;
+		d["type_price"] = t->price;
+		d["type_wage"] = t->wage;
+		d["households"] = t->households;
+	}
 	return d;
 }
 
@@ -231,6 +243,37 @@ Dictionary RoadEditor::sim_city_stats() {
 	d["mean_energy"] = c.mean_energy;
 	d["mean_money"] = c.mean_money;
 	d["starving"] = static_cast<int64_t>(c.starving);
+	// M6
+	d["month"] = c.month;
+	d["day_of_month"] = c.day_of_month;
+	d["treasury_income"] = c.treasury_income;
+	d["treasury_spending"] = c.treasury_spending;
+	d["month_income"] = c.month_income;
+	d["month_spending"] = c.month_spending;
+	d["income_rent"] = c.income_rent;
+	d["income_sales"] = c.income_sales;
+	d["income_passes"] = c.income_passes;
+	d["income_buildings"] = c.income_buildings;
+	d["spending_wages"] = c.spending_wages;
+	d["spending_goods"] = c.spending_goods;
+	d["spending_buildings"] = c.spending_buildings;
+	d["evictions"] = static_cast<int64_t>(c.evictions);
+	d["households_evicted"] = static_cast<int64_t>(c.households_evicted);
+	d["in_debt"] = static_cast<int64_t>(c.in_debt);
+	d["bikes"] = static_cast<int64_t>(c.bikes);
+	d["cars"] = static_cast<int64_t>(c.cars);
+	d["passes"] = static_cast<int64_t>(c.passes);
+	d["trips_walk"] = static_cast<int64_t>(c.trips_walk);
+	d["trips_bus"] = static_cast<int64_t>(c.trips_bus);
+	d["trips_bike"] = static_cast<int64_t>(c.trips_bike);
+	d["trips_car"] = static_cast<int64_t>(c.trips_car);
+	d["trips_coach"] = static_cast<int64_t>(c.trips_coach);
+	d["homes_owned"] = static_cast<int64_t>(c.homes_owned);
+	d["npc_owned"] = static_cast<int64_t>(c.npc_owned);
+	d["city_owned"] = static_cast<int64_t>(c.city_owned);
+	d["listed"] = static_cast<int64_t>(c.listed);
+	d["buildings_sold"] = static_cast<int64_t>(c.buildings_sold);
+	d["buildings_bought"] = static_cast<int64_t>(c.buildings_bought);
 	return d;
 }
 
@@ -259,6 +302,22 @@ Dictionary RoadEditor::sim_building_info(int64_t id) {
 	d["served"] = static_cast<int64_t>(b.served);
 	d["turned_away"] = static_cast<int64_t>(b.turned_away);
 	d["late_openings"] = static_cast<int64_t>(b.late_openings);
+	// M6
+	d["owner"] = static_cast<int64_t>(b.owner);
+	d["owner_kind"] = b.owner_household != 0 ? "household" : b.owner != 0 ? "npc" : "city";
+	d["location"] = b.location;
+	d["rent"] = b.rent;
+	d["base_rent"] = b.base_rent;
+	d["price"] = b.price;
+	d["price_factor"] = b.price_factor;
+	d["wage"] = b.wage;
+	d["value"] = b.value;
+	d["listed"] = b.listed;
+	d["asking"] = b.asking;
+	d["income_month"] = b.income_month;
+	d["expense_month"] = b.expense_month;
+	d["net_month"] = b.net_month;
+	d["sales"] = static_cast<int64_t>(b.sales);
 	return d;
 }
 
@@ -331,6 +390,16 @@ Dictionary RoadEditor::sim_resident_info(int64_t id) {
 	d["shift_name"] = name_of(r.shift_building);
 	d["until"] = r.until;
 	d["late"] = static_cast<int64_t>(r.late);
+	// M6
+	d["has_bike"] = r.has_bike;
+	d["has_car"] = r.has_car;
+	d["has_pass"] = r.has_pass;
+	d["car_at_name"] = name_of(r.car_at);
+	d["mode"] = trip_mode_name(r.mode);
+	d["owns_home"] = r.owns_home;
+	d["household_money"] = r.household_money;
+	d["rent"] = r.rent;
+	d["debt_months"] = r.debt_months;
 	return d;
 }
 

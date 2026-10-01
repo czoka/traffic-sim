@@ -166,6 +166,8 @@ void Traffic::city_reset_network() {
 			if (best < 1e8) travel_[a * P + b] = static_cast<float>(best);
 		}
 	}
+	econ_reset_network(); // M6: prices by location; ownership kept by building id
+	drive_costs(); // M6: by car between buildings and to the map edges
 	// Households whose home is gone leave the map; residents in buildings that
 	// are gone go home; shifts at buildings that are gone are cancelled.
 	const CityData &cd = *city_data_;
@@ -213,7 +215,15 @@ void Traffic::city_reset_network() {
 			r.offering = -1;
 			r.next_plan = tick_;
 		}
-		if (r.state == ResidentState::Travelling && find_pedestrian(r.ped) < 0) {
+		if (gone(r.car_at)) r.car_at = home;
+		if (gone(r.bike_at)) r.bike_at = home;
+		const bool lost = r.veh != kNoId ? find_vehicle(r.veh) < 0 : find_pedestrian(r.ped) < 0;
+		if (r.state == ResidentState::Travelling && lost) {
+			if (r.veh != kNoId) {
+				if (r.mode == TripMode::Car) r.car_at = r.going_building == kOutside || r.going_building == 0 ? home : r.going_building;
+				if (r.mode == TripMode::Bike) r.bike_at = r.going_building == kOutside || r.going_building == 0 ? home : r.going_building;
+				r.veh = kNoId;
+			}
 			const uint32_t to = gone(r.going_building) || r.going_building == 0 || r.going_building == kOutside ? home : r.going_building;
 			if (to == 0) {
 				r.id = 0;
@@ -313,6 +323,15 @@ int32_t Traffic::city_add_household(uint32_t home, int people, double work_share
 		hh_[static_cast<size_t>(hi)].members.push_back(r.id);
 	}
 	if (city_last_day_ != ~0ull) {
+		// Moving in mid-month: the rent for the rest of it (M6).
+		const CityData &cd = *city_data_;
+		const int32_t bi = net_->building_index(home);
+		const int day = static_cast<int>(clock_at(tick_ + 1) / 1440 - clock_at(0) / 1440);
+		const double left = static_cast<double>(cd.month_days - day % cd.month_days) / static_cast<double>(cd.month_days);
+		Household &h2 = hh_[static_cast<size_t>(hi)];
+		h2.rent = rent_of(static_cast<size_t>(bi)) * left;
+		for (uint32_t m : h2.members) res_[static_cast<size_t>(find_resident(m))].money -= h2.rent / static_cast<double>(h2.members.size());
+		econ_credit(home, h2.rent, 1);
 		// Moving in mid-day: find work, and maybe a shift still today.
 		for (uint32_t m : hh_[static_cast<size_t>(hi)].members) {
 			const int32_t ri = find_resident(m);
@@ -335,6 +354,7 @@ void Traffic::city_init() {
 	city_arrivals_.clear();
 	city_boarded_.clear();
 	city_last_day_ = ~0ull;
+	econ_init();
 	if (!city_on_) return;
 	for (BState &b : bstate_) b.served = b.turned_away = b.late_openings = 0;
 	city_recount();
@@ -374,6 +394,8 @@ void Traffic::city_tick() {
 	city_boarded_.clear();
 	for (size_t k = 0; k < city_arrivals_.size(); ++k) city_arrive(city_arrivals_[k]);
 	city_arrivals_.clear();
+	for (size_t k = 0; k < city_vehicle_done_.size(); ++k) city_vehicle_done(city_vehicle_done_[k]);
+	city_vehicle_done_.clear();
 	if (now % static_cast<uint64_t>(tpm) == 0) {
 		const uint64_t today = static_cast<uint64_t>(clock_at(now) / 1440);
 		if (today != city_last_day_) {
@@ -390,9 +412,11 @@ void Traffic::city_tick() {
 		const size_t b = static_cast<size_t>(static_cast<uint64_t>(n) * (k + 1) / static_cast<uint64_t>(tpm));
 		for (size_t i = a; i < b && i < res_.size(); ++i) city_update(i);
 	}
-	// Visitors who left on a coach are gone.
+	// Visitors who left on a coach are gone (checked once a sim minute).
 	bool any = false;
-	for (const Resident &r : res_) any |= r.visitor && r.leaving && r.state == ResidentState::Outside;
+	if (now % static_cast<uint64_t>(tpm) == 0) {
+		for (const Resident &r : res_) any |= r.visitor && r.leaving && r.state == ResidentState::Outside;
+	}
 	if (any) {
 		res_.erase(std::remove_if(res_.begin(), res_.end(),
 						   [](const Resident &r) { return r.visitor && r.leaving && r.state == ResidentState::Outside; }),
@@ -406,6 +430,11 @@ void Traffic::city_daily() {
 	const int64_t tpm = ticks_per_minute();
 	const int today = static_cast<int>(city_last_day_);
 	const bool weekend = today % 7 >= 5;
+	if (econ_last_day_ != city_last_day_) {
+		econ_last_day_ = city_last_day_;
+		if (econ_last_day_ != static_cast<uint64_t>(clock_at(0) / 1440)) drive_costs(); // with yesterday's lane times
+		econ_daily(today - static_cast<int>(clock_at(0) / 1440));
+	}
 	if (today % 7 == 0) {
 		for (Resident &r : res_) r.week_minutes = 0;
 	}
@@ -473,6 +502,7 @@ void Traffic::city_daily() {
 			b.slot_booked[si] = taken;
 			const int left = sl.staff - taken;
 			if (left > 0) {
+				econ_[nb.id].unfilled += left;
 				b.unfilled_today += left;
 				city_acc_.unfilled_shifts += static_cast<uint64_t>(left);
 				if (coaches_run()) visitor_jobs_.push_back(VisitorJob{ nb.id, start, end, left });
@@ -518,7 +548,7 @@ void Traffic::city_choose_job(size_t i) {
 		const double m = minutes_between(hp, nb.id);
 		if (m >= kNoWay) continue;
 		// People differ in what they look for: a spread of +/- 60 credits a day.
-		const double score = t.wage * 8.0 - 4.0 * m + 60.0 * rng_.symmetric();
+		const double score = wage_of(bi) * 8.0 - 4.0 * m + 60.0 * rng_.symmetric();
 		if (score > best) {
 			best = score;
 			pick = nb.id;
@@ -616,7 +646,14 @@ void Traffic::city_update(size_t i) {
 	}
 	switch (r.state) {
 		case ResidentState::Travelling:
-			if (find_pedestrian(r.ped) < 0) {
+			if (r.veh != kNoId ? find_vehicle(r.veh) < 0 : find_pedestrian(r.ped) < 0) {
+				if (r.veh != kNoId) {
+					const uint32_t where = r.going_building != 0 && r.going_building != kOutside ? r.going_building
+																								: (r.household >= 0 ? hh_[static_cast<size_t>(r.household)].home : 0);
+					if (r.mode == TripMode::Car) r.car_at = where;
+					if (r.mode == TripMode::Bike) r.bike_at = where;
+					r.veh = kNoId;
+				}
 				// The trip was lost (an edit took the path away): put them where they were going.
 				const uint32_t home = r.household >= 0 ? hh_[static_cast<size_t>(r.household)].home : 0;
 				const uint32_t to = r.going_building != 0 && r.going_building != kOutside && bstate(r.going_building) ? r.going_building : home;
@@ -634,6 +671,12 @@ void Traffic::city_update(size_t i) {
 			}
 			return;
 		case ResidentState::Outside:
+			if (!r.visitor && r.car_at == kOutside && now >= r.outside_until) {
+				// Out by car: back the same way (once the road in has room).
+				city_back_outside(r);
+				city_drive_in(i);
+				return;
+			}
 			if (!coaches_run() && now >= r.outside_until) {
 				// No coaches any more: they find their own way back.
 				const uint32_t home = r.household >= 0 ? hh_[static_cast<size_t>(r.household)].home : 0;
@@ -725,6 +768,26 @@ bool Traffic::city_trip(size_t i, int32_t to_place, uint32_t to_building, bool b
 	ped.origin = from;
 	ped.spawn_tick = tick_ + 1;
 	int32_t target = -1;
+	const CityData &cd = *city_data_;
+	const double per_credit = cd.minutes_per_credit * 60.0; // s of travel a credit is worth
+	if (by_coach && !r.visitor && r.state == ResidentState::Inside && r.has_car && r.car_at == r.at && !edges_.empty()) {
+		// Out of the map: by coach, or by car through a road edge.
+		const int32_t bi = net_->building_index(r.at);
+		const size_t E = edges_.size();
+		double car = kInf;
+		for (size_t e = 0; bi >= 0 && e < E; ++e) {
+			const double t = edge_t_[static_cast<size_t>(bi) * E + e];
+			if (t >= kNoWay) continue;
+			const double km = edge_d_[static_cast<size_t>(bi) * E + e] / 1000.0 + cd.outside_drive_km;
+			car = std::min(car, t + cd.parking_minutes * 60.0 + km * cd.car_cost_per_km * per_credit);
+		}
+		const double coach = coaches_run() ? minutes_between(from, kOutside) * 60.0 - cd.outside_commute_minutes * 60.0 +
+						cd.coach_fare * per_credit
+											: kInf;
+		if (car < kInf && car * (1.0 + config_.cost_variance * rng_.symmetric()) < coach && city_drive(i, kOutside, false, true)) {
+			return true;
+		}
+	}
 	if (by_coach) {
 		if (!coaches_run()) return false;
 		target = platform_of(net_->main_station);
@@ -745,10 +808,37 @@ bool Traffic::city_trip(size_t i, int32_t to_place, uint32_t to_building, bool b
 			}
 		}
 		BusChoice bc;
-		const double bus = best_bus(static_cast<size_t>(from), static_cast<size_t>(to_place), bc);
+		double bus = best_bus(static_cast<size_t>(from), static_cast<size_t>(to_place), bc);
 		const double vw = 1.0 + config_.cost_variance * rng_.symmetric();
 		const double vb = 1.0 + config_.cost_variance * rng_.symmetric();
-		if (bus < kInf && (walk >= kInf || bus * vb < 2.0 * walk * vw)) {
+		// M6: a city bus needs a pass (a month, a day for visitors); without one,
+		// its price counts, spread over a month of rides.
+		if (bus < kInf && r.pass_until <= tick_ + 1) {
+			const double price = r.visitor ? cd.bus_pass * cd.day_pass_share : cd.bus_pass;
+			bus = r.money < price ? kInf : bus + price * per_credit / (r.visitor ? 2.0 : 30.0);
+		}
+		// M6: their own bike or car, if it is here.
+		if (r.state == ResidentState::Inside && to_building != 0 && to_building != kOutside &&
+				((r.has_car && r.car_at == r.at) || (r.has_bike && r.bike_at == r.at))) {
+			const double best_other = std::min(walk >= kInf ? kInf : 2.0 * walk * vw, bus >= kInf ? kInf : bus * vb);
+			const double m = drive_m(r.at, to_building);
+			double car = kInf, bike = kInf;
+			if (r.has_car && r.car_at == r.at) {
+				const double t = drive_s(r.at, to_building);
+				if (t < kNoWay) car = t + 2.0 * cd.parking_minutes * 60.0 + m / 1000.0 * cd.car_cost_per_km * per_credit;
+			}
+			if (r.has_bike && r.bike_at == r.at && m < kNoWay) bike = m / cd.bike_speed + 60.0;
+			const double vv = 1.0 + config_.cost_variance * rng_.symmetric();
+			const bool by_car = car <= bike;
+			const double own = std::min(car, bike) * vv;
+			// Away from home they take it with them rather than leave it behind.
+			const uint32_t home = r.household >= 0 ? hh_[static_cast<size_t>(r.household)].home : 0;
+			const bool away = r.at != home && own < kInf;
+			bool busy = false;
+			if ((own < best_other || away) && city_drive(i, to_building, !by_car, false, &busy)) return true;
+			if (away && busy) return false; // wait for a gap rather than leave it behind
+		}
+		if (bus < kInf && (walk >= kInf || bus * vb < 2.0 * walk * vw) && econ_pass(r)) {
 			apply_bus_choice(ped, bc);
 			target = platform_of(ped.board);
 		}
@@ -773,6 +863,12 @@ bool Traffic::city_trip(size_t i, int32_t to_place, uint32_t to_building, bool b
 	city_leave_building(r);
 	r.state = ResidentState::Travelling;
 	r.ped = ped.id;
+	r.veh = kNoId;
+	r.mode = by_coach ? TripMode::Coach : ped.board >= 0 ? TripMode::Bus : TripMode::Walk;
+	if (!by_coach) {
+		if (ped.board >= 0) ++city_acc_.trips_bus;
+		else ++city_acc_.trips_walk;
+	}
 	r.going = by_coach ? station_place_ : to_place;
 	r.going_building = by_coach ? kOutside : to_building;
 	r.doing = Doing::Idle;
@@ -796,14 +892,17 @@ bool Traffic::city_start_offering(size_t i, int off) {
 	if (nb.kind == BuildingKind::Shop && nb.type >= 0) {
 		const BuildingType &t = cd.types[static_cast<size_t>(nb.type)];
 		if (std::find(t.offers.begin(), t.offers.end(), o.id) == t.offers.end()) return false;
+		if ((o.unlocks == "bike" && r.has_bike) || (o.unlocks == "car" && r.has_car)) return false;
+		const double price = offering_price(static_cast<size_t>(bi), off);
 		// Open right now: within the hours, with enough staff clocked in.
 		const int64_t clock = clock_at(now);
 		const DayPlan &plan = (clock / 1440) % 7 >= 5 ? t.weekend : t.weekday;
 		const bool in_hours = plan.in_hours(static_cast<int>(clock % 1440));
 		const bool open = in_hours && b.staff_in >= t.min_staff;
-		if (!open || b.customers >= t.slots || r.money < o.price) {
+		if (!open || b.customers >= t.slots || r.money < price) {
 			++b.turned_away;
 			++city_acc_.turned_away;
+			if (open && b.customers >= t.slots) ++econ_[nb.id].full;
 			if (open) ++city_acc_.turned_away_full;
 			else if (in_hours) ++city_acc_.turned_away_closed;
 			// Closed unexpectedly: remembered for days. Full or closed: for an hour.
@@ -817,7 +916,23 @@ bool Traffic::city_start_offering(size_t i, int off) {
 		}
 		++b.customers;
 		++b.served;
-		r.money -= o.price;
+		++econ_[nb.id].served;
+		r.money -= price;
+		econ_credit(nb.id, price, 0);
+		// Its stock, bought from outside.
+		const double cost = o.cost;
+		if (cost > 0.0) {
+			BEcon &e = econ_[nb.id];
+			e.expense += cost;
+			city_acc_.outside_goods += cost;
+			if (e.owner == 0) {
+				city_acc_.treasury_spending += cost;
+				city_acc_.month_spending += cost;
+				city_acc_.spending_goods += cost;
+			} else {
+				npc_cash_[e.owner] -= cost;
+			}
+		}
 	} else if (at_home) {
 		if (o.pantry_use > 0.0) {
 			Household &h = hh_[static_cast<size_t>(r.household)];
@@ -879,8 +994,9 @@ void Traffic::city_finish(size_t i) {
 						for (const std::string &oid : cd.types[static_cast<size_t>(nb.type)].offers) {
 							const int oi = cd.offering_index(oid);
 							const Offering &o = cd.offerings[static_cast<size_t>(oi)];
-							if (o.hunger <= 0.0 || 2.0 * m + o.min_minutes > cd.break_minutes || r.money < o.price) continue;
-							const double score = cd.urgency(r.hunger) * o.hunger - m * cd.travel_weight - cd.price_weight * o.price;
+							const double price = offering_price(bi, oi);
+							if (o.hunger <= 0.0 || 2.0 * m + o.min_minutes > cd.break_minutes || r.money < price) continue;
+							const double score = cd.urgency(r.hunger) * o.hunger - m * cd.travel_weight - cd.price_weight * price;
 							if (score > best) {
 								best = score;
 								pick = nb.id;
@@ -904,10 +1020,15 @@ void Traffic::city_finish(size_t i) {
 		// End of the shift: paid by the hour (double at weekends).
 		const double hours = static_cast<double>(r.shift.end - r.shift.start) / static_cast<double>(tpm * 60);
 		const int32_t bi = net_->building_index(r.shift.building);
-		const double wage = bi >= 0 && net_->buildings[static_cast<size_t>(bi)].type >= 0
-				? cd.types[static_cast<size_t>(net_->buildings[static_cast<size_t>(bi)].type)].wage
-				: cd.outside_wage;
-		r.money += wage * hours * (r.shift.weekend ? 2.0 : 1.0);
+		const bool here = bi >= 0 && net_->buildings[static_cast<size_t>(bi)].type >= 0;
+		const double wage = here ? wage_of(static_cast<size_t>(bi)) : cd.outside_wage;
+		const double pay = wage * hours * (r.shift.weekend ? 2.0 : 1.0);
+		r.money += pay;
+		if (here) {
+			econ_debit(r.shift.building, pay);
+			const BuildingType &t = cd.types[static_cast<size_t>(net_->buildings[static_cast<size_t>(bi)].type)];
+			if (t.kind == BuildingKind::Office) econ_credit(r.shift.building, t.revenue * hours, 2);
+		}
 		city_clock_out(r);
 		r.shift.done = true;
 		++city_acc_.shifts;
@@ -932,6 +1053,18 @@ void Traffic::city_finish(size_t i) {
 			if (o.hunger > 0.0) {
 				if (r.at == home) ++city_acc_.home_meals;
 				else ++city_acc_.meals_out;
+			}
+			// A new bike or car: ridden or driven away from the shop (a visitor
+			// takes theirs home outside the map).
+			if (r.visitor) {
+			} else if (o.unlocks == "bike" && !r.has_bike) {
+				r.has_bike = true;
+				r.bike_at = r.at;
+				++city_acc_.bikes_bought;
+			} else if (o.unlocks == "car" && !r.has_car) {
+				r.has_car = true;
+				r.car_at = r.at;
+				++city_acc_.cars_bought;
 			}
 		}
 		city_leave_building(r);
@@ -1023,6 +1156,38 @@ void Traffic::city_plan(size_t i) {
 	auto fits = [&](double travel, double dur, uint32_t at_building) {
 		return budget >= kInf || travel + dur + back_to_work(at_building) <= budget;
 	};
+	// M6: what a bike or a car is worth to them: the time it saves on the daily
+	// commute, if they can afford it with savings to spare (and park a car at home).
+	auto vehicle_value = [&](bool car, double price) {
+		if ((car ? r.has_car : r.has_bike) || home == 0 || r.employer == 0) return -kInf;
+		if (r.money < price + cd.money_low) return -kInf;
+		const int32_t hbi = net_->building_index(home);
+		if (hbi < 0) return -kInf;
+		if (car) {
+			const int ht = net_->buildings[static_cast<size_t>(hbi)].type;
+			if (ht < 0 || cd.types[static_cast<size_t>(ht)].parking == "none") return -kInf;
+		}
+		const int32_t hp = building_place(home);
+		const double now_min = minutes_between(hp, r.employer);
+		double with = kInf;
+		if (r.employer == kOutside) {
+			if (!car || edges_.empty()) return -kInf;
+			const size_t E = edges_.size();
+			for (size_t e = 0; e < E; ++e) {
+				const double t = edge_t_[static_cast<size_t>(hbi) * E + e];
+				if (t < kNoWay) with = std::min(with, t / 60.0 + cd.outside_commute_minutes + cd.parking_minutes);
+			}
+		} else if (car) {
+			const double t = drive_s(home, r.employer);
+			if (t < kNoWay) with = t / 60.0 + 2.0 * cd.parking_minutes;
+		} else {
+			const double dm = drive_m(home, r.employer);
+			if (dm < kNoWay) with = dm / cd.bike_speed / 60.0 + 1.0;
+		}
+		if (with >= kInf) return -kInf;
+		const double saved = 2.0 * ((now_min >= kNoWay ? 120.0 : now_min) - with); // minutes a working day
+		return saved >= 8.0 ? 30.0 + 6.0 * std::min(saved, 60.0) : -kInf;
+	};
 	const double to_home = at_home ? 0.0 : home ? minutes_between(here, home) : kNoWay;
 	// With a shift coming, eat for the hours until the break.
 	double hunger = r.hunger;
@@ -1072,10 +1237,12 @@ void Traffic::city_plan(size_t i) {
 		for (const std::string &oid : t.offers) {
 			const int oi = cd.offering_index(oid);
 			const Offering &o = cd.offerings[static_cast<size_t>(oi)];
-			if (r.money < o.price) continue;
+			const double price = offering_price(bi, oi);
+			if (r.money < price) continue;
 			double value = -kInf;
 			double travel = m;
 			uint32_t then = 0;
+			if (!o.unlocks.empty()) value = vehicle_value(o.unlocks == "car", price);
 			if (o.hunger > 0.0) value = cd.urgency(hunger) * o.hunger - 4.0;
 			if (o.pantry > 0.0 && hh) {
 				const double need = 100.0 * hh->pantry / std::max(1.0, cd.pantry_full);
@@ -1090,8 +1257,8 @@ void Traffic::city_plan(size_t i) {
 				}
 			}
 			if (value <= -kInf) continue;
-			const double score = value * (1.0 + 0.35 * preference(r.id, nb.id)) - travel * cd.travel_weight - price_k * o.price -
-					closed_penalty;
+			const double score = value * (1.0 + 0.35 * preference(r.id, nb.id)) - travel * cd.travel_weight -
+					(o.unlocks.empty() ? price_k * price : 0.0) - closed_penalty;
 			if (score > best && fits(m, o.min_minutes, nb.id)) {
 				best = score;
 				best_off = oi;
@@ -1108,7 +1275,7 @@ void Traffic::city_plan(size_t i) {
 		if (out < kNoWay) {
 			for (size_t oi = 0; oi < cd.offerings.size(); ++oi) {
 				const Offering &o = cd.offerings[oi];
-				if (o.pantry_use > 0.0 || (o.energy > 0.0 && o.hunger <= 0.0 && o.pantry <= 0.0)) continue;
+				if (o.pantry_use > 0.0 || (o.energy > 0.0 && o.hunger <= 0.0 && o.pantry <= 0.0) || !o.unlocks.empty()) continue;
 				if (r.money < o.price) continue;
 				double value = -kInf;
 				if (o.hunger > 0.0) value = cd.urgency(r.hunger) * o.hunger - 10.0;
@@ -1217,6 +1384,35 @@ void Traffic::city_board_coach(uint32_t rid) {
 		return;
 	}
 	r.outside_until = std::max(r.outside_until, now + static_cast<uint64_t>(2 * city_data_->outside_commute_minutes * tpm));
+	r.mode = TripMode::Coach;
+	r.money -= city_data_->coach_fare;
+	city_acc_.outside_fares += city_data_->coach_fare;
+	++city_acc_.trips_coach;
+}
+
+void Traffic::city_back_outside(Resident &r) {
+	const CityData &cd = *city_data_;
+	const uint64_t now = tick_ + 1;
+	const int64_t tpm = ticks_per_minute();
+	// What they went out for is done: a shift (paid), or a meal or shopping.
+	if (r.shift.building == kOutside && !r.shift.done && now >= r.shift.end) {
+		const double hours = static_cast<double>(r.shift.end - r.shift.start) / static_cast<double>(tpm * 60);
+		r.money += cd.outside_wage * hours;
+		r.shift.done = true;
+		++city_acc_.shifts;
+	}
+	if (r.offering >= 0) {
+		const Offering &o = cd.offerings[static_cast<size_t>(r.offering)];
+		r.money -= o.price;
+		city_acc_.outside_shopping += o.price;
+		r.hunger = std::min(100.0, r.hunger + o.hunger);
+		if (o.pantry > 0.0 && r.household >= 0) {
+			hh_[static_cast<size_t>(r.household)].pantry += o.pantry;
+			++city_acc_.groceries;
+		}
+		if (o.hunger > 0.0) ++city_acc_.meals_out;
+		r.offering = -1;
+	}
 }
 
 int Traffic::city_coach_arrives(int seats) {
@@ -1228,7 +1424,7 @@ int Traffic::city_coach_arrives(int seats) {
 	std::vector<size_t> back;
 	for (size_t i = 0; i < res_.size(); ++i) {
 		const Resident &r = res_[i];
-		if (!r.visitor && r.state == ResidentState::Outside && r.outside_until <= now) back.push_back(i);
+		if (!r.visitor && r.state == ResidentState::Outside && r.outside_until <= now && r.car_at != kOutside) back.push_back(i);
 	}
 	std::sort(back.begin(), back.end(), [&](size_t a, size_t b) {
 		return res_[a].outside_until != res_[b].outside_until ? res_[a].outside_until < res_[b].outside_until : res_[a].id < res_[b].id;
@@ -1237,25 +1433,10 @@ int Traffic::city_coach_arrives(int seats) {
 		if (seats <= 0) break;
 		Resident &r = res_[i];
 		const uint32_t home = r.household >= 0 ? hh_[static_cast<size_t>(r.household)].home : 0;
-		// What they went out for is done: a shift (paid), or a meal or shopping.
-		if (r.shift.building == kOutside && !r.shift.done && now >= r.shift.end) {
-			const double hours = static_cast<double>(r.shift.end - r.shift.start) / static_cast<double>(tpm * 60);
-			r.money += cd.outside_wage * hours;
-			r.shift.done = true;
-			++city_acc_.shifts;
-		}
-		if (r.offering >= 0) {
-			const Offering &o = cd.offerings[static_cast<size_t>(r.offering)];
-			r.money -= o.price;
-			r.hunger = std::min(100.0, r.hunger + o.hunger);
-			if (o.pantry > 0.0 && r.household >= 0) {
-				hh_[static_cast<size_t>(r.household)].pantry += o.pantry;
-				++city_acc_.groceries;
-			}
-			if (o.hunger > 0.0) ++city_acc_.meals_out;
-			r.offering = -1;
-		}
+		city_back_outside(r);
 		if (home == 0 || !city_trip(i, building_place(home), home, false)) continue;
+		res_[i].money -= cd.coach_fare; // the ride back
+		city_acc_.outside_fares += cd.coach_fare;
 		++brought;
 		--seats;
 	}
@@ -1269,6 +1450,7 @@ int Traffic::city_coach_arrives(int seats) {
 			const int32_t vi = new_resident(true);
 			Resident &v = res_[static_cast<size_t>(vi)];
 			v.state = ResidentState::Outside;
+			v.money = cd.bus_pass * cd.day_pass_share;
 			v.shift.building = vj.building;
 			v.shift.start = vj.start;
 			v.shift.end = vj.end;
@@ -1293,7 +1475,7 @@ int Traffic::city_coach_arrives(int seats) {
 			int free = 0;
 			for (int32_t u : bstate_[bi].units) free += u < 0 ? 1 : 0;
 			if (free == 0) continue;
-			const double rent = std::max(100.0, cd.types[static_cast<size_t>(nb.type)].rent);
+			const double rent = std::max(100.0, rent_of(bi));
 			vacant.push_back({ nb.id, free * (1000.0 / rent) });
 			units += free;
 		}
@@ -1371,7 +1553,10 @@ int Traffic::city_coach_arrives(int seats) {
 		const int32_t vi = new_resident(true);
 		Resident &v = res_[static_cast<size_t>(vi)];
 		v.state = ResidentState::Outside;
-		v.money = cd.offerings[static_cast<size_t>(off)].price;
+		{
+			const int32_t pbi = net_->building_index(pick);
+			v.money = offering_price(static_cast<size_t>(pbi), off) + cd.bus_pass * cd.day_pass_share;
+		}
 		v.offering = off;
 		if (!city_trip(static_cast<size_t>(vi), building_place(pick), pick, false)) {
 			res_.pop_back();
@@ -1412,13 +1597,32 @@ ResidentInfo Traffic::resident_info(uint32_t id) const {
 	}
 	out.late = r.late;
 	out.until = r.until > tick_ ? static_cast<double>(r.until - tick_) * config_.dt : 0.0;
+	out.has_bike = r.has_bike;
+	out.has_car = r.has_car;
+	out.car_at = r.car_at;
+	out.bike_at = r.bike_at;
+	out.has_pass = r.pass_until > tick_;
+	out.mode = r.mode;
+	if (r.household >= 0) {
+		const Household &h = hh_[static_cast<size_t>(r.household)];
+		out.owns_home = h.owns;
+		out.rent = h.rent;
+		out.debt_months = h.debt_months;
+		for (uint32_t m : h.members) {
+			const int32_t mi = find_resident(m);
+			if (mi >= 0) out.household_money += res_[static_cast<size_t>(mi)].money;
+		}
+	}
 	if (r.state == ResidentState::Outside) out.activity = r.visitor ? "gone home" : "outside the map";
 	else if (r.doing == Doing::Work) out.activity = "working";
 	else if (r.doing == Doing::Sleep) out.activity = "sleeping";
 	else if (r.offering >= 0 && static_cast<size_t>(r.offering) < cd.offerings.size()) {
 		out.activity = (r.state == ResidentState::Travelling ? "going for: " : "") + cd.offerings[static_cast<size_t>(r.offering)].label;
 	} else if (r.state == ResidentState::Travelling) {
-		out.activity = r.going_building == kOutside ? "to the main station" : r.shift.building == r.going_building ? "going to work" : "on the way";
+		out.activity = r.evicted ? "evicted, leaving the city"
+				: r.going_building == kOutside ? (r.mode == TripMode::Car ? "driving out of the map" : "to the main station")
+				: r.shift.building == r.going_building ? "going to work"
+													   : "on the way";
 	} else {
 		out.activity = "idle";
 	}
@@ -1458,7 +1662,36 @@ BuildingInfo Traffic::building_info(uint32_t id) const {
 	out.served = b.served;
 	out.turned_away = b.turned_away;
 	out.late_openings = b.late_openings;
+	econ_info(static_cast<size_t>(bi), out);
 	return out;
+}
+
+void Traffic::econ_info(size_t bi, BuildingInfo &o) const {
+	const NetBuilding &nb = net_->buildings[bi];
+	const BState &b = bstate_[bi];
+	auto it = econ_.find(nb.id);
+	o.owner = it != econ_.end() ? it->second.owner : 0;
+	o.owner_household = it != econ_.end() ? it->second.household : 0;
+	o.location = b.location;
+	o.base_rent = b.base_rent;
+	o.price = b.base_price;
+	o.rent = rent_of(bi);
+	o.price_factor = price_factor_of(bi);
+	o.wage = wage_of(bi);
+	o.value = value_of(bi);
+	if (o.owner == 0 && o.owner_household == 0 && nb.for_sale) {
+		o.listed = true;
+		o.asking = nb.asking > 0.0 ? nb.asking : o.value;
+	} else if (o.owner != 0 && it->second.listed) {
+		o.listed = true;
+		o.asking = it->second.asking;
+	}
+	if (it != econ_.end()) {
+		o.income_month = it->second.income;
+		o.expense_month = it->second.expense;
+		o.net_month = it->second.net;
+		o.sales = it->second.sales;
+	}
 }
 
 std::vector<BuildingInfo> Traffic::building_infos() const {
@@ -1494,6 +1727,7 @@ std::vector<BuildingInfo> Traffic::building_infos() const {
 		o.served = b.served;
 		o.turned_away = b.turned_away;
 		o.late_openings = b.late_openings;
+		econ_info(bi, o);
 	}
 	for (const Resident &r : res_) {
 		if (r.state != ResidentState::Inside) continue;
@@ -1548,7 +1782,61 @@ CityStats Traffic::city_stats() const {
 	} else {
 		st.min_hunger = 0.0;
 	}
-	for (const Household &h : hh_) st.households += h.home != 0 ? 1 : 0;
+	for (const Household &h : hh_) {
+		if (h.home == 0) continue;
+		++st.households;
+		st.homes_owned += h.owns ? 1 : 0;
+		double money = 0.0;
+		for (uint32_t m : h.members) {
+			const int32_t mi = find_resident(m);
+			if (mi >= 0) money += res_[static_cast<size_t>(mi)].money;
+		}
+		st.in_debt += money < 0.0 ? 1 : 0;
+	}
+	const uint64_t now = tick_ + 1;
+	for (const Resident &r : res_) {
+		if (r.visitor) continue;
+		st.bikes += r.has_bike ? 1 : 0;
+		st.cars += r.has_car ? 1 : 0;
+		st.passes += r.pass_until > now ? 1 : 0;
+	}
+	const CityData &cd = *city_data_;
+	const int days = static_cast<int>(clock_at(now) / 1440 - clock_at(0) / 1440);
+	st.month = days / cd.month_days;
+	st.day_of_month = days % cd.month_days;
+	bool first = true;
+	for (size_t bi = 0; bi < bstate_.size(); ++bi) {
+		const NetBuilding &nb = net_->buildings[bi];
+		if (nb.type < 0) continue;
+		auto it = econ_.find(nb.id);
+		const bool npc = it != econ_.end() && it->second.owner != 0;
+		if (npc) ++st.npc_owned;
+		else if (it == econ_.end() || it->second.household == 0) ++st.city_owned;
+		if ((npc && it->second.listed) || (!npc && nb.for_sale && (it == econ_.end() || it->second.household == 0))) ++st.listed;
+		if (!npc) continue;
+		const BuildingType &t = cd.types[static_cast<size_t>(nb.type)];
+		const double pf = it->second.price_factor;
+		const double wf = t.wage > 0.0 ? it->second.wage / t.wage : 1.0;
+		const double rf = bstate_[bi].base_rent > 0.0 ? it->second.rent / bstate_[bi].base_rent : 1.0;
+		if (first) {
+			st.price_factor_min = st.price_factor_max = pf;
+			st.wage_factor_min = st.wage_factor_max = wf;
+			st.rent_factor_min = st.rent_factor_max = rf;
+			first = false;
+		}
+		if (t.kind == BuildingKind::Shop) {
+			st.price_factor_min = std::min(st.price_factor_min, pf);
+			st.price_factor_max = std::max(st.price_factor_max, pf);
+		}
+		if (t.business()) {
+			st.wage_factor_min = std::min(st.wage_factor_min, wf);
+			st.wage_factor_max = std::max(st.wage_factor_max, wf);
+		}
+		if (t.kind == BuildingKind::Home) {
+			st.rent_factor_min = std::min(st.rent_factor_min, rf);
+			st.rent_factor_max = std::max(st.rent_factor_max, rf);
+		}
+	}
 	for (size_t bi = 0; bi < bstate_.size(); ++bi) {
 		const NetBuilding &nb = net_->buildings[bi];
 		if (nb.type < 0) continue;

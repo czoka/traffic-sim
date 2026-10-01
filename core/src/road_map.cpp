@@ -378,6 +378,7 @@ void RoadMap::clear() {
 	nodes_.clear();
 	segments_.clear();
 	buildings_.clear();
+	centre_.reset();
 	adjacency_.clear();
 	next_node_id_ = next_segment_id_ = next_lane_id_ = next_object_id_ = 1;
 }

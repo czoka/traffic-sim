@@ -739,9 +739,22 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 			}
 			integer(jb, "level", b.level);
 			str(jb, "name", b.name);
+			// v7: the player's economy settings.
+			num(jb, "rent", b.rent);
+			num(jb, "price_factor", b.price_factor);
+			num(jb, "wage", b.wage);
+			if (auto fs = jb.find("for_sale"); fs != jb.end() && fs->is_boolean()) b.for_sale = fs->get<bool>();
+			num(jb, "asking", b.asking);
+			if (!(b.rent >= 0.0 && b.wage >= 0.0 && b.asking >= 0.0 && b.price_factor > 0.0 && b.price_factor < 100.0)) {
+				err = "building " + std::to_string(b.id) + ": invalid economy settings";
+				return false;
+			}
 			map.put_building(b);
 		}
 	}
+	// v7: the city centre marker.
+	Vec2 centre;
+	if (vec(root, "city_centre", centre)) map.set_city_centre(centre);
 	// Lane IDs must be unique across the map.
 	std::set<LaneId> lanes;
 	for (const auto &kv : map.segments()) {
@@ -863,10 +876,16 @@ std::string road_map_to_json(const RoadMap &map) {
 			jb["dir"] = vec_json(b.dir);
 			if (b.level != 0) jb["level"] = b.level;
 			if (!b.name.empty()) jb["name"] = b.name;
+			if (b.rent != 0.0) jb["rent"] = b.rent;
+			if (b.price_factor != 1.0) jb["price_factor"] = b.price_factor;
+			if (b.wage != 0.0) jb["wage"] = b.wage;
+			if (b.for_sale) jb["for_sale"] = true;
+			if (b.asking != 0.0) jb["asking"] = b.asking;
 			bs.push_back(std::move(jb));
 		}
 		root["buildings"] = std::move(bs);
 	}
+	if (map.city_centre()) root["city_centre"] = vec_json(*map.city_centre());
 	return root.dump(1) + "\n";
 }
 

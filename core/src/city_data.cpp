@@ -169,6 +169,43 @@ bool parse_city_data(const std::string &text, CityData &out, std::string *err) {
 		d.shoppers_per_coach = static_cast<int>(num(*p, "shoppers_per_coach", d.shoppers_per_coach));
 		d.visitor_early_minutes = static_cast<int>(num(*p, "visitor_arrive_early_minutes", d.visitor_early_minutes));
 	}
+	if (auto e = j.find("economy"); e != j.end()) {
+		d.month_days = std::max(1, static_cast<int>(num(*e, "month_days", d.month_days)));
+		d.coach_fare = num(*e, "coach_fare", d.coach_fare);
+		d.car_cost_per_km = num(*e, "car_cost_per_km", d.car_cost_per_km);
+		d.outside_drive_km = num(*e, "outside_drive_km", d.outside_drive_km);
+		d.bus_pass = num(*e, "bus_pass", d.bus_pass);
+		d.day_pass_share = num(*e, "day_pass_share", d.day_pass_share);
+		d.minutes_per_credit = num(*e, "minutes_per_credit", d.minutes_per_credit);
+		d.bike_speed = std::max(0.5, num(*e, "bike_speed", d.bike_speed));
+		d.parking_minutes = num(*e, "parking_minutes", d.parking_minutes);
+		d.eviction_months = std::max(1, static_cast<int>(num(*e, "eviction_months", d.eviction_months)));
+		if (auto l = e->find("location"); l != e->end()) {
+			d.centre_factor = num(*l, "centre", d.centre_factor);
+			d.edge_factor = num(*l, "edge", d.edge_factor);
+			d.edge_distance = std::max(1.0, num(*l, "edge_distance", d.edge_distance));
+		}
+		if (auto m = e->find("market"); m != e->end()) {
+			d.value_years = num(*m, "value_years", d.value_years);
+			d.sale_rate = num(*m, "sale_rate", d.sale_rate);
+			d.npc_list_chance = num(*m, "npc_list_chance", d.npc_list_chance);
+			d.listing_days = static_cast<int>(num(*m, "listing_days", d.listing_days));
+		}
+		if (auto o = e->find("npc_owners"); o != e->end()) {
+			d.price_step = num(*o, "price_step", d.price_step);
+			d.wage_step = num(*o, "wage_step", d.wage_step);
+			d.rent_step = num(*o, "rent_step", d.rent_step);
+			auto range = [&](const char *k, double &lo, double &hi) {
+				if (auto r = o->find(k); r != o->end() && r->is_array() && r->size() == 2) {
+					lo = (*r)[0].get<double>();
+					hi = (*r)[1].get<double>();
+				}
+			};
+			range("price_range", d.price_min, d.price_max);
+			range("wage_range", d.wage_min, d.wage_max);
+			range("rent_range", d.rent_min, d.rent_max);
+		}
+	}
 	auto offers = j.find("offerings");
 	if (offers == j.end() || !offers->is_object()) {
 		if (err) *err = "city data needs an offerings table";
@@ -184,6 +221,12 @@ bool parse_city_data(const std::string &text, CityData &out, std::string *err) {
 		of.pantry = num(o, "pantry", 0.0);
 		of.pantry_use = num(o, "pantry_use", 0.0);
 		of.price = num(o, "price", 0.0);
+		of.unlocks = o.value("unlocks", "");
+		of.cost = num(o, "cost", 0.0);
+		if (!of.unlocks.empty() && of.unlocks != "bike" && of.unlocks != "car") {
+			if (err) *err = "offering " + of.id + ": unlocks must be bike or car";
+			return false;
+		}
 		if (auto m = o.find("minutes"); m != o.end() && m->is_array() && m->size() == 2) {
 			of.min_minutes = (*m)[0].get<int>();
 			of.max_minutes = std::max(of.min_minutes, (*m)[1].get<int>());
@@ -228,6 +271,8 @@ bool parse_city_data(const std::string &text, CityData &out, std::string *err) {
 		t.slots = static_cast<int>(num(b, "slots", 0));
 		t.desks = static_cast<int>(num(b, "desks", 0));
 		t.wage = num(b, "wage", 0.0);
+		t.revenue = num(b, "revenue", t.kind == BuildingKind::Office ? 1.5 * t.wage : 0.0);
+		t.value = num(b, "value", 0.0);
 		if (auto w = b.find("weekday"); w != b.end() && !parse_day(*w, t.weekday, err, t.id + " weekday")) return false;
 		if (auto w = b.find("weekend"); w != b.end() && !parse_day(*w, t.weekend, err, t.id + " weekend")) return false;
 		t.min_staff = std::max(1, static_cast<int>(num(b, "min_staff", 1)));

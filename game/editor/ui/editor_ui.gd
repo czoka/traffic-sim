@@ -18,6 +18,7 @@ const TOOLS := [
 	["fence", "Fence", "E"],
 	["bridge", "Bridge / tunnel", "B"],
 	["building", "Building", "H"],
+	["centre", "City centre", "T"],
 ]
 const PANEL_BG := Color(0.08, 0.09, 0.1, 0.92)
 
@@ -43,6 +44,11 @@ var _autosave: Label
 var _problems_panel: PanelContainer
 var _problems_list: ItemList
 var _problems: Array = []
+var _market_button: Button
+var _market_panel: PanelContainer
+var _market_list: ItemList
+var _market: Array = []
+var _market_time := 0.0
 var _toast: Label
 var _toast_time := 0.0
 
@@ -70,6 +76,7 @@ func _ready() -> void:
 	_build_bottom_bar(root)
 	_build_sim_bar(root)
 	_build_problems(root)
+	_build_market(root)
 	_toast = Label.new()
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_toast.position = Vector2(-240, 14)
@@ -185,6 +192,7 @@ func _build_palette(root: Control) -> void:
 	demos.get_popup().add_item("People city (M4 gate: 2,000 vehicles, 1,000 people)", 8)
 	demos.get_popup().add_item("City town (M5: homes, shops, offices, residents)", 9)
 	demos.get_popup().add_item("City week (M5 gate: 5,000 residents)", 10)
+	demos.get_popup().add_item("City market (M6: money, rent, owners, cars and bikes)", 12)
 	demos.get_popup().add_item("Empty map", 11)
 	demos.get_popup().add_separator()
 	demos.get_popup().add_item("POC ring benchmark", 2)
@@ -224,6 +232,8 @@ func _on_example(id: int) -> void:
 			editor.load_demo("city_week")
 		11:
 			editor.load_demo("empty")
+		12:
+			editor.load_demo("city_market")
 
 
 func _confirm_new() -> void:
@@ -304,6 +314,11 @@ func _build_bottom_bar(root: Control) -> void:
 	_scale = ScaleBar.new()
 	bar.add_child(_scale)
 	_problems_button = _button("No problems", _toggle_problems, bar)
+	_market_button = _button("Market", func() -> void:
+		_market_panel.visible = not _market_panel.visible
+		_problems_panel.visible = false
+		_refresh_market(), bar)
+	_market_button.tooltip_text = "Buildings for sale while the city sim runs"
 	_autosave = Label.new()
 	_autosave.add_theme_color_override("font_color", Color(0.6, 0.62, 0.65))
 	_autosave.text = "Not saved yet"
@@ -328,6 +343,7 @@ func _toggle_connectors() -> void:
 
 func _toggle_problems() -> void:
 	_problems_panel.visible = not _problems_panel.visible
+	_market_panel.visible = false
 
 
 # --- Simulation bar ------------------------------------------------------------------
@@ -461,6 +477,13 @@ func refresh_sim(st: Dictionary) -> void:
 		if st.behind:
 			text += " (CPU-limited)"
 	_sim_label.text = text
+	var cs: Dictionary = editor.sim.city
+	if not cs.is_empty():
+		_market_button.text = "Market (%d)" % int(cs.listed)
+	_market_time += 1.0
+	if _market_time >= 10.0:
+		_market_time = 0.0
+		_refresh_market()
 	_sim_label.tooltip_text = "Sim %.0f µs per tick, %.1f ms per frame · %d lane changes · %d re-routes · longest stop %.0f s · %d cars taken off (stuck)\n%d cars, %d taxis, %d buses, %d coaches, %d bikes · %d bus runs, %d stops served, %d coach calls · %d parkings (%d found no bay) · %d right turns on red" % [
 		st.tick_us, st.frame_sim_ms, st.lane_changes, st.reroutes, st.max_stopped, st.removed_stuck,
 		st.cars, st.taxis, st.buses, st.coaches, st.bikes, st.bus_runs, st.bus_stops_served, st.coach_calls,
@@ -472,6 +495,13 @@ func refresh_sim(st: Dictionary) -> void:
 			c.employed, c.employed_outside, c.unemployed, c.shifts, c.late_shifts, c.unfilled_shifts, c.open, c.businesses,
 			c.closed_unexpectedly, c.late_openings, c.meals_out, c.home_meals, c.groceries, c.immigrants, c.mean_hunger,
 			c.mean_energy, c.mean_money]
+		_sim_label.tooltip_text += "\nMonth %d, day %d · city income %s, spending %s this month (%s / %s in all): rent %s, sales %s, passes and fares %s, buildings sold %s; wages %s, goods %s, buildings bought %s\nOwnership: %d city, %d NPC, %d listed, %d homes owned by residents · %d sold, %d bought · %d evictions, %d households in debt · %d bikes, %d cars, %d bus passes" % [
+			int(c.month) + 1, int(c.day_of_month) + 1, Inspector.money(c.month_income), Inspector.money(c.month_spending),
+			Inspector.money(c.treasury_income), Inspector.money(c.treasury_spending), Inspector.money(c.income_rent),
+			Inspector.money(c.income_sales), Inspector.money(c.income_passes), Inspector.money(c.income_buildings),
+			Inspector.money(c.spending_wages), Inspector.money(c.spending_goods), Inspector.money(c.spending_buildings),
+			c.city_owned, c.npc_owned, c.listed, c.homes_owned, c.buildings_sold, c.buildings_bought, c.evictions, c.in_debt,
+			c.bikes, c.cars, c.passes]
 	if int(st.trips) > 0:
 		_sim_label.tooltip_text += "\n%d people trips: %d walk, %d bus, %d bike, %d car, %d coach · %d arrived\n%d boarded, %d got off, %d left behind, mean wait at stops %.0f s · %d crossings, mean wait at the kerb %.1f s, %d times cars gave way" % [
 			st.trips, st.trips_walk, st.trips_bus, st.trips_bike, st.trips_car, st.trips_coach, st.people_arrived,
@@ -512,6 +542,52 @@ func _on_problem_selected(i: int) -> void:
 			editor.select("segments", p.segments[k], true)
 	elif not p.nodes.is_empty():
 		editor.select("nodes", p.nodes[0], false)
+
+
+func _build_market(root: Control) -> void:
+	_market_panel = PanelContainer.new()
+	_market_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_market_panel.offset_left = -520
+	_market_panel.offset_top = -344
+	_market_panel.offset_right = -12
+	_market_panel.offset_bottom = -100
+	_market_panel.add_theme_stylebox_override("panel", _panel_style(PANEL_BG))
+	_market_panel.visible = false
+	root.add_child(_market_panel)
+	var box := VBoxContainer.new()
+	_market_panel.add_child(box)
+	box.add_child(section("Market"))
+	_market_list = ItemList.new()
+	_market_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_market_list.focus_mode = Control.FOCUS_NONE
+	_market_list.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < _market.size():
+			var l: Dictionary = _market[i]
+			if l.has("pos"):
+				editor.focus(l.pos)
+			editor.select("buildings", int(l.id), false))
+	box.add_child(_market_list)
+	var hint := Label.new()
+	hint.text = "Click a listing to select it; buy it from the inspector."
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override("font_color", Color(0.7, 0.72, 0.76))
+	box.add_child(hint)
+
+
+func _refresh_market() -> void:
+	if _market_panel == null or not _market_panel.visible:
+		return
+	_market = editor.road.sim_market()
+	_market_list.clear()
+	if _market.is_empty():
+		_market_list.add_item("Nothing for sale (press Play to run the city)")
+		_market_list.set_item_disabled(0, true)
+		_market = []
+		return
+	for l in _market:
+		var name := String(l.label) + ((" · " + String(l.name)) if String(l.name) != "" else " %d" % l.id)
+		_market_list.add_item("%s%s · asking %s (worth %s) · listed %d day%s" % [name, " (yours)" if l.by_city else "",
+			Inspector.money(l.asking), Inspector.money(l.value), l.days, "" if int(l.days) == 1 else "s"])
 
 
 # --- Refresh ------------------------------------------------------------------------

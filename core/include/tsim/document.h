@@ -148,6 +148,8 @@ public:
 	uint32_t add_building(const std::string &type, Vec2 pos, Vec2 dir, int level, const std::string &name = {});
 	void set_building(const Building &b);
 	void remove_building(uint32_t id);
+	// M6: place, move or remove (nullopt) the city centre marker.
+	void set_city_centre(const std::optional<Vec2> &c);
 
 	// Fresh lane IDs for a profile template.
 	Profile instantiate(const Profile &proto);
@@ -173,6 +175,8 @@ private:
 		std::vector<NodeChange> nodes;
 		std::vector<SegmentChange> segments;
 		std::vector<BuildingChange> buildings;
+		bool centre_changed = false;
+		std::optional<Vec2> centre_before, centre_after;
 	};
 
 	PointRef footpath_ref(const PointRef &p, SegmentKind kind) const;
@@ -195,6 +199,8 @@ private:
 	};
 
 	RoadMap map_;
+	bool open_centre_ = false; // the centre marker changed in the open transaction
+	std::optional<Vec2> open_centre_before_;
 	int depth_ = 0;
 	Change open_;
 	std::set<NodeId> open_nodes_;

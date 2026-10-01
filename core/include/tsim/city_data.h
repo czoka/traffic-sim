@@ -25,6 +25,8 @@ struct Offering {
 	double pantry_use = 0.0; // portions taken
 	int min_minutes = 15, max_minutes = 15;
 	double price = 0.0; // credits
+	std::string unlocks; // M6: "bike" or "car" (buying a vehicle)
+	double cost = 0.0; // M6: what the shop pays its suppliers per sale (that money leaves the map)
 };
 
 struct ShiftSpec {
@@ -50,6 +52,8 @@ struct BuildingType {
 	int slots = 0; // customers at once (shops)
 	int desks = 0; // offices
 	double wage = 0.0; // credits per hour
+	double revenue = 0.0; // offices: credits earned per staff hour (clients are outside the map)
+	double value = 0.0; // what a buyer pays at least (0: from the type's prices)
 	DayPlan weekday, weekend;
 	int min_staff = 1;
 	std::string parking = "none"; // none, street, own, garage
@@ -84,6 +88,26 @@ struct CityData {
 	int immigrants_per_coach = 6; // households, at most
 	int shoppers_per_coach = 4;
 	int visitor_early_minutes = 120;
+	// M6: the economy.
+	int month_days = 30; // rent is due on day 1 of each month
+	double coach_fare = 12.0; // each way
+	double car_cost_per_km = 0.25; // fuel and wear
+	double outside_drive_km = 15.0; // a trip outside the map by car, beyond the edge
+	double bus_pass = 40.0; // a month of city buses
+	double day_pass_share = 0.1; // a visitor's day pass, of the monthly price
+	double minutes_per_credit = 0.25; // what money is worth in travel time (mode choice)
+	double bike_speed = 4.5; // m/s, for trip estimates
+	double parking_minutes = 2.0; // getting in and out of the car park
+	int eviction_months = 2; // in debt at that many rent days in a row
+	double centre_factor = 1.0, edge_factor = 0.5, edge_distance = 3000.0; // location factor of prices
+	double value_years = 10.0; // buyers pay this many years of net income
+	double sale_rate = 0.1; // chance per day that a fairly priced listing sells
+	double npc_list_chance = 0.05; // per month and NPC-owned building
+	int listing_days = 60; // an NPC listing is taken down after this
+	double price_step = 0.05, wage_step = 0.04, rent_step = 0.03; // NPC owners' monthly moves
+	double price_min = 0.6, price_max = 2.0; // of the default prices
+	double wage_min = 0.8, wage_max = 1.6;
+	double rent_min = 0.5, rent_max = 2.0;
 	std::vector<Offering> offerings;
 	std::vector<BuildingType> types;
 
