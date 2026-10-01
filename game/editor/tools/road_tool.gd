@@ -111,8 +111,7 @@ func draw(o: EditorOverlay) -> void:
 		o.draw_polyline(pts, EditorOverlay.SELECT, o.px(2))
 		var a: Vector2 = pts[pts.size() - 2]
 		var b: Vector2 = pts[pts.size() - 1]
-		var font := ThemeDB.fallback_font
-		o.text(font, b + Vector2(o.px(12), -o.px(12)), readout(a, b), 14, Color.WHITE)
+		o.text(b + Vector2(o.px(12), -o.px(12)), readout(a, b), 14, Color.WHITE)
 	for p in _points:
 		o.draw_circle(p.pos, o.px(4), EditorOverlay.SELECT)
 	o.draw_snap(_cursor)

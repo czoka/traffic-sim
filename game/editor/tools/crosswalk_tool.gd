@@ -124,6 +124,5 @@ func draw(o: EditorOverlay) -> void:
 	var half: float = _hover.width * 0.5
 	var col := EditorOverlay.SELECT if _hover.end < 0 else EditorOverlay.WARNING
 	o.draw_line(_hover.pos - side * half, _hover.pos + side * half, col, o.px(4))
-	var font := ThemeDB.fallback_font
 	var label := "%s, mid-block" % kind if _hover.end < 0 else "%s, junction leg" % kind
-	o.text(font, _hover.pos + side * (half + o.px(8)), label, 13, col)
+	o.text(_hover.pos + side * (half + o.px(8)), label, 13, col)

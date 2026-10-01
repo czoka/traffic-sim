@@ -340,7 +340,7 @@ func _preset_params(preset_name: String) -> Dictionary:
 # --- Snapping ----------------------------------------------------------------------
 
 func pick_radius() -> float:
-	return PICK_PIXELS / camera.zoom.x
+	return PICK_PIXELS * EditorOverlay.ui_scale_for(get_viewport_rect().size) / camera.zoom.x
 
 
 func mouse_world() -> Vector2:
