@@ -620,4 +620,49 @@ void build_people_town(Document &doc) {
 	doc.commit();
 }
 
+void build_people_city(Document &doc, int cols, int rows) {
+	build_test_grid(doc, cols, rows, 120.0);
+	doc.begin("People city");
+	std::vector<NodeId> edges;
+	for (const auto &kv : doc.map().nodes()) {
+		if (kv.second.spawner.enabled) edges.push_back(kv.first);
+	}
+	for (NodeId n : edges) {
+		Spawner sp = doc.map().node(n)->spawner;
+		sp.people = 900.0;
+		doc.set_spawner(n, sp);
+	}
+	// Avenue junctions in every other column get signals with walk phases.
+	std::vector<NodeId> signals;
+	for (const auto &kv : doc.map().nodes()) {
+		const RoadNode &n = kv.second;
+		const int i = static_cast<int>(n.pos.x / 120.0 + 0.5), j = static_cast<int>(n.pos.y / 120.0 + 0.5);
+		if (n.pos.x < -1.0 || n.pos.y < -1.0 || i >= cols || j >= rows) continue;
+		if (std::fabs(n.pos.x - i * 120.0) > 1.0 || std::fabs(n.pos.y - j * 120.0) > 1.0) continue;
+		if (j % 3 == 1 && i % 2 == 0 && doc.map().segments_at(kv.first).size() == 4) signals.push_back(kv.first);
+	}
+	for (NodeId n : signals) {
+		for (SegmentId s : doc.map().segments_at(n)) {
+			RoadSegment seg = *doc.map().segment(s);
+			const int end = seg.from == n ? 0 : 1;
+			EndRules r = seg.ends[end];
+			r.crossing.kind = CrossingKind::Signal;
+			doc.set_end_rules(s, end, r);
+		}
+		doc.set_junction_control(n, JunctionControl::Signal, {});
+		doc.set_signal_plan(n, default_signal_plan(doc.map(), n));
+	}
+	// Zebras mid-block on some two-way streets.
+	std::vector<SegmentId> streets;
+	for (const auto &kv : doc.map().segments()) {
+		const RoadSegment &seg = kv.second;
+		const Vec2 a = doc.map().node(seg.from)->pos, b = doc.map().node(seg.to)->pos;
+		if (std::fabs(a.x - b.x) < 1.0 && std::fabs(a.y - b.y) > 100.0 && static_cast<int>(a.x / 120.0 + a.y / 120.0) % 3 == 0) {
+			streets.push_back(kv.first);
+		}
+	}
+	for (SegmentId s : streets) doc.add_crossing(s, 0.5, CrossingKind::Zebra, false, false);
+	doc.commit();
+}
+
 } // namespace tsim

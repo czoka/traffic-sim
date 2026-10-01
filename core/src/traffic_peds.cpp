@@ -352,12 +352,9 @@ bool Traffic::lane_clear_for(int32_t lane, double s0, double s1, double ped_time
 	auto vehicle_ok = [&](const Vehicle &o, double dist_to_s0) {
 		if (dist_to_s0 < 0.0) return false; // already over the crossing
 		if (dist_to_s0 > 80.0) return true;
-		if (zebra) {
-			// It can stop comfortably, or has stopped.
-			if (o.v < 0.5) return true;
-			return dist_to_s0 > o.v * o.v / (2.0 * o.drv.b) + 2.0;
-		}
-		if (o.v < 0.5) return dist_to_s0 > 2.0;
+		// A stopped car waits for anyone in front of it.
+		if (o.v < 0.5) return true;
+		if (zebra) return dist_to_s0 > o.v * o.v / (2.0 * o.drv.b) + 2.0; // it can stop comfortably
 		return dist_to_s0 / o.v > ped_time + 1.0;
 	};
 	// Vehicles on the lane: on the span, or the first one before it.
@@ -396,13 +393,15 @@ bool Traffic::cross_ok(const Pedestrian &p, int32_t edge, int32_t from) const {
 	const double lo = off, hi = off + e.length;
 	const bool forward = from == e.a;
 	const double waited = p.wait_since ? static_cast<double>(tick_ - p.wait_since) * config_.dt : 0.0;
-	const double hurry = waited > 60.0 ? 0.6 : 1.0; // after a long wait, a smaller gap will do
+	// After a long wait people step out in front of any car that can still stop
+	// comfortably, as on a zebra (cars give way to anyone on a crossing).
+	const bool bold = c.kind == CrossingKind::Zebra || waited > 60.0;
 	for (const CrossingSpan &sp : c.spans) {
 		if (sp.t1 < lo || sp.t0 > hi) continue;
 		// Time to walk past the far side of this lane.
 		const double far = forward ? sp.t1 - lo : hi - sp.t0;
 		const double t = std::max(0.0, far) / p.speed + 1.5;
-		if (!lane_clear_for(sp.lane, sp.s0, sp.s1, t * hurry, c.kind == CrossingKind::Zebra)) return false;
+		if (!lane_clear_for(sp.lane, sp.s0, sp.s1, t, bold)) return false;
 	}
 	return true;
 }

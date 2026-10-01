@@ -33,6 +33,10 @@ void build_showcase(Document &doc);
 // overpass, a bus route, and people at every spawn point.
 void build_people_town(Document &doc);
 
+// M4 gate: the test grid at a larger size with people at every spawn point,
+// signals with walk phases on the avenues and zebras on some streets.
+void build_people_city(Document &doc, int cols, int rows);
+
 // Profile for a preset name (see profile_presets()); falls back to the first.
 Profile preset_profile(const char *name, RoadMap &map);
 

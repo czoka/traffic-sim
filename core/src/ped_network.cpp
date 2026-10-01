@@ -514,6 +514,9 @@ struct Builder {
 					const double v = cross(a - p, r) / den;
 					if (t < 0.0 || t > 1.0 || v < 0.0 || v > 1.0) continue;
 					const double s_hit = l.cum[k] + (l.cum[k + 1] - l.cum[k]) * t;
+					// At a junction leg the line runs along the stop line: the connectors
+					// carry it, so a car waiting at the line is not on it.
+					if (c.end >= 0 && l.kind == NetLaneKind::Road && (s_hit < 0.25 || s_hit > l.length - 0.25)) break;
 					const double t_hit = v * (len + 1.0) - 0.5;
 					CrossingSpan sp;
 					sp.lane = li;

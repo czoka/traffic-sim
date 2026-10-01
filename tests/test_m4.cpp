@@ -12,6 +12,7 @@
 #include "tsim/validation.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -497,8 +498,11 @@ TEST_CASE("people sim: same seed, same hash; carried over when the map changes")
 		w.run_for(600.0);
 		return w.t().state_hash();
 	};
-	CHECK(run(5) == run(5));
-	CHECK(run(5) != run(6));
+	const uint64_t a = run(42);
+	CHECK(a == run(42));
+	CHECK(run(43) != a);
+	std::printf("M4 golden: %016llx (expected 7fbf36952357709f)\n", static_cast<unsigned long long>(a));
+	CHECK(a == 0x7fbf36952357709full); // same on every platform, like the M2 and M3 goldens
 	World w;
 	build_people_town(w.doc);
 	w.sync();
@@ -512,4 +516,73 @@ TEST_CASE("people sim: same seed, same hash; carried over when the map changes")
 	CHECK(w.t().pedestrians().size() >= before * 9 / 10);
 	w.run_for(300.0);
 	CHECK(w.t().stats().removed_stuck == 0);
+}
+
+TEST_CASE("M4 gate: 2,000 vehicles and 1,000 people on the people city") {
+	World w;
+	build_people_city(w.doc, 12, 12);
+	CHECK(w.errors() == 0);
+	w.sync();
+	Traffic &t = w.t();
+	t.config().max_vehicles = 2000;
+	t.config().max_pedestrians = 1000;
+	t.config().demand = 3.0;
+	t.reset(2026);
+	// Warm up until both caps are reached (at most 40 sim minutes).
+	int warm = 0;
+	for (; warm < 24000; ++warm) {
+		t.tick();
+		const TrafficStats st = t.stats();
+		if (st.vehicles >= 1990 && st.pedestrians + st.riding >= 990) break;
+	}
+	TrafficStats st = t.stats();
+	std::printf("M4 gate: %zu lanes, %zu junctions, %zu crossings, %zu ped nodes; full after %.0f s: %u vehicles, %u people\n",
+			w.net().lanes.size(), w.net().junctions.size(), w.net().ped.crossings.size(), w.net().ped.nodes.size(),
+			warm * 0.1, st.vehicles, st.pedestrians + st.riding);
+	CHECK(st.vehicles >= 1990);
+	CHECK(st.pedestrians + st.riding >= 990);
+	const int ticks = 3000;
+	const auto t0 = std::chrono::steady_clock::now();
+	uint32_t min_veh = ~0u, min_ped = ~0u;
+	for (int k = 0; k < ticks; ++k) {
+		t.tick();
+		if (k % 100 == 0) {
+			const TrafficStats s = t.stats();
+			min_veh = std::min(min_veh, s.vehicles);
+			min_ped = std::min(min_ped, s.pedestrians + s.riding);
+		}
+	}
+	const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count() / ticks;
+	st = t.stats();
+	std::printf("M4 gate: %.0f us/tick over 5 sim minutes (at least %u vehicles, %u people); %llu people arrived, "
+				"%llu crossings, mean kerb wait %.1f s, %llu cars gave way, %llu removed as stuck\n",
+			us, min_veh, min_ped, (unsigned long long)st.people_arrived, (unsigned long long)st.crossings,
+			st.mean_crossing_wait, (unsigned long long)st.cars_yielded, (unsigned long long)st.removed_stuck);
+	double longest = 0.0;
+	for (const Pedestrian &p : t.pedestrians()) {
+		if (p.state != PedState::WaitingToCross) continue;
+		const double wt = t.ped_info(p.id).waited;
+		longest = std::max(longest, wt);
+		if (wt > 120.0) {
+			const PedEdge &e = w.net().ped.edges[static_cast<size_t>(p.edge)];
+			const NetCrossing &c = w.net().ped.crossings[static_cast<size_t>(e.crossing)];
+			std::printf("  waiting %.0f s at crossing %d (%s%s, seg %u end %d, junction %d, %zu spans, light %d)\n", wt,
+					e.crossing, c.unmarked ? "unmarked " : "", crossing_kind_name(c.kind), c.seg, c.end, c.junction,
+					c.spans.size(), static_cast<int>(t.crossing_walk_light(e.crossing)));
+			for (const CrossingSpan &sp : c.spans) {
+				const NetLane &l = w.net().lanes[static_cast<size_t>(sp.lane)];
+				std::printf("    lane %d kind %d len %.1f s %.1f-%.1f:", sp.lane, static_cast<int>(l.kind), l.length, sp.s0, sp.s1);
+				for (const Vehicle &v : t.vehicles()) {
+					if (v.lane == sp.lane) std::printf(" [%u s=%.1f v=%.1f %s]", v.id, v.s, v.v, vehicle_state_name(v.state));
+				}
+				std::printf("\n");
+			}
+		}
+	}
+	std::printf("M4 gate: longest kerb wait now %.0f s\n", longest);
+	CHECK(min_veh >= 1800);
+	CHECK(min_ped >= 900);
+	CHECK(st.people_arrived > 100); // the grid is 1.4 km across: most walks take over 10 minutes
+	CHECK(longest < 120.0);
+	CHECK(st.removed_stuck < 20);
 }

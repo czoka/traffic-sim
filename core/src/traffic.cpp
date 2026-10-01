@@ -819,12 +819,17 @@ void Traffic::leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &
 	// People on (or about to step onto) a crossing over a lane at `base` metres
 	// ahead of the lane start, measured from the car's front.
 	const bool peds = crossings_live_ && n.ped.lane_crossings.size() == n.lanes.size();
+	double clear_d0 = kInf, clear_d1 = kInf; // the nearest crossing ahead, to keep clear
 	auto crossings_on = [&](int32_t ln, double base) {
 		for (int32_t ci : n.ped.lane_crossings[static_cast<size_t>(ln)]) {
 			for (const CrossingSpan &sp : n.ped.crossings[static_cast<size_t>(ci)].spans) {
 				if (sp.lane != ln) continue;
 				const double d = base + sp.s0;
 				if (d < 0.0) continue; // already over the line
+				if (d < clear_d0) {
+					clear_d0 = d;
+					clear_d1 = base + sp.s1;
+				}
 				const int b = crossing_blocks(ci, ln, v);
 				if (b == 2 && d < v.v * v.v / (2.0 * v.drv.b) + 1.0) continue; // can't stop comfortably: goes on
 				if (b != 0) take(d - 0.5 + v.drv.s0, 0.0, kPedestrians);
@@ -832,69 +837,76 @@ void Traffic::leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &
 		}
 	};
 	if (peds) crossings_on(lane, -s);
-	// Car ahead on the same lane.
-	const std::vector<int32_t> &list = cars_[static_cast<size_t>(lane)];
-	int32_t ahead = -1;
-	if (lane == v.lane && s == v.s && !v.off_lane) {
-		if (v.list_pos > 0) ahead = list[static_cast<size_t>(v.list_pos - 1)];
-	} else {
-		for (int32_t k : list) {
-			const Vehicle &o = veh_[static_cast<size_t>(k)];
-			if (o.id == v.id) continue;
-			if (o.s > s || (o.s == s && o.id < v.id)) ahead = k;
-			else break;
-		}
-	}
-	if (ahead >= 0) {
-		const Vehicle &o = veh_[static_cast<size_t>(ahead)];
-		take(o.s - o.drv.length - s, o.v, o.id);
-		return;
-	}
-	if (has) return;
-	double dist = n.lanes[static_cast<size_t>(lane)].length - s;
-	int32_t cur = lane;
-	size_t r = ri;
-	for (int hop = 0; hop < 16 && dist < config_.lookahead; ++hop) {
-		const NetLane &l = n.lanes[static_cast<size_t>(cur)];
-		int32_t nx;
-		if (is_road(l)) {
-			if (at_route_end(v, cur, r)) return; // drives off the map
-			nx = next_connector(v, cur, r);
-			if (nx < 0) {
-				take(dist - 0.5 + v.drv.s0, 0.0, kNoId); // end of lane: stop at the line
-				return;
-			}
-			const NetLane &c = n.lanes[static_cast<size_t>(nx)];
-			if (c.junction >= 0 && n.junctions[static_cast<size_t>(c.junction)].arbitrated && v.grant != nx) {
-				take(dist - 0.5 + v.drv.s0, 0.0, kNoId); // no grant: stop at the line
-				return;
-			}
-			// Cars that just turned off into another connector from this lane.
-			for (int32_t sib : l.next) {
-				if (sib == nx || cars_[static_cast<size_t>(sib)].empty()) continue;
-				const Vehicle &o = veh_[static_cast<size_t>(cars_[static_cast<size_t>(sib)].back())];
-				const double rear = o.s - o.drv.length;
-				if (rear < 1.0 && o.id != v.id) take(dist + rear, o.v, o.id);
-			}
-			++r;
+	[&]() {
+		// Car ahead on the same lane.
+		const std::vector<int32_t> &list = cars_[static_cast<size_t>(lane)];
+		int32_t ahead = -1;
+		if (lane == v.lane && s == v.s && !v.off_lane) {
+			if (v.list_pos > 0) ahead = list[static_cast<size_t>(v.list_pos - 1)];
 		} else {
-			nx = l.next.empty() ? -1 : l.next[0];
-			if (nx < 0) return;
-			if (wp_on(nx, r)) take(dist + wp->s + v.drv.s0, 0.0, kNoId);
+			for (int32_t k : list) {
+				const Vehicle &o = veh_[static_cast<size_t>(k)];
+				if (o.id == v.id) continue;
+				if (o.s > s || (o.s == s && o.id < v.id)) ahead = k;
+				else break;
+			}
 		}
-		const double lim = desired_speed(v, nx);
-		v0_cap = std::min(v0_cap, std::sqrt(lim * lim + 2.0 * v.drv.b * (dist > 0.0 ? dist : 0.0)));
-		if (peds) crossings_on(nx, dist);
-		const std::vector<int32_t> &nl = cars_[static_cast<size_t>(nx)];
-		for (size_t k = nl.size(); k-- > 0;) {
-			const Vehicle &o = veh_[static_cast<size_t>(nl[k])];
-			if (o.id == v.id) continue;
-			take(dist + o.s - o.drv.length, o.v, o.id);
+		if (ahead >= 0) {
+			const Vehicle &o = veh_[static_cast<size_t>(ahead)];
+			take(o.s - o.drv.length - s, o.v, o.id);
 			return;
 		}
 		if (has) return;
-		dist += n.lanes[static_cast<size_t>(nx)].length;
-		cur = nx;
+		double dist = n.lanes[static_cast<size_t>(lane)].length - s;
+		int32_t cur = lane;
+		size_t r = ri;
+		for (int hop = 0; hop < 16 && dist < config_.lookahead; ++hop) {
+			const NetLane &l = n.lanes[static_cast<size_t>(cur)];
+			int32_t nx;
+			if (is_road(l)) {
+				if (at_route_end(v, cur, r)) return; // drives off the map
+				nx = next_connector(v, cur, r);
+				if (nx < 0) {
+					take(dist - 0.5 + v.drv.s0, 0.0, kNoId); // end of lane: stop at the line
+					return;
+				}
+				const NetLane &c = n.lanes[static_cast<size_t>(nx)];
+				if (c.junction >= 0 && n.junctions[static_cast<size_t>(c.junction)].arbitrated && v.grant != nx) {
+					take(dist - 0.5 + v.drv.s0, 0.0, kNoId); // no grant: stop at the line
+					return;
+				}
+				// Cars that just turned off into another connector from this lane.
+				for (int32_t sib : l.next) {
+					if (sib == nx || cars_[static_cast<size_t>(sib)].empty()) continue;
+					const Vehicle &o = veh_[static_cast<size_t>(cars_[static_cast<size_t>(sib)].back())];
+					const double rear = o.s - o.drv.length;
+					if (rear < 1.0 && o.id != v.id) take(dist + rear, o.v, o.id);
+				}
+				++r;
+			} else {
+				nx = l.next.empty() ? -1 : l.next[0];
+				if (nx < 0) return;
+				if (wp_on(nx, r)) take(dist + wp->s + v.drv.s0, 0.0, kNoId);
+			}
+			const double lim = desired_speed(v, nx);
+			v0_cap = std::min(v0_cap, std::sqrt(lim * lim + 2.0 * v.drv.b * (dist > 0.0 ? dist : 0.0)));
+			if (peds) crossings_on(nx, dist);
+			const std::vector<int32_t> &nl = cars_[static_cast<size_t>(nx)];
+			for (size_t k = nl.size(); k-- > 0;) {
+				const Vehicle &o = veh_[static_cast<size_t>(nl[k])];
+				if (o.id == v.id) continue;
+				take(dist + o.s - o.drv.length, o.v, o.id);
+				return;
+			}
+			if (has) return;
+			dist += n.lanes[static_cast<size_t>(nx)].length;
+			cur = nx;
+		}
+	}();
+	// Don't stop on a crossing: with a slow car ahead and no room after it, wait before it.
+	if (clear_d0 < kInf && has && who != kNoId && who != kPedestrians && lead_v < 3.0 && gap > clear_d0 &&
+			gap < clear_d1 + v.drv.length + v.drv.s0 && clear_d0 > v.v * v.v / (2.0 * v.drv.b)) {
+		take(clear_d0 - 0.5 + v.drv.s0, 0.0, kPedestrians);
 	}
 }
 
