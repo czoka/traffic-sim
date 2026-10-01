@@ -58,13 +58,6 @@ PointRef free_point(double x, double y) {
 	return p;
 }
 
-PointRef node_point(const Document &doc, NodeId n) {
-	PointRef p;
-	p.node = n;
-	p.pos = doc.map().node(n)->pos;
-	return p;
-}
-
 Profile preset(const char *name) {
 	RoadMap scratch;
 	return preset_profile(name, scratch);

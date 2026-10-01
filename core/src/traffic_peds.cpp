@@ -715,7 +715,6 @@ void Traffic::ped_arrived(size_t i) {
 		if (std::find(d.entries.begin(), d.entries.end(), at) != d.entries.end()) {
 			p.done = true;
 			++stats_.people_arrived;
-			trip_time_sum_ += 0.0;
 			return;
 		}
 		// Off the planned path (after a ride, say): walk on to the destination.
