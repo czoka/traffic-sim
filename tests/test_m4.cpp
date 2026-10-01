@@ -497,8 +497,8 @@ TEST_CASE("people sim: same seed, same hash; carried over when the map changes")
 	const uint64_t a = run(42);
 	CHECK(a == run(42));
 	CHECK(run(43) != a);
-	std::printf("M4 golden: %016llx (expected 7fbf36952357709f)\n", static_cast<unsigned long long>(a));
-	CHECK(a == 0x7fbf36952357709full); // same on every platform, like the M2 and M3 goldens
+	std::printf("M4 golden: %016llx (expected c68f070859d751bb)\n", static_cast<unsigned long long>(a));
+	CHECK(a == 0xc68f070859d751bbull); // same on every platform, like the M2 and M3 goldens
 	World w;
 	build_people_town(w.doc);
 	w.sync();

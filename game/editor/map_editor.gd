@@ -99,8 +99,20 @@ func _ready() -> void:
 	_apply_cmdline()
 
 
+## Command-line user args; in the browser also the page's query string, so
+## index.html?example=showcase&view=-222,-25,20 works like --example=... --view=...
+static func user_args() -> PackedStringArray:
+	var args := OS.get_cmdline_user_args()
+	if OS.has_feature("web"):
+		var query = JavaScriptBridge.eval("window.location.search", true)
+		if typeof(query) == TYPE_STRING:
+			for part in (query as String).trim_prefix("?").split("&", false):
+				args.append("--" + part.uri_decode())
+	return args
+
+
 func _wants_ring_benchmark() -> bool:
-	if OS.get_cmdline_user_args().has("--bench") or OS.get_cmdline_user_args().has("--bench-quick"):
+	if user_args().has("--bench") or user_args().has("--bench-quick"):
 		return true
 	if OS.has_feature("web"):
 		var query = JavaScriptBridge.eval("window.location.search", true)
@@ -109,7 +121,7 @@ func _wants_ring_benchmark() -> bool:
 
 
 func _load_startup_map() -> void:
-	var args := OS.get_cmdline_user_args()
+	var args := user_args()
 	if args.has("--grid"):
 		road.load_example("grid")
 		return
@@ -134,7 +146,7 @@ func _load_startup_map() -> void:
 
 
 func _apply_cmdline() -> void:
-	for arg in OS.get_cmdline_user_args():
+	for arg in user_args():
 		if arg.begins_with("--view="):
 			var v := arg.trim_prefix("--view=").split_floats(",")
 			if v.size() == 3:

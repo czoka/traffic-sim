@@ -554,8 +554,8 @@ TEST_CASE("M3 determinism: the showcase replays bit for bit") {
 	const uint64_t a = run(42), b = run(42);
 	CHECK(a == b);
 	CHECK(run(43) != a);
-	std::printf("M3 golden: %016llx (expected 69e85f1801f703bf)\n", static_cast<unsigned long long>(a));
-	CHECK(a == 0x69e85f1801f703bfull); // same on every platform, like the M2 golden
+	std::printf("M3 golden: %016llx (expected a240e0db57f4b121)\n", static_cast<unsigned long long>(a));
+	CHECK(a == 0xa240e0db57f4b121ull); // same on every platform, like the M2 golden
 }
 
 TEST_CASE("M3 gate: the showcase runs a full sim day") {
@@ -641,4 +641,122 @@ TEST_CASE("transit problems: unserved stops, broken routes, coach lines without 
 	// A depot is a proper road end: no "road ends here" warning.
 	w.geom.build(w.doc.map());
 	for (const Problem &p : validate(w.doc.map(), w.geom)) CHECK(p.code != "road_end");
+}
+
+TEST_CASE("jammed exit: cars wait inside the junction on green and clear it after the light changes") {
+	struct Result {
+		uint64_t box_waits = 0;
+		int caught_at_line = 0; // first at the line, exit full on green, then red before it got in
+		int released_on_red = 0; // left the waiting spot after its light turned red
+		int past_hold = 0; // a waiting car's front beyond its waiting spot
+		int overlaps = 0;
+		size_t east = 0, south = 0; // cars through the first junction
+	};
+	auto run = [](bool wait_in_box, Result &r) {
+		World w;
+		Document &doc = w.doc;
+		const Cross x = cross_roads(doc);
+		// A second signal 150 m east with a short east-west green: the eastbound
+		// exit of the first junction backs up into it.
+		const Profile p = preset("Street 1+1");
+		const SegmentId far = doc.add_road({ node_point(doc, x.e), free_point(450, 0) }, p, 0, 13.9).front();
+		const NodeId X = doc.map().segment(far)->to;
+		const SegmentId n2 = doc.add_road({ free_point(150, -150), node_point(doc, x.e) }, p, 0, 13.9).front();
+		const SegmentId s2 = doc.add_road({ node_point(doc, x.e), free_point(150, 150) }, p, 0, 13.9).front();
+		doc.set_spawner(x.e, Spawner{});
+		doc.set_spawner(doc.map().segment(n2)->from, spawner(0.0));
+		doc.set_spawner(doc.map().segment(s2)->to, spawner(0.0));
+		doc.set_spawner(X, spawner(0.0));
+		Spawner west = spawner(1000.0, false);
+		west.od = { { x.s, 0.0 }, { x.n, 0.0 }, { doc.map().segment(n2)->from, 0.0 }, { doc.map().segment(s2)->to, 0.0 } };
+		doc.set_spawner(x.w, west);
+		Spawner north = spawner(500.0, false);
+		north.od = { { X, 0.0 }, { x.w, 0.0 }, { doc.map().segment(n2)->from, 0.0 }, { doc.map().segment(s2)->to, 0.0 } };
+		doc.set_spawner(x.n, north);
+		auto plan_of = [](SegmentId ew_in, SegmentId ew_out, double ew, SegmentId ns_in, SegmentId ns_out, double ns) {
+			SignalPlan plan;
+			SignalPhase a, b;
+			a.green = ew;
+			a.moves = { { ew_in, ew_out, false } };
+			b.green = ns;
+			b.moves = { { ns_in, ns_out, false } };
+			plan.phases = { a, b };
+			return plan;
+		};
+		doc.set_junction_control(x.c, JunctionControl::Signal, {});
+		doc.set_signal_plan(x.c, plan_of(x.sw, x.se, 25.0, x.sn, x.ss, 25.0));
+		doc.set_junction_control(x.e, JunctionControl::Signal, {});
+		doc.set_signal_plan(x.e, plan_of(x.se, far, 6.0, n2, s2, 40.0));
+		w.sync();
+		Traffic &t = w.t();
+		t.config().wait_in_box = wait_in_box;
+		t.reset(5);
+		const Network &n = w.net();
+		const int32_t in_w = kerb_lane(n, x.sw, LaneDir::Forward);
+		const int32_t out_e = kerb_lane(n, x.se, LaneDir::Forward);
+		const int32_t out_s = kerb_lane(n, x.ss, LaneDir::Forward);
+		REQUIRE(in_w >= 0);
+		REQUIRE(out_e >= 0);
+		REQUIRE(out_s >= 0);
+		const NetJunction &junc = n.junctions[static_cast<size_t>(n.junction_at(x.c))];
+		auto light = [&](int32_t conn) {
+			return junc.light(n.lanes[static_cast<size_t>(conn)].movement, static_cast<int64_t>(t.tick_count()));
+		};
+		// Where a waiting car stops: short of its first conflict.
+		auto hold_of = [&](int32_t conn) {
+			const NetLane &c = n.lanes[static_cast<size_t>(conn)];
+			double first = c.length;
+			for (const Conflict &cf : c.conflicts) {
+				if (n.lanes[static_cast<size_t>(cf.other)].from != c.from) first = std::min(first, cf.s_self);
+			}
+			return first - t.config().box_margin;
+		};
+		std::set<VehicleId> east, south, exit_full, staged;
+		for (int i = 0; i < 12000; ++i) { // 20 minutes
+			t.tick();
+			std::set<VehicleId> now_staged;
+			bool lane_waits_in_box = false; // a car from the jammed approach already waits inside
+			for (const Vehicle &v : t.vehicles()) {
+				const int32_t c = v.grant >= 0 ? v.grant : v.held;
+				if (v.staged && c >= 0 && n.lanes[static_cast<size_t>(c)].from == in_w) lane_waits_in_box = true;
+			}
+			for (const Vehicle &v : t.vehicles()) {
+				if (v.lane == out_e) east.insert(v.id);
+				if (v.lane == out_s) south.insert(v.id);
+				const int32_t c = v.grant >= 0 ? v.grant : v.held;
+				if (v.staged && c >= 0) {
+					now_staged.insert(v.id);
+					if (v.lane == c && v.s > hold_of(c)) ++r.past_hold;
+				} else if (staged.count(v.id) && c >= 0 && light(c) == SignalLight::Red) {
+					++r.released_on_red;
+				}
+				// First at the line of the jammed approach: exit full on green, then caught by the red.
+				if (v.lane != in_w || n.lanes[static_cast<size_t>(in_w)].length - v.s > 6.0 || v.grant >= 0) continue;
+				if (v.state == VehicleState::ExitBlocked && !lane_waits_in_box) exit_full.insert(v.id);
+				if (v.state == VehicleState::RedLight && exit_full.erase(v.id)) ++r.caught_at_line;
+			}
+			staged.swap(now_staged);
+			if (i % 50 == 0) r.overlaps += overlaps(t);
+		}
+		r.box_waits = t.stats().box_waits;
+		r.east = east.size();
+		r.south = south.size();
+		std::printf("jammed exit, %s: %llu waited in the box (%d went after their red), %d caught at the line by the red, "
+					"%zu east and %zu south through the junction, %llu stuck\n",
+				wait_in_box ? "waiting in the box" : "waiting at the line", (unsigned long long)r.box_waits,
+				r.released_on_red, r.caught_at_line, r.east, r.south, (unsigned long long)t.stats().removed_stuck);
+		CHECK(t.stats().removed_stuck == 0);
+	};
+	Result off, on;
+	run(false, off);
+	run(true, on);
+	CHECK(off.box_waits == 0);
+	CHECK(off.caught_at_line > 5); // the problem: green wasted at the line, then a red
+	CHECK(on.box_waits > 5);
+	CHECK(on.released_on_red > 0); // they clear the junction whatever the light shows
+	CHECK(on.caught_at_line < off.caught_at_line / 3);
+	CHECK(on.past_hold == 0);
+	CHECK(on.overlaps == 0);
+	CHECK(on.east + 2 >= off.east);
+	CHECK(on.south * 10 >= off.south * 8); // the cross street still flows
 }

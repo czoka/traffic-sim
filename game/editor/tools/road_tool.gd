@@ -112,8 +112,7 @@ func draw(o: EditorOverlay) -> void:
 		var a: Vector2 = pts[pts.size() - 2]
 		var b: Vector2 = pts[pts.size() - 1]
 		var font := ThemeDB.fallback_font
-		o.draw_string(font, b + Vector2(o.px(12), -o.px(12)), readout(a, b), HORIZONTAL_ALIGNMENT_LEFT, -1,
-			int(o.px(14)), Color.WHITE)
+		o.text(font, b + Vector2(o.px(12), -o.px(12)), readout(a, b), 14, Color.WHITE)
 	for p in _points:
 		o.draw_circle(p.pos, o.px(4), EditorOverlay.SELECT)
 	o.draw_snap(_cursor)

@@ -37,6 +37,7 @@ var _connectors: Button
 var _level_only: Button
 var _status: Label
 var _cursor: Label
+var _scale: ScaleBar
 var _problems_button: Button
 var _autosave: Label
 var _problems_panel: PanelContainer
@@ -87,6 +88,8 @@ func _process(delta: float) -> void:
 		_toast_time -= delta
 		if _toast_time <= 0.0:
 			_toast.visible = false
+	if editor and editor.camera:
+		_scale.zoom = editor.camera.zoom.x
 	# Keep the inspector pinned to the right edge as the window resizes.
 	inspector.position = Vector2(get_viewport().get_visible_rect().size.x - inspector.size.x - 12, 12)
 
@@ -298,6 +301,8 @@ func _build_bottom_bar(root: Control) -> void:
 	_cursor.custom_minimum_size = Vector2(120, 0)
 	_cursor.add_theme_color_override("font_color", Color(0.6, 0.62, 0.65))
 	bar.add_child(_cursor)
+	_scale = ScaleBar.new()
+	bar.add_child(_scale)
 	_problems_button = _button("No problems", _toggle_problems, bar)
 	_autosave = Label.new()
 	_autosave.add_theme_color_override("font_color", Color(0.6, 0.62, 0.65))

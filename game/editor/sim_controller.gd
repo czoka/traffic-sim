@@ -19,6 +19,12 @@ const STATS_INTERVAL := 0.25
 ## People are drawn as dots, at least this many pixels across.
 const PED_RADIUS := 0.35
 const MIN_PED_PIXELS := 3.5
+## The canvas keeps a MultiMesh's bounds from when it last recorded the layer,
+## which happens when the instance count changes, not when the buffer does. With
+## a steady count the bounds go stale as cars move, and zoomed in on a spot
+## outside them the whole layer was culled (cars and people vanished). A fixed
+## box larger than any map keeps every layer drawn.
+const ALWAYS_DRAWN := AABB(Vector3(-1e6, -1e6, -1.0), Vector3(2e6, 2e6, 2.0))
 
 var editor: MapEditor
 var playing := false
@@ -58,6 +64,7 @@ func _ready() -> void:
 		mm.transform_format = MultiMesh.TRANSFORM_2D
 		mm.use_colors = true
 		mm.mesh = quad
+		mm.custom_aabb = ALWAYS_DRAWN
 		var mmi := MultiMeshInstance2D.new()
 		mmi.name = "Cars%d" % (level + 1)
 		mmi.multimesh = mm
@@ -69,6 +76,7 @@ func _ready() -> void:
 		pm.transform_format = MultiMesh.TRANSFORM_2D
 		pm.use_colors = true
 		pm.mesh = _dot_mesh(PED_RADIUS)
+		pm.custom_aabb = ALWAYS_DRAWN
 		var pmi := MultiMeshInstance2D.new()
 		pmi.name = "People%d" % (level + 1)
 		pmi.multimesh = pm

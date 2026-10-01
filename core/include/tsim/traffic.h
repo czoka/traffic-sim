@@ -39,6 +39,9 @@ struct TrafficConfig {
 	double stuck_timeout = 900.0; // s stopped before a car is taken off the map
 	double box_margin = 2.0; // m past a conflict point before it counts as clear
 	double impatience = 30.0; // s waiting at a line before a driver takes the next safe chance
+	// On green, a car held up by the box or its exit pulls forward into the junction
+	// and waits short of the conflicts, so the next red doesn't catch it at the line.
+	bool wait_in_box = true;
 	int spawn_queue = 20; // cars waiting to enter at one spawn point
 	uint32_t max_vehicles = 0; // spawning pauses while this many cars are on the map (0 = no cap)
 	// M3
@@ -101,6 +104,7 @@ enum class VehicleState : uint8_t {
 	Parking = 11, // manoeuvring into or out of a bay
 	Parked = 12,
 	GivingWay = 13, // people on a crossing ahead (M4)
+	WaitingInBox = 14, // past the stop line on green, waiting short of the conflicts for room ahead
 };
 const char *vehicle_state_name(VehicleState s);
 
@@ -143,6 +147,10 @@ struct Vehicle {
 	uint32_t coach_line = 0; // CoachLine id (coaches)
 	int32_t grant = -1; // connector this car may enter
 	int32_t held = -1; // connector whose junction box it is still in
+	// Pulled past the stop line on a protected green while the box or its exit was
+	// blocked: it waits on its connector short of the first conflict point and goes
+	// once there is room, whatever the light shows by then.
+	bool staged = false;
 	int32_t list_pos = 0; // index in its lane's car list
 	uint64_t wait_since = 0; // tick it started waiting at a stop line (0 = not waiting)
 	uint64_t stopped_tick = 0; // all-way stop: tick it came to a stop at the line
@@ -196,6 +204,7 @@ struct TrafficStats {
 	double bus_lane_misuse = 0.0; // car-seconds in bus lanes outside the turning zone
 	uint64_t red_light_waits = 0; // grants refused by a red light
 	uint64_t right_on_red = 0; // right turns on red with the flashing arrow
+	uint64_t box_waits = 0; // cars that pulled forward into the junction to wait for room
 	// M4: people
 	uint32_t pedestrians = 0; // on foot or waiting (not riding)
 	uint32_t riding = 0;
@@ -589,6 +598,9 @@ private:
 	std::vector<std::vector<int32_t>> ring_lanes_; // per junction
 	std::vector<std::vector<int32_t>> ring_slots_; // per junction, per circulating lane
 	std::vector<int8_t> ring_cycle_; // per lane: which circulating lane it is (-1 = none)
+	// Per signalized connector: where a car waiting inside the junction stops its
+	// front (short of the first conflict; -1 = it can't wait there).
+	std::vector<double> stage_hold_;
 	std::vector<int32_t> ring_load(size_t j) const; // slots taken on each circulating lane, entries included
 	std::vector<VehicleId> bay_use_; // per Network::bays: who has it (0 = free)
 	std::vector<uint32_t> stop_use_; // per Network::stops: buses in the bays
