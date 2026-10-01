@@ -20,6 +20,7 @@
 #include "tsim/rng.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,17 @@ struct TrafficConfig {
 	double park_min = 300.0, park_max = 1800.0; // s parked
 	double bus_dwell = 20.0; // s at each bus stop (fixed until passengers arrive in M4)
 	double bus_lane_zone = 60.0; // m before the stop line where cars may enter a bus lane to turn
+	// M4: people
+	uint32_t max_pedestrians = 0; // trips on foot pause at this many people on the map (0 = no cap)
+	double bike_owners = 0.3; // share of people who could ride a bike
+	double car_owners = 0.5; // could drive
+	double coach_share = 0.05; // trips that leave the map by coach (when coaches run)
+	double transfer_penalty = 300.0; // s per bus transfer in mode choice
+	double cost_variance = 0.2; // each option's cost is scaled by 1 +/- this, per person
+	int bus_capacity = 80, coach_capacity = 50;
+	int bus_doors = 2, coach_doors = 1;
+	double board_time = 2.0; // s per passenger per door
+	double door_time = 3.0; // s to open and close
 };
 
 struct DriverParams2 {
@@ -84,6 +96,7 @@ enum class VehicleState : uint8_t {
 	AtStop = 10, // bus at a stop, coach at the main station
 	Parking = 11, // manoeuvring into or out of a bay
 	Parked = 12,
+	GivingWay = 13, // people on a crossing ahead (M4)
 };
 const char *vehicle_state_name(VehicleState s);
 
@@ -105,6 +118,7 @@ struct Waypoint {
 
 struct Vehicle {
 	VehicleId id = kNoId;
+	std::vector<uint32_t> riders; // pedestrian ids on board (buses, coaches; M4)
 	VehicleKind kind = VehicleKind::Car;
 	int32_t lane = -1;
 	double s = 0.0; // front bumper along the lane
@@ -145,6 +159,7 @@ struct Vehicle {
 	uint64_t phase_until = 0; // tick the current phase ends
 	Vec2 bay_pos, bay_dir; // where it is drawn while off the lane
 	bool off_lane = false;
+	bool ped_yield = false; // stopping for people on a crossing (counts yields)
 	bool done = false; // left the map this tick
 };
 
@@ -177,6 +192,78 @@ struct TrafficStats {
 	double bus_lane_misuse = 0.0; // car-seconds in bus lanes outside the turning zone
 	uint64_t red_light_waits = 0; // grants refused by a red light
 	uint64_t right_on_red = 0; // right turns on red with the flashing arrow
+	// M4: people
+	uint32_t pedestrians = 0; // on foot or waiting (not riding)
+	uint32_t riding = 0;
+	uint64_t trips = 0; // people trips started
+	uint64_t trips_walk = 0, trips_bus = 0, trips_bike = 0, trips_car = 0, trips_coach = 0;
+	uint64_t people_arrived = 0;
+	uint64_t boarded = 0, alighted = 0, left_behind = 0;
+	double mean_wait = 0.0; // s at stops, of people who boarded
+	uint64_t coach_passengers = 0; // arrived by coach
+	uint64_t crossings = 0; // crossings started on foot
+	double mean_crossing_wait = 0.0; // s at the kerb
+	uint64_t cars_yielded = 0; // cars that stopped for someone on a crossing
+};
+
+enum class PedState : uint8_t {
+	Walking = 0,
+	WaitingToCross = 1,
+	Crossing = 2,
+	WaitingForBus = 3,
+	Riding = 4,
+};
+const char *ped_state_name(PedState s);
+
+struct Pedestrian {
+	uint32_t id = 0;
+	PedState state = PedState::Walking;
+	// On edge `edge`, walking from node `from` towards its other end, d metres in.
+	int32_t edge = -1;
+	int32_t from = -1;
+	double d = 0.0;
+	double prev_d = 0.0;
+	int32_t prev_edge = -1, prev_from = -1;
+	std::vector<int32_t> path; // edges still to walk
+	size_t pi = 0;
+	double speed = 1.35; // m/s
+	int32_t origin = -1, dest = -1; // PedGraph::spawners indices (dest -1: leaves by coach)
+	int32_t target = -1; // ped node this leg of the trip ends at
+	// Transit: board `route` at stop `board`, ride to `alight`; then the second ride (one transfer).
+	uint32_t route = 0, route2 = 0;
+	int32_t board = -1, alight = -1, board2 = -1, alight2 = -1; // Network::stops indices
+	bool coach = false; // waiting for any coach at the main station
+	VehicleId vehicle = kNoId; // riding
+	uint64_t wait_since = 0; // tick it started waiting (kerb or stop)
+	uint64_t spawn_tick = 0;
+	bool done = false;
+};
+
+struct PedInfo {
+	uint32_t id = 0;
+	bool found = false;
+	PedState state = PedState::Walking;
+	double speed = 0.0;
+	double waited = 0.0;
+	double trip_time = 0.0;
+	NodeId origin = kNoId, dest = kNoId; // map nodes (dest kNoId: by coach)
+	int32_t board = -1, alight = -1; // stops
+	uint32_t route = 0;
+	VehicleId vehicle = kNoId;
+	std::vector<Vec2> route_line; // where it will walk
+};
+
+struct StopStats {
+	int32_t stop = -1;
+	uint32_t waiting = 0;
+	uint64_t boarded = 0, alighted = 0, left_behind = 0;
+	double mean_wait = 0.0; // s
+};
+
+// Mean load leaving each stop of a route (passengers on board), for the inspector.
+struct RouteLoad {
+	uint32_t route = 0;
+	std::vector<double> load; // per stop in route order
 };
 
 struct VehicleInfo {
@@ -246,6 +333,22 @@ public:
 	// Occupied bays (Network::bays indices), for drawing and tests.
 	const std::vector<VehicleId> &bay_use() const { return bay_use_; }
 
+	// --- People (M4) ---------------------------------------------------------------
+	const std::vector<Pedestrian> &pedestrians() const { return peds_; }
+	int32_t find_pedestrian(uint32_t id) const;
+	Pose ped_pose(size_t i, double alpha) const; // waiting people stand a little apart
+	int ped_level(size_t i) const;
+	PedInfo ped_info(uint32_t id) const;
+	std::vector<StopStats> stop_stats() const;
+	std::vector<RouteLoad> route_loads() const;
+	// Light a mid-block push-button signal shows cars (crossing index), for drawing.
+	SignalLight crossing_car_light(int32_t crossing) const;
+	WalkLight crossing_walk_light(int32_t crossing) const;
+	// For tests and tools: a person walking from one ped node to another.
+	uint32_t add_pedestrian(int32_t from_node, int32_t to_node, double speed = 1.35);
+	// Shortest perceived route on foot (edge list); false when there is none.
+	bool find_walk(int32_t from_node, int32_t to_node, std::vector<int32_t> &path, double *cost = nullptr) const;
+
 	// For tests and tools: add a vehicle directly (returns its id, 0 on failure).
 	// Driver parameters default to the kind's typical driver.
 	VehicleId add_vehicle(int32_t lane, double s, double v, NodeId dest, const DriverParams2 *driver = nullptr,
@@ -305,6 +408,7 @@ private:
 	bool retarget(Vehicle &v); // routes to the next waypoint or the destination, dropping what can't be reached
 	void spawn();
 	void spawn_bike(size_t k);
+	bool spawn_bike_to(size_t k, NodeId dest);
 	NodeId pick_dest(size_t k);
 	DriverParams2 random_driver(VehicleKind k);
 	void dispatch();
@@ -356,6 +460,64 @@ private:
 		uint64_t next_departure = 0;
 	};
 	std::vector<CoachRun> coaches_;
+
+	// --- People (M4) ---------------------------------------------------------------
+	void peds_prepare(); // crossing occupancy and mid-block signals, before the cars move
+	void peds_tick(); // walk, cross, wait; after the cars moved
+	void people_demand(); // new trips with mode choice
+	bool cross_ok(const Pedestrian &p, int32_t edge, int32_t from) const;
+	int crossing_blocks(int32_t crossing, int32_t lane, const Vehicle &v) const; // for cars: 0 free, 1 stop, 2 stop if it comfortably can
+	bool lane_clear_for(int32_t lane, double s0, double s1, double ped_time, bool zebra) const;
+	double edge_cost(const PedEdge &e) const;
+	void ped_costs(); // per spawner: perceived cost to every ped node (Dijkstra)
+	void route_times(); // ride times between stops of each route
+	void start_walk(Pedestrian &p, int32_t to_node);
+	void ped_arrived(size_t i);
+	// Alight and board (sets a bus's dwell); `late`: only people who just arrived board. Returns boarders.
+	int serve_stop(Vehicle &v, int32_t stop, Waypoint &wp, bool late = false);
+	bool serves_people(const Vehicle &v, const Waypoint &wp) const {
+		return people_on_ && wp.stop >= 0 && (v.kind == VehicleKind::Bus || v.kind == VehicleKind::Coach);
+	}
+	void bus_departs(Vehicle &v, int32_t stop);
+	uint64_t boarding_ticks(const Vehicle &v, int people) const;
+	struct PedSaved {
+		Vec2 at, target;
+		int at_level = 0, target_level = 0;
+		bool has_target = false;
+		uint32_t board = 0, alight = 0, board2 = 0, alight2 = 0; // stop ids (0 none)
+		NodeId origin = kNoId, dest = kNoId; // spawn point nodes
+	};
+	std::vector<PedSaved> peds_save() const; // before the network changes
+	void peds_restore(const std::vector<PedSaved> &saved); // after: by position, stop id and spawn point
+	void peds_reset_network(); // per-network people state
+	std::vector<Pedestrian> peds_;
+	uint32_t next_ped_id_ = 1;
+	bool people_on_ = false; // some demand on foot: dwell comes from boarding
+	std::vector<std::vector<std::pair<double, int8_t>>> on_crossing_; // per crossing: (t from a, +1/-1 walking direction)
+	std::vector<std::vector<uint32_t>> waiting_at_; // per crossing: people waiting at a kerb (push buttons)
+	struct MidSignal {
+		uint8_t state = 0; // 0 car green, 1 car amber, 2 all red, 3 walk, 4 flashing, 5 clearance
+		uint64_t since = 0;
+	};
+	std::vector<MidSignal> mid_signal_; // per crossing (push-button signals)
+	std::vector<std::vector<double>> ped_cost_; // per ped spawner: cost to every node (s)
+	struct RideTimes {
+		uint32_t route = 0;
+		size_t depot = 0, index = 0;
+		std::vector<int32_t> stops; // in order, a loop repeats the first
+		std::vector<double> at; // cumulative ride time at each stop (s)
+		double headway = 600.0;
+	};
+	std::vector<RideTimes> rides_;
+	std::vector<std::vector<NodeId>> car_trips_; // per vehicle spawner: destinations chosen by people
+	struct StopAcc {
+		uint64_t boarded = 0, alighted = 0, left_behind = 0;
+		double wait_sum = 0.0;
+	};
+	std::vector<StopAcc> stop_acc_;
+	std::map<uint32_t, std::vector<std::pair<double, uint64_t>>> load_acc_; // route -> per stop index (sum, count)
+	double crossing_wait_sum_ = 0.0;
+	double wait_sum_ = 0.0;
 	TrafficStats stats_;
 	double trip_time_sum_ = 0.0;
 };

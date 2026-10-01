@@ -27,6 +27,12 @@ void build_demo_town(Document &doc);
 // loop and an end-to-end route, and a coach line. Recorded as one undo step.
 void build_showcase(Document &doc);
 
+// M4: people and levels. Signal crosswalks with a scramble phase, zebras (one
+// mid-block with a refuge), an uncontrolled crossing, fences, a park footpath,
+// a bike path into a junction, a pedestrian bridge over the avenue, a car
+// overpass, a bus route, and people at every spawn point.
+void build_people_town(Document &doc);
+
 // Profile for a preset name (see profile_presets()); falls back to the first.
 Profile preset_profile(const char *name, RoadMap &map);
 

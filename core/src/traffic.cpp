@@ -54,6 +54,8 @@ const char *vehicle_state_name(VehicleState s) {
 			return "parking manoeuvre";
 		case VehicleState::Parked:
 			return "parked";
+		case VehicleState::GivingWay:
+			return "giving way to people crossing";
 	}
 	return "driving";
 }
@@ -62,6 +64,7 @@ namespace {
 
 constexpr double kInf = 1e300;
 constexpr uint64_t kNever = ~0ull;
+constexpr VehicleId kPedestrians = 0xFFFFFFFEu; // leader(): people on a crossing
 
 bool is_road(const NetLane &l) { return l.kind == NetLaneKind::Road; }
 
@@ -179,6 +182,7 @@ void Traffic::set_network(const Network *net) {
 		std::vector<SavedWp> wps; // pending waypoints only
 	};
 	std::vector<Saved> saved(veh_.size());
+	const std::vector<PedSaved> people = peds_save();
 	std::map<LaneKey, double> times;
 	std::map<NodeId, uint32_t> pending;
 	if (net_) {
@@ -257,6 +261,8 @@ void Traffic::set_network(const Network *net) {
 		veh_.clear();
 		routes_.clear();
 		coaches_.clear();
+		peds_.clear();
+		peds_reset_network();
 		return;
 	}
 	const Network &nw = *net_;
@@ -332,6 +338,8 @@ void Traffic::set_network(const Network *net) {
 		if (!retarget(v)) v.route.clear();
 	}
 	estimate_routes();
+	peds_reset_network();
+	peds_restore(people);
 }
 
 void Traffic::recount_use() {
@@ -448,6 +456,13 @@ void Traffic::reset(uint64_t seed) {
 	estimate_routes();
 	stats_ = TrafficStats{};
 	trip_time_sum_ = 0.0;
+	peds_.clear();
+	next_ped_id_ = 1;
+	stop_acc_.clear();
+	load_acc_.clear();
+	crossing_wait_sum_ = 0.0;
+	wait_sum_ = 0.0;
+	peds_reset_network();
 }
 
 // --- Routing ---------------------------------------------------------------------------
@@ -801,6 +816,22 @@ void Traffic::leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &
 	const Waypoint *wp = pending_waypoint(v);
 	auto wp_on = [&](int32_t cur, size_t r) { return wp && r >= v.route.size() && cur == wp->lane; };
 	if (wp_on(lane, ri) && wp->s + 0.5 >= s) take(wp->s - s + v.drv.s0, 0.0, kNoId);
+	// People on (or about to step onto) a crossing over a lane at `base` metres
+	// ahead of the lane start, measured from the car's front.
+	const bool peds = !on_crossing_.empty() && n.ped.lane_crossings.size() == n.lanes.size();
+	auto crossings_on = [&](int32_t ln, double base) {
+		for (int32_t ci : n.ped.lane_crossings[static_cast<size_t>(ln)]) {
+			for (const CrossingSpan &sp : n.ped.crossings[static_cast<size_t>(ci)].spans) {
+				if (sp.lane != ln) continue;
+				const double d = base + sp.s0;
+				if (d < 0.0) continue; // already over the line
+				const int b = crossing_blocks(ci, ln, v);
+				if (b == 2 && d < v.v * v.v / (2.0 * v.drv.b) + 1.0) continue; // can't stop comfortably: goes on
+				if (b != 0) take(d - 0.5 + v.drv.s0, 0.0, kPedestrians);
+			}
+		}
+	};
+	if (peds) crossings_on(lane, -s);
 	// Car ahead on the same lane.
 	const std::vector<int32_t> &list = cars_[static_cast<size_t>(lane)];
 	int32_t ahead = -1;
@@ -853,6 +884,7 @@ void Traffic::leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &
 		}
 		const double lim = desired_speed(v, nx);
 		v0_cap = std::min(v0_cap, std::sqrt(lim * lim + 2.0 * v.drv.b * (dist > 0.0 ? dist : 0.0)));
+		if (peds) crossings_on(nx, dist);
 		const std::vector<int32_t> &nl = cars_[static_cast<size_t>(nx)];
 		for (size_t k = nl.size(); k-- > 0;) {
 			const Vehicle &o = veh_[static_cast<size_t>(nl[k])];
@@ -1648,6 +1680,7 @@ void Traffic::begin_waypoint(size_t i) {
 	auto ticks = [&](double sec) { return static_cast<uint64_t>(std::llround(std::max(0.1, sec) / config_.dt)); };
 	v.phase_start = now;
 	v.v = 0.0;
+	if (serves_people(v, wp)) serve_stop(v, wp.stop, wp); // dwell from boarding
 	switch (wp.action) {
 		case WaypointAction::KerbStop:
 			v.phase = 1;
@@ -1742,7 +1775,14 @@ bool Traffic::waypoints() {
 				break;
 			}
 			case 1:
+				if (serves_people(v, wp)) {
+					// People arriving while it waits get on (and take their time doing so).
+					Waypoint &cur = v.waypoints[v.wi];
+					const int late = serve_stop(v, wp.stop, cur, true);
+					if (late > 0) v.phase_until += boarding_ticks(v, late);
+				}
 				if (now >= v.phase_until) {
+					if (serves_people(v, wp)) bus_departs(v, wp.stop);
 					complete_waypoint(v);
 					if (!retarget(v)) {
 						v.done = true;
@@ -1765,6 +1805,11 @@ bool Traffic::waypoints() {
 				}
 				break;
 			case 3:
+				if (serves_people(v, wp) && wp.action == WaypointAction::BayStop) {
+					Waypoint &cur = v.waypoints[v.wi];
+					const int late = serve_stop(v, wp.stop, cur, true);
+					if (late > 0) v.phase_until += boarding_ticks(v, late);
+				}
 				if (now >= v.phase_until) {
 					// Back into the lane when there is a gap.
 					const NetLane &wl = n.lanes[static_cast<size_t>(wp.lane)];
@@ -1778,6 +1823,7 @@ bool Traffic::waypoints() {
 						}
 					} else if (wp.stop >= 0) {
 						--stop_use_[static_cast<size_t>(wp.stop)];
+						if (serves_people(v, wp)) bus_departs(v, wp.stop);
 					}
 					v.off_lane = false;
 					v.lane = wp.lane;
@@ -1872,10 +1918,15 @@ double entry_speed(double v0, bool has_rear, double gap, double rear_v, const Dr
 } // namespace
 
 void Traffic::spawn_bike(size_t k) {
-	const Network &n = *net_;
-	const NetSpawner &sp = n.spawners[k];
 	const NodeId dest = pick_dest(k);
 	if (dest == kNoId) return;
+	spawn_bike_to(k, dest);
+}
+
+bool Traffic::spawn_bike_to(size_t k, NodeId dest) {
+	const Network &n = *net_;
+	const NetSpawner &sp = n.spawners[k];
+	if (sp.bike_lanes.empty()) return false;
 	const size_t nl = sp.bike_lanes.size();
 	const size_t first = static_cast<size_t>(rng_.next_u64() % nl);
 	Vehicle v;
@@ -1900,8 +1951,9 @@ void Traffic::spawn_bike(size_t k) {
 		v.dest = dest;
 		v.route = std::move(route);
 		insert(std::move(v), lane, s);
-		return;
+		return true;
 	}
+	return false;
 }
 
 void Traffic::spawn() {
@@ -1917,13 +1969,16 @@ void Traffic::spawn() {
 			const double p = sp.config.rate * config_.demand * config_.dt / 3600.0;
 			if (rng_.uniform() < p && pending_[k] < static_cast<uint32_t>(config_.spawn_queue)) ++pending_[k];
 		}
-		if (pending_[k] == 0) continue;
+		// People who chose to drive (M4) go first.
+		const bool person = k < car_trips_.size() && !car_trips_[k].empty();
+		if (pending_[k] == 0 && !person) continue;
 		if (capped) continue;
-		const NodeId dest = pick_dest(k);
+		const NodeId dest = person ? car_trips_[k].front() : pick_dest(k);
 		if (dest == kNoId) {
 			pending_[k] = 0;
 			continue;
 		}
+		bool routed = false;
 		const size_t nl = sp.spawn_lanes.size();
 		const size_t first = static_cast<size_t>(rng_.next_u64() % nl);
 		for (size_t m = 0; m < nl; ++m) {
@@ -1940,6 +1995,7 @@ void Traffic::spawn() {
 			if (free < 12.0) continue;
 			std::vector<int32_t> route;
 			if (!find_route(lane, dest, route)) continue;
+			routed = true;
 			Vehicle v;
 			v.drv = random_driver(VehicleKind::Car);
 			v.kind = config_.taxi_share > 0.0 && rng_.uniform() < config_.taxi_share ? VehicleKind::Taxi : VehicleKind::Car;
@@ -1983,8 +2039,24 @@ void Traffic::spawn() {
 			const VehicleId id = insert(std::move(v), lane, s);
 			const Vehicle &nv = veh_.back();
 			if (!nv.waypoints.empty()) bay_use_[static_cast<size_t>(nv.waypoints[0].bay)] = id;
-			--pending_[k];
+			if (person) car_trips_[k].erase(car_trips_[k].begin());
+			else --pending_[k];
 			break;
+		}
+		if (person && !routed) {
+			// Blocked lanes keep the trip waiting; no route at all drops it.
+			bool blocked = false;
+			for (int32_t lane : sp.spawn_lanes) {
+				const std::vector<int32_t> &list = cars_[static_cast<size_t>(lane)];
+				if (!list.empty()) {
+					const Vehicle &rear = veh_[static_cast<size_t>(list.back())];
+					blocked |= rear.s - rear.drv.length < 12.0;
+				}
+			}
+			if (!blocked) {
+				car_trips_[k].erase(car_trips_[k].begin());
+				++stats_.unroutable;
+			}
 		}
 	}
 }
@@ -2139,7 +2211,14 @@ void Traffic::rebuild_lists() {
 void Traffic::compact() {
 	size_t w = 0;
 	for (size_t i = 0; i < veh_.size(); ++i) {
-		if (veh_[i].done) continue;
+		if (veh_[i].done) {
+			// Anyone still on board leaves the map with it.
+			for (uint32_t id : veh_[i].riders) {
+				const int32_t pi = find_pedestrian(id);
+				if (pi >= 0) peds_[static_cast<size_t>(pi)].done = true;
+			}
+			continue;
+		}
 		if (w != i) veh_[w] = std::move(veh_[i]);
 		++w;
 	}
@@ -2174,6 +2253,7 @@ void Traffic::tick() {
 				break;
 		}
 	}
+	if (people_on_ || !peds_.empty()) peds_prepare();
 	arbitrate();
 	change_lanes();
 	rebuild_lists();
@@ -2203,11 +2283,16 @@ void Traffic::tick() {
 		if (v.state == VehicleState::Driving) {
 			if (!is_road(n.lanes[static_cast<size_t>(v.lane)])) {
 				v.state = VehicleState::InJunction;
+			} else if (has && who == kPedestrians && gap < 15.0 && v.v < 2.0) {
+				v.state = VehicleState::GivingWay;
 			} else if (has && who != kNoId && gap < 15.0 && v.v < 2.0) {
 				v.state = VehicleState::Queued;
 				v.blocker = who;
 			}
 		}
+		const bool yields = has && who == kPedestrians && gap < 15.0;
+		if (yields && !v.ped_yield) ++stats_.cars_yielded;
+		v.ped_yield = yields;
 	}
 	move();
 	// Periodic re-routing with observed travel times, spread over the cars.
@@ -2224,7 +2309,9 @@ void Traffic::tick() {
 		compact();
 		rebuild_lists();
 	}
+	peds_tick();
 	dispatch();
+	people_demand();
 	spawn(); // new vehicles join at the back of their lane
 	++tick_;
 }
@@ -2258,7 +2345,10 @@ Pose Traffic::pose(size_t i, double alpha) const {
 	return p;
 }
 
-int Traffic::level_of(size_t i) const { return net_->lanes[static_cast<size_t>(veh_[i].lane)].level; }
+int Traffic::level_of(size_t i) const {
+	const NetLane &l = net_->lanes[static_cast<size_t>(veh_[i].lane)];
+	return veh_[i].s > 0.5 * l.length ? l.level_end : l.level; // ramps change level halfway
+}
 
 VehicleInfo Traffic::info(VehicleId id) const {
 	VehicleInfo out;
@@ -2339,6 +2429,12 @@ TrafficStats Traffic::stats() const {
 	}
 	st.mean_speed = moving ? sum / static_cast<double>(moving) : 0.0;
 	st.mean_trip_time = stats_.arrived ? trip_time_sum_ / static_cast<double>(stats_.arrived) : 0.0;
+	for (const Pedestrian &p : peds_) {
+		if (p.state == PedState::Riding) ++st.riding;
+		else ++st.pedestrians;
+	}
+	st.mean_wait = stats_.boarded ? wait_sum_ / static_cast<double>(stats_.boarded) : 0.0;
+	st.mean_crossing_wait = stats_.crossings ? crossing_wait_sum_ / static_cast<double>(stats_.crossings) : 0.0;
 	for (uint32_t p : pending_) st.waiting_to_enter += p;
 	for (size_t j = 0; j < junction_waiting_.size(); ++j) {
 		if (!junction_waiting_[j]) continue;
@@ -2386,6 +2482,18 @@ uint64_t Traffic::state_hash() const {
 	}
 	for (uint32_t p : pending_) h.add_u32(p);
 	for (VehicleId b : bay_use_) h.add_u32(b);
+	if (people_on_ || !peds_.empty()) {
+		h.add_u64(peds_.size());
+		for (const Pedestrian &p : peds_) {
+			h.add_u32(p.id);
+			h.add_u32(static_cast<uint32_t>(p.state));
+			h.add_u32(static_cast<uint32_t>(p.edge));
+			h.add_u32(static_cast<uint32_t>(p.from));
+			h.add_double(p.d);
+			h.add_u32(p.vehicle);
+		}
+		for (const MidSignal &m : mid_signal_) h.add_u32(m.state);
+	}
 	return h.value();
 }
 

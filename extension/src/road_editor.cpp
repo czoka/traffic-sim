@@ -172,6 +172,7 @@ bool RoadEditor::load_example(const String &name) {
 	else if (name == "lane_drop") build_lane_drop(d);
 	else if (name == "one_way_pair") build_one_way_pair(d);
 	else if (name == "showcase") build_showcase(d);
+	else if (name == "people") build_people_town(d);
 	else return false;
 	doc_.reset(d.map());
 	return true;

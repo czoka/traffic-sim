@@ -81,7 +81,9 @@ struct ParkingBay {
 
 struct SegmentGeom {
 	SegmentId id = kNoId;
-	int level = 0;
+	int level = 0; // drawn on this level (a ramp: its top)
+	SegmentKind kind = SegmentKind::Road;
+	int rise = 0; // ramps (M4)
 	Curve curve;
 	double length = 0.0;
 	double trim[2] = { 0.0, 0.0 }; // cut back at the from / to end
@@ -100,8 +102,8 @@ struct SegmentGeom {
 	Vec2 at(size_t k, double offset) const { return p[k] + n[k] * offset; }
 	// Outline of the whole cross-section (for picking and overlap checks).
 	std::vector<Vec2> outline() const;
-	// Carriageway only (no sidewalks).
-	std::vector<Vec2> carriageway() const;
+	// Carriageway only (no sidewalks); optionally just the samples in [s_lo, s_hi].
+	std::vector<Vec2> carriageway(double s_lo = -1e300, double s_hi = 1e300) const;
 };
 
 struct Leg {
@@ -155,6 +157,27 @@ struct NodeGeom {
 	bool ring_cramped = false; // too many legs for the radius
 };
 
+// A pedestrian crossing as built (M4): at a junction leg (end 0/1) or
+// mid-block (end -1). The pedestrian line runs kerb to kerb across the
+// carriageway; cars crossing it within half_width of the line must give way
+// to people on it (or stop for the signal).
+struct CrossingGeom {
+	SegmentId seg = kNoId;
+	int end = -1;
+	uint32_t id = 0; // mid-block crossings
+	NodeId node = kNoId; // the junction, for leg crossings
+	CrossingKind kind = CrossingKind::Zebra;
+	bool bike = false;
+	int level = 0;
+	double s = 0.0; // station of the line along the segment centreline
+	Vec2 dir{ 1, 0 }; // segment tangent there (from -> to)
+	Vec2 a, b; // ends of the line: a on the profile-left kerb, b on the right
+	double half_width = 1.5;
+	Vec2 bike_a, bike_b; // the bike crossing's line, beside it (when bike)
+	// A refuge island on the median: the part of the line on it, as distances from a.
+	double refuge_t0 = -1.0, refuge_t1 = -1.0;
+};
+
 struct LaneHit {
 	SegmentId seg = kNoId;
 	int lane_index = -1; // in SegmentGeom::lanes
@@ -175,6 +198,7 @@ public:
 	const SegmentGeom *segment(SegmentId id) const;
 	const NodeGeom *node(NodeId id) const;
 	const std::vector<MeshBatch> &meshes() const { return meshes_; }
+	const std::vector<CrossingGeom> &crossings() const { return crossings_; }
 
 	// Point inside a drawn lane (profile lanes only), optionally on one level.
 	bool pick_lane(Vec2 p, int level, LaneHit &out) const;
@@ -194,6 +218,7 @@ private:
 	std::map<SegmentId, SegmentGeom> segments_;
 	std::map<NodeId, NodeGeom> nodes_;
 	std::vector<MeshBatch> meshes_;
+	std::vector<CrossingGeom> crossings_;
 };
 
 } // namespace tsim
