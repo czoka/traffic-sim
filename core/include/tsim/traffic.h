@@ -272,6 +272,7 @@ struct Booking {
 	bool weekend = false;
 	bool clocked = false; // at work now
 	bool break_taken = false;
+	bool second_break = false; // very hungry later in the shift
 	bool done = false;
 };
 
@@ -471,6 +472,8 @@ public:
 	// shop; immigrants and visitors come by coach.
 	bool city_on() const { return city_on_; }
 	const CityData &city_data() const { return *city_data_; }
+	// Another data table (the default is the built-in one). Takes effect at the next reset.
+	void set_city_data(const CityData *data) { city_data_ = data ? data : &default_city_data(); }
 	int64_t ticks_per_minute() const;
 	int64_t clock_minutes() const; // minutes since Monday 00:00 of week 0
 	int day() const { return static_cast<int>(clock_minutes() / 1440); }
@@ -652,6 +655,7 @@ private:
 		bool in_hours = false, open = false, unexpected = false;
 		int opened_at = -1, late_minutes = 0, unexpected_minutes = 0;
 		int booked_today = 0, unfilled_today = 0;
+		std::vector<int> slot_booked; // today's plan: staff booked per shift
 		uint64_t served = 0, turned_away = 0, late_openings = 0;
 	};
 	struct VisitorJob {
@@ -675,6 +679,8 @@ private:
 	bool city_trip(size_t i, int32_t to_place, uint32_t to_building, bool by_coach);
 	bool city_start_offering(size_t i, int offering);
 	void city_choose_job(size_t i);
+	bool city_book(size_t i); // a shift today at its employer, if one is still open
+	int32_t city_add_household(uint32_t home, int people, double work_share);
 	void city_leave_building(Resident &r);
 	void city_recount();
 	BState *bstate(uint32_t building_id);

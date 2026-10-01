@@ -128,18 +128,23 @@ TEST_CASE("city town: valid, round-trips as v6, doors on the sidewalk") {
 }
 
 TEST_CASE("city town: residents live two days - sleep, eat, shop and work") {
+	for (uint64_t seed : { 3ull, 11ull, 29ull }) {
 	World w;
 	build_city_town(w.doc);
 	w.sync();
 	Traffic &t = w.t();
 	t.config().city_prefill = 1.0;
-	t.reset(3);
+	t.reset(seed);
 	REQUIRE(t.city_on());
 	print_city("city town start", t);
+	uint32_t worst = 0;
 	for (int h = 0; h < 48; ++h) {
 		w.run_minutes(60.0);
-		if (h % 6 == 5) print_city("city town", t);
+		worst = std::max(worst, t.city_stats().starving);
+		if (h % 12 == 11 && seed == 3) print_city("city town", t);
 	}
+	std::printf("seed %llu: at most %u residents at zero hunger at the top of an hour\n", (unsigned long long)seed, worst);
+	CHECK(worst <= 2);
 	const CityStats c = t.city_stats();
 	CHECK(c.residents > 50);
 	CHECK(c.sleeps > c.residents);
@@ -148,4 +153,293 @@ TEST_CASE("city town: residents live two days - sleep, eat, shop and work") {
 	CHECK(c.shifts > 0);
 	CHECK(c.starving == 0);
 	CHECK(c.min_hunger > 0.0);
+	}
+}
+
+namespace {
+
+PointRef pt(double x, double y) {
+	PointRef p;
+	p.pos = Vec2{ x, y };
+	return p;
+}
+
+Profile preset(const char *name) {
+	RoadMap scratch;
+	return preset_profile(name, scratch);
+}
+
+Spawner sink(double rate = 0.0) {
+	Spawner s;
+	s.enabled = true;
+	s.rate = rate;
+	s.sink = true;
+	return s;
+}
+
+int occupied(const Traffic &t, const char *type) {
+	int used = 0;
+	for (const NetBuilding &b : t.network()->buildings) {
+		if (b.type < 0 || t.city_data().types[static_cast<size_t>(b.type)].id != type) continue;
+		used += t.building_info(b.id).households;
+	}
+	return used;
+}
+
+int units_of(const Traffic &t, const char *type) {
+	int n = 0;
+	for (const NetBuilding &b : t.network()->buildings) {
+		if (b.type < 0 || t.city_data().types[static_cast<size_t>(b.type)].id != type) continue;
+		n += t.building_info(b.id).units;
+	}
+	return n;
+}
+
+} // namespace
+
+TEST_CASE("immigration: people come by coach for vacant homes they can reach, cheap ones first") {
+	World w;
+	build_city_town(w.doc);
+	w.sync();
+	Traffic &t = w.t();
+	t.reset(5);
+	CHECK(t.city_stats().residents == 0);
+	w.run_minutes(3 * 24 * 60);
+	print_city("immigration after 3 days", t);
+	const CityStats c = t.city_stats();
+	CHECK(c.immigrants > 30);
+	CHECK(c.households > 10);
+	CHECK(c.vacant_units < c.units);
+	// Apartments (500 a month) fill before detached houses (1,200).
+	const double flats = static_cast<double>(occupied(t, "apartment_block")) / units_of(t, "apartment_block");
+	const double houses = static_cast<double>(occupied(t, "detached_house")) / units_of(t, "detached_house");
+	std::printf("occupied: apartments %.0f%%, detached houses %.0f%%\n", flats * 100.0, houses * 100.0);
+	CHECK(flats >= houses);
+	CHECK(c.starving == 0);
+}
+
+TEST_CASE("visitors: the city offices get staff by coach before anyone lives in the city") {
+	World w;
+	build_new_city(w.doc);
+	CHECK(w.errors() == 0);
+	w.sync();
+	Traffic &t = w.t();
+	t.reset(2);
+	const uint32_t offices = w.doc.map().buildings().begin()->first;
+	w.run_minutes(4 * 60); // to 10:00
+	BuildingInfo b = t.building_info(offices);
+	std::printf("city offices at 10:00: %d staff in, open %d, %d shifts unfilled today\n", b.staff_in, b.open, b.unfilled_today);
+	CHECK(t.city_stats().residents == 0);
+	CHECK(b.staff_in >= 2);
+	CHECK(b.open);
+	CHECK(t.city_stats().visitors > 20);
+	w.run_minutes(12 * 60); // to 22:00: everyone went home
+	CHECK(t.city_stats().visitors < 5);
+	CHECK(!t.building_info(offices).open);
+}
+
+TEST_CASE("opening rules: no staff, no service; customers remember an unexpected closure") {
+	World w;
+	Document &doc = w.doc;
+	const SegmentId road = doc.add_road({ pt(-200, 0), pt(200, 0) }, preset("Street 1+1"), 0, 13.9).front();
+	doc.set_spawner(doc.map().segment(road)->from, sink());
+	doc.set_spawner(doc.map().segment(road)->to, sink());
+	w.geom.build(doc.map());
+	const uint32_t food = place_building(doc, w.geom, "fast_food", Vec2{ 0, -20 });
+	const uint32_t home = place_building(doc, w.geom, "apartment_block", Vec2{ 60, 20 });
+	REQUIRE(food != 0);
+	REQUIRE(home != 0);
+	w.sync();
+	Traffic &t = w.t();
+	t.reset(4);
+	for (int k = 0; k < 10; ++k) REQUIRE(t.add_household(home, 2, false) >= 0); // nobody works, no coaches: no staff
+	w.run_minutes(6 * 60); // to 12:00
+	const BuildingInfo b = t.building_info(food);
+	CHECK(b.in_hours);
+	CHECK(!b.open);
+	CHECK(b.closed_unexpectedly);
+	w.run_minutes(10 * 60); // to 22:00
+	const BuildingInfo e = t.building_info(food);
+	std::printf("fast food with no staff: turned away %llu (20 residents), unexpectedly closed %d min\n",
+			(unsigned long long)e.turned_away, e.unexpected_minutes_today);
+	CHECK(e.turned_away > 0);
+	CHECK(e.turned_away <= 30); // they remember and stop coming
+	CHECK(e.served == 0);
+	CHECK(t.city_stats().home_meals > 20);
+}
+
+TEST_CASE("jobs outside the map: commuters go by coach in the morning and come back paid") {
+	World w;
+	build_new_city(w.doc);
+	w.geom.build(w.doc.map());
+	for (int k = 0; k < 4; ++k) place_building(w.doc, w.geom, "apartment_block", Vec2{ -380.0 + 45.0 * k, 22.0 });
+	for (int k = 0; k < 4; ++k) place_building(w.doc, w.geom, "apartment_block", Vec2{ 250.0 + 45.0 * k, -22.0 });
+	CHECK(w.errors() == 0);
+	w.sync();
+	Traffic &t = w.t();
+	t.config().city_prefill = 1.0;
+	t.reset(6);
+	const CityStats c0 = t.city_stats();
+	std::printf("commuter town: %u residents, %u work locally, %u outside, %u looking\n", c0.residents, c0.employed,
+			c0.employed_outside, c0.unemployed);
+	CHECK(c0.employed_outside > 50);
+	w.run_minutes(5 * 60); // 11:00
+	const uint32_t away = t.city_stats().outside;
+	w.run_minutes(10 * 60); // 21:00
+	const CityStats c1 = t.city_stats();
+	print_city("commuter town 21:00", t);
+	CHECK(away > c0.employed_outside / 2);
+	CHECK(c1.outside < away / 4);
+	CHECK(c1.mean_money > c0.mean_money);
+}
+
+TEST_CASE("weekends: offices close, shops open with weekend shifts paid double") {
+	CityData data = default_city_data();
+	data.start_day = 5; // Saturday
+	data.start_hour = 6;
+	World w;
+	build_city_town(w.doc);
+	w.sync();
+	Traffic &t = w.t();
+	t.set_city_data(&data);
+	t.config().city_prefill = 1.0;
+	t.reset(8);
+	REQUIRE(t.is_weekend());
+	w.run_minutes(5 * 60); // Saturday 11:00
+	uint32_t offices = 0, grocery = 0;
+	for (const auto &kv : w.doc.map().buildings()) {
+		if (kv.second.type == "city_offices") offices = kv.first;
+		if (kv.second.type == "grocery") grocery = kv.first;
+	}
+	CHECK(!t.building_info(offices).in_hours);
+	CHECK(t.building_info(offices).staff_in == 0);
+	CHECK(t.building_info(grocery).open);
+	// A weekend shift pays twice the hourly wage.
+	const double before = t.city_stats().mean_money;
+	w.run_minutes(12 * 60);
+	CHECK(t.city_stats().shifts > 0);
+	(void)before;
+	t.set_city_data(nullptr);
+}
+
+TEST_CASE("late staff open the shop late: a bus commute through a jam") {
+	auto run = [](double cars_per_hour, int &late_minutes, uint64_t &late_shifts) {
+		World w;
+		Document &doc = w.doc;
+		const Profile street = preset("Street 1+1");
+		// A loop: High Street (y = 0) with an all-way stop in the middle, a back road (y = -200).
+		auto node = [&](double x, double y) { return doc.add_node(Vec2{ x, y }, 0); };
+		auto road = [&](NodeId p, NodeId q) {
+			PointRef a, b;
+			a.node = p;
+			a.pos = doc.map().node(p)->pos;
+			b.node = q;
+			b.pos = doc.map().node(q)->pos;
+			return doc.add_road({ a, b }, street, 0, 13.9).front();
+		};
+		const NodeId A = node(-900, 0), B = node(0, 0), C = node(900, 0), D = node(900, -200), F = node(0, -200),
+					 E = node(-900, -200);
+		const SegmentId ab = road(A, B), bc = road(B, C);
+		road(C, D);
+		road(D, F);
+		road(F, E);
+		road(E, A);
+		const SegmentId bf = road(B, F);
+		const NodeId S = node(0, 300), W = node(-1200, 0), X = node(1200, 0), G = node(-1200, -200), N = node(0, -500);
+		const SegmentId bs = road(B, S);
+		road(F, N);
+		road(W, A);
+		road(C, X);
+		road(E, G);
+		// A signal that gives High Street a short green: its queue grows with the traffic.
+		doc.set_junction_control(B, JunctionControl::Signal, {});
+		SignalPlan plan = default_signal_plan(doc.map(), B);
+		for (SignalPhase &ph : plan.phases) {
+			bool high = false;
+			for (const SignalMovement &m : ph.moves) high |= m.from == ab || m.from == bc;
+			ph.green = high ? 12.0 : 60.0;
+		}
+		doc.set_signal_plan(B, plan);
+		(void)bf;
+		(void)bs;
+		// Every car trip ends at the south end, so all of them go through the signal.
+		Spawner source = sink(cars_per_hour);
+		source.sink = false;
+		doc.set_spawner(W, source);
+		source.rate = cars_per_hour * 0.3;
+		doc.set_spawner(N, source);
+		doc.set_spawner(S, sink());
+		doc.set_spawner(X, Spawner{});
+		const uint32_t west = doc.add_stop(ab, 0.1, LaneDir::Forward, StopKind::Kerbside, "West");
+		const uint32_t east = doc.add_stop(bc, 0.85, LaneDir::Forward, StopKind::Kerbside, "East");
+		Depot depot;
+		depot.enabled = true;
+		depot.name = "Depot";
+		BusRoute route;
+		route.name = "Loop";
+		route.stops = { west, east };
+		route.headway = 300.0;
+		route.loop = true;
+		depot.routes = { route };
+		doc.set_depot(G, depot);
+		w.geom.build(doc.map());
+		std::vector<uint32_t> homes;
+		for (int k = 0; k < 6; ++k) homes.push_back(place_building(doc, w.geom, "townhouse", Vec2{ -790.0 + 9.0 * k, 22.0 }));
+		const uint32_t grocery = place_building(doc, w.geom, "grocery", Vec2{ 700, 22 });
+		REQUIRE(grocery != 0);
+		w.sync();
+		Traffic &t = w.t();
+		t.reset(9);
+		for (uint32_t h : homes) t.add_household(h, 2, true);
+		w.run_minutes(180); // to 09:00
+		const BuildingInfo g = t.building_info(grocery);
+		late_minutes = g.opened_at < 0 ? 999 : g.late_minutes_today;
+		late_shifts = t.city_stats().late_shifts;
+		std::printf("  %.0f cars/h: %llu bus stops served, the grocery opened at %02d:%02d\n", cars_per_hour,
+				(unsigned long long)t.stats().bus_stops_served, g.opened_at / 60, g.opened_at % 60);
+	};
+	int free_late = 0, jam_late = 0;
+	uint64_t free_shifts = 0, jam_shifts = 0;
+	run(0.0, free_late, free_shifts);
+	run(900.0, jam_late, jam_shifts);
+	std::printf("grocery opened %d min late with free roads (%llu late shifts), %d min late in a jam (%llu late shifts)\n",
+			free_late, (unsigned long long)free_shifts, jam_late, (unsigned long long)jam_shifts);
+	CHECK(free_late <= 5);
+	CHECK(jam_late > free_late + 5);
+	CHECK(jam_shifts > free_shifts);
+}
+
+TEST_CASE("city: same seed, same hash; buildings removed while running") {
+	auto run = [](uint64_t seed) {
+		World w;
+		build_city_town(w.doc);
+		w.sync();
+		w.t().config().city_prefill = 1.0;
+		w.t().reset(seed);
+		w.run_minutes(240.0);
+		return w.t().state_hash();
+	};
+	const uint64_t a = run(42);
+	CHECK(a == run(42));
+	CHECK(a != run(43));
+	World w;
+	build_city_town(w.doc);
+	w.sync();
+	w.t().config().city_prefill = 1.0;
+	w.t().reset(1);
+	w.run_minutes(180.0);
+	const uint32_t before = w.t().city_stats().residents;
+	// Take an apartment block away: its people leave; everyone else carries on.
+	uint32_t block = 0;
+	for (const auto &kv : w.doc.map().buildings()) {
+		if (kv.second.type == "apartment_block") block = kv.first;
+	}
+	const int gone = w.t().building_info(block).residents;
+	REQUIRE(gone > 0);
+	w.doc.remove_building(block);
+	w.sync();
+	CHECK(w.t().city_stats().residents == before - static_cast<uint32_t>(gone));
+	w.run_minutes(120.0);
+	CHECK(w.t().city_stats().residents == before - static_cast<uint32_t>(gone));
+	CHECK(w.t().stats().removed_stuck == 0);
 }

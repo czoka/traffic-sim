@@ -266,6 +266,10 @@ int32_t Traffic::new_resident(bool visitor) {
 }
 
 int32_t Traffic::add_household(uint32_t home, int people, bool works) {
+	return city_add_household(home, people, works ? 1.0 : 0.0);
+}
+
+int32_t Traffic::city_add_household(uint32_t home, int people, double work_share) {
 	BState *b = bstate(home);
 	if (!b) return -1;
 	int unit = -1;
@@ -288,13 +292,23 @@ int32_t Traffic::add_household(uint32_t home, int people, bool works) {
 		const int32_t ri = new_resident(false);
 		Resident &r = res_[static_cast<size_t>(ri)];
 		r.household = hi;
-		r.works = works;
+		r.works = work_share >= 1.0 ? true : work_share <= 0.0 ? false : rng_.uniform() < work_share;
 		r.state = ResidentState::Inside;
 		r.at = home;
 		r.hunger = rng_.range(55.0, 85.0);
 		r.energy = rng_.range(85.0, 100.0);
 		r.next_plan = tick_ + 1 + static_cast<uint64_t>(rng_.next_u64() % static_cast<uint64_t>(ticks_per_minute() * 10));
 		hh_[static_cast<size_t>(hi)].members.push_back(r.id);
+	}
+	if (city_last_day_ != ~0ull) {
+		// Moving in mid-day: find work, and maybe a shift still today.
+		for (uint32_t m : hh_[static_cast<size_t>(hi)].members) {
+			const int32_t ri = find_resident(m);
+			Resident &r = res_[static_cast<size_t>(ri)];
+			if (!r.works) continue;
+			city_choose_job(static_cast<size_t>(ri));
+			city_book(static_cast<size_t>(ri));
+		}
 	}
 	return hi;
 }
@@ -330,12 +344,7 @@ void Traffic::city_init() {
 					x -= cd.household_sizes[k];
 					size = static_cast<int>(k) + 1;
 				}
-				const int32_t hi = add_household(nb.id, size, true);
-				if (hi < 0) break;
-				for (uint32_t m : hh_[static_cast<size_t>(hi)].members) {
-					Resident &r = res_[static_cast<size_t>(find_resident(m))];
-					r.works = rng_.uniform() < config_.employment_share;
-				}
+				if (city_add_household(nb.id, size, config_.employment_share) < 0) break;
 			}
 		}
 	}
@@ -394,6 +403,7 @@ void Traffic::city_daily() {
 		b.unexpected_minutes = 0;
 		b.booked_today = 0;
 		b.unfilled_today = 0;
+		b.slot_booked.clear();
 	}
 	for (Resident &r : res_) {
 		if (r.shift.building != 0 && (r.shift.done || r.shift.end <= now) && !r.shift.clocked) r.shift = Booking{};
@@ -415,7 +425,9 @@ void Traffic::city_daily() {
 		const DayPlan &plan = weekend ? t.weekend : t.weekday;
 		if (!plan.open) continue;
 		BState &b = bstate_[bi];
-		for (const ShiftSpec &sl : plan.shifts) {
+		b.slot_booked.assign(plan.shifts.size(), 0);
+		for (size_t si = 0; si < plan.shifts.size(); ++si) {
+			const ShiftSpec &sl = plan.shifts[si];
 			const uint64_t start = tick_of(today, sl.start);
 			const uint64_t end = tick_of(today, sl.end);
 			if (start <= now) continue;
@@ -446,6 +458,7 @@ void Traffic::city_daily() {
 				++taken;
 			}
 			b.booked_today += taken;
+			b.slot_booked[si] = taken;
 			const int left = sl.staff - taken;
 			if (left > 0) {
 				b.unfilled_today += left;
@@ -509,6 +522,44 @@ void Traffic::city_choose_job(size_t i) {
 	}
 	r.employer = pick;
 	if (pick != 0 && pick != kOutside) bstate(pick)->employees.push_back(r.id);
+}
+
+bool Traffic::city_book(size_t i) {
+	const CityData &cd = *city_data_;
+	Resident &r = res_[i];
+	if (r.employer == 0 || r.employer == kOutside || r.shift.building != 0) return false;
+	const int32_t bi = net_->building_index(r.employer);
+	if (bi < 0) return false;
+	const NetBuilding &nb = net_->buildings[static_cast<size_t>(bi)];
+	if (nb.type < 0) return false;
+	BState &b = bstate_[static_cast<size_t>(bi)];
+	const int today = static_cast<int>(clock_at(tick_ + 1) / 1440);
+	const bool weekend = today % 7 >= 5;
+	const DayPlan &plan = weekend ? cd.types[static_cast<size_t>(nb.type)].weekend : cd.types[static_cast<size_t>(nb.type)].weekday;
+	if (b.slot_booked.size() != plan.shifts.size()) b.slot_booked.assign(plan.shifts.size(), 0);
+	for (size_t si = 0; si < plan.shifts.size(); ++si) {
+		const ShiftSpec &sl = plan.shifts[si];
+		const uint64_t start = tick_of(today, sl.start);
+		if (start <= tick_ + 1 || b.slot_booked[si] >= sl.staff) continue;
+		if (r.week_minutes + sl.minutes() > cd.weekly_hours * 60 + 120) continue;
+		r.shift = Booking{};
+		r.shift.building = nb.id;
+		r.shift.start = start;
+		r.shift.end = tick_of(today, sl.end);
+		r.shift.weekend = weekend;
+		r.week_minutes += sl.minutes();
+		++b.slot_booked[si];
+		++b.booked_today;
+		// One fewer shift for a visitor to fill.
+		for (VisitorJob &vj : visitor_jobs_) {
+			if (vj.building == nb.id && vj.start == start && vj.count > 0) {
+				--vj.count;
+				break;
+			}
+		}
+		return true;
+	}
+	return false;
 }
 
 void Traffic::city_minute() {
@@ -588,9 +639,24 @@ void Traffic::city_update(size_t i) {
 		case ResidentState::Inside:
 			break;
 	}
-	// Hungry at work: the break comes early.
-	if (r.doing == Doing::Work && !r.visitor && !r.shift.break_taken && r.hunger < 30.0 && r.until < r.shift.end) {
-		r.until = now;
+	// Hungry at work: the break comes early, or a snack from home after it.
+	if (r.doing == Doing::Work && !r.visitor && r.hunger < 30.0) {
+		if (!r.shift.break_taken && r.until < r.shift.end) {
+			r.until = now;
+		} else if (r.hunger < 10.0 && r.household >= 0 && !r.shift.second_break) {
+			Household &h = hh_[static_cast<size_t>(r.household)];
+			const int meal = cd.offering_index("home_meal");
+			if (meal >= 0 && h.pantry >= cd.offerings[static_cast<size_t>(meal)].pantry_use) {
+				h.pantry -= cd.offerings[static_cast<size_t>(meal)].pantry_use;
+				r.hunger = std::min(100.0, r.hunger + 0.5 * cd.offerings[static_cast<size_t>(meal)].hunger);
+				++city_acc_.home_meals;
+			} else if (now + static_cast<uint64_t>(30 * tpm) < r.shift.end) {
+				// Nothing at home: a second break, out for food.
+				r.shift.second_break = true;
+				r.shift.break_taken = false;
+				r.until = now;
+			}
+		}
 	}
 	if (r.doing == Doing::Work || r.doing == Doing::Sleep || r.doing == Doing::Offering) {
 		if (now >= r.until) city_finish(i);
@@ -772,44 +838,44 @@ void Traffic::city_finish(size_t i) {
 			// Halfway: a break. Out for a quick meal if hungry and one is near.
 			r.shift.break_taken = true;
 			if (r.hunger < 60.0 && !r.visitor) {
-				const int32_t here = building_place(r.at);
-				double best = 0.0;
-				uint32_t pick = 0;
-				int pick_off = -1;
-				for (size_t bi = 0; bi < bstate_.size(); ++bi) {
-					const NetBuilding &nb = net_->buildings[bi];
-					if (nb.type < 0 || nb.kind != BuildingKind::Shop || !bstate_[bi].open) continue;
-					const double m = minutes_between(here, nb.id);
-					if (m >= kNoWay) continue;
-					for (const std::string &oid : cd.types[static_cast<size_t>(nb.type)].offers) {
-						const int oi = cd.offering_index(oid);
-						const Offering &o = cd.offerings[static_cast<size_t>(oi)];
-						if (o.hunger <= 0.0 || 2.0 * m + o.min_minutes > cd.break_minutes || r.money < o.price) continue;
-						const double score = cd.urgency(r.hunger) * o.hunger - m * cd.travel_weight - cd.price_weight * o.price;
-						if (score > best) {
-							best = score;
-							pick = nb.id;
-							pick_off = oi;
+				// A packed lunch from the household pantry if there is food at home;
+				// otherwise out for a quick meal nearby.
+				const int meal = cd.offering_index("home_meal");
+				Household *h = r.household >= 0 ? &hh_[static_cast<size_t>(r.household)] : nullptr;
+				if (meal >= 0 && h && h->pantry >= cd.offerings[static_cast<size_t>(meal)].pantry_use) {
+					const Offering &o = cd.offerings[static_cast<size_t>(meal)];
+					h->pantry -= o.pantry_use;
+					r.hunger = std::min(100.0, r.hunger + o.hunger);
+					++city_acc_.home_meals;
+				} else {
+					const int32_t here = building_place(r.at);
+					double best = 0.0;
+					uint32_t pick = 0;
+					int pick_off = -1;
+					for (size_t bi = 0; bi < bstate_.size(); ++bi) {
+						const NetBuilding &nb = net_->buildings[bi];
+						if (nb.type < 0 || nb.kind != BuildingKind::Shop || !bstate_[bi].open) continue;
+						const double m = minutes_between(here, nb.id);
+						if (m >= kNoWay) continue;
+						for (const std::string &oid : cd.types[static_cast<size_t>(nb.type)].offers) {
+							const int oi = cd.offering_index(oid);
+							const Offering &o = cd.offerings[static_cast<size_t>(oi)];
+							if (o.hunger <= 0.0 || 2.0 * m + o.min_minutes > cd.break_minutes || r.money < o.price) continue;
+							const double score = cd.urgency(r.hunger) * o.hunger - m * cd.travel_weight - cd.price_weight * o.price;
+							if (score > best) {
+								best = score;
+								pick = nb.id;
+								pick_off = oi;
+							}
 						}
 					}
-				}
-				if (pick != 0 && pick != r.at) {
-					const uint32_t work = r.at;
-					r.offering = pick_off;
-					r.then = work;
-					if (city_trip(i, building_place(pick), pick, false)) return;
-					r.offering = -1;
-					r.then = 0;
-				}
-				// No food near: a packed lunch from the household pantry.
-				const int meal = cd.offering_index("home_meal");
-				if (meal >= 0 && r.household >= 0) {
-					Household &h = hh_[static_cast<size_t>(r.household)];
-					const Offering &o = cd.offerings[static_cast<size_t>(meal)];
-					if (h.pantry >= o.pantry_use) {
-						h.pantry -= o.pantry_use;
-						r.hunger = std::min(100.0, r.hunger + o.hunger);
-						++city_acc_.home_meals;
+					if (pick != 0 && pick != r.at) {
+						const uint32_t work = r.at;
+						r.offering = pick_off;
+						r.then = work;
+						if (city_trip(i, building_place(pick), pick, false)) return;
+						r.offering = -1;
+						r.then = 0;
 					}
 				}
 			}
@@ -952,8 +1018,11 @@ void Traffic::city_plan(size_t i) {
 		if (o.pantry_use > 0.0 && (!hh || hh->pantry < o.pantry_use)) continue;
 		double value;
 		// Sleepy, more so at night; hungry people eat before they go to bed.
-		if (sleep) value = 100.0 * cd.urgency(r.energy) - 120.0 + (night ? 100.0 : 0.0) - 50.0 * cd.urgency(r.hunger);
-		else value = cd.urgency(hunger) * o.hunger - 4.0;
+		if (sleep) {
+			value = 100.0 * cd.urgency(r.energy) - 120.0 + (night ? 100.0 : 0.0) - 60.0 * cd.urgency(r.hunger) -
+					(r.hunger < 35.0 ? 150.0 : 0.0);
+		}
+		if (!sleep) value = cd.urgency(hunger) * o.hunger - 4.0;
 		const double score = value - to_home * cd.travel_weight;
 		if (score > best && fits(to_home, sleep ? 240.0 : o.min_minutes, home)) {
 			best = score;
@@ -1228,14 +1297,13 @@ int Traffic::city_coach_arrives(int seats) {
 			}
 			if (size > seats) break;
 			const uint32_t home = vacant[pick].first;
-			const int32_t hi = add_household(home, size, true);
+			const int32_t hi = city_add_household(home, size, config_.employment_share);
 			if (hi < 0) {
 				vacant.erase(vacant.begin() + static_cast<std::ptrdiff_t>(pick));
 				continue;
 			}
 			for (uint32_t m : hh_[static_cast<size_t>(hi)].members) {
 				const size_t ri = static_cast<size_t>(find_resident(m));
-				res_[ri].works = rng_.uniform() < config_.employment_share;
 				res_[ri].state = ResidentState::Outside;
 				if (city_trip(ri, building_place(home), home, false)) {
 					++brought;
@@ -1245,7 +1313,6 @@ int Traffic::city_coach_arrives(int seats) {
 					res_[ri].at = home;
 				}
 				++city_acc_.immigrants;
-				if (res_[ri].works) city_choose_job(ri);
 			}
 			// A whole home taken: fewer vacancies there.
 			BState *b = bstate(home);
