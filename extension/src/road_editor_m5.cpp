@@ -5,6 +5,7 @@
 
 #include "tsim/buildings.h"
 #include "tsim/city_data.h"
+#include "tsim/demo_maps.h"
 
 #include <godot_cpp/core/class_db.hpp>
 
@@ -266,9 +267,11 @@ Array RoadEditor::sim_building_states(int level) {
 	const Traffic &t = sim_.traffic();
 	const Network *net = t.network();
 	if (!net || !t.city_on()) return out;
-	for (const NetBuilding &nb : net->buildings) {
+	const std::vector<BuildingInfo> infos = t.building_infos();
+	for (size_t k = 0; k < net->buildings.size() && k < infos.size(); ++k) {
+		const NetBuilding &nb = net->buildings[k];
 		if (nb.level != level || nb.type < 0) continue;
-		const BuildingInfo b = t.building_info(nb.id);
+		const BuildingInfo &b = infos[k];
 		Dictionary d;
 		d["id"] = static_cast<int64_t>(nb.id);
 		d["centre"] = gv(nb.centre);
@@ -300,7 +303,7 @@ Dictionary RoadEditor::sim_resident_info(int64_t id) {
 		if (!bd) return String();
 		const BuildingType *ty = default_city_data().type(bd->type);
 		const String label = ty ? gstr(ty->label) : gstr(bd->type);
-		return bd->name.empty() ? label + " " + String::num_int64(b) : gstr(bd->name);
+		return bd->name.empty() ? label + String(" ") + String::num_int64(b) : gstr(bd->name);
 	};
 	d["id"] = id;
 	d["visitor"] = r.visitor;

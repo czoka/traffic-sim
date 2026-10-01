@@ -61,6 +61,10 @@ func input(event: InputEvent) -> bool:
 				editor.sim.select_car(car)
 				return true
 		var hit: Dictionary = editor.road.pick(mouse, editor.pick_radius(), editor.level)
+		var building: int = editor.road.pick_building(mouse, editor.level)
+		if building != 0 and hit.type != "node":
+			editor.select("buildings", building, mb.shift_pressed)
+			return true
 		if hit.type == "none":
 			if not mb.shift_pressed:
 				editor.clear_selection()

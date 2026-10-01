@@ -27,12 +27,17 @@ var seed_value := 42
 var demand := 1.0
 var max_cars := 2000
 var max_people := 1000
+## Share of homes filled at reset (the city examples start lived in; a new city grows by immigration).
+var city_prefill := 0.0
 var selected_car := 0
 var selected_ped := 0
 var stats := {}
 var car_info := {}
 var ped_info := {}
 var stop_stats: Array = [] # [{id, name, pos, waiting, boarded, ...}] while people ride
+var city := {} # sim_city_stats (M5)
+var building_states: Array = [] # [{id, centre, kind, open, ...}] on the current level
+var daylight: CanvasModulate
 
 var _layers := {} # level -> MultiMeshInstance2D
 var _ped_layers := {} # level -> MultiMeshInstance2D
@@ -41,6 +46,9 @@ var _stats_timer := 0.0
 
 
 func _ready() -> void:
+	daylight = CanvasModulate.new()
+	daylight.name = "Daylight"
+	add_child(daylight)
 	for level in [-1, 0, 1]:
 		var quad := QuadMesh.new()
 		quad.size = Vector2(CAR_LENGTH, CAR_WIDTH)
@@ -89,6 +97,7 @@ func reset() -> void:
 	editor.road.sim_set_demand(demand)
 	editor.road.sim_set_max_vehicles(max_cars)
 	editor.road.sim_set_people({"max_pedestrians": max_people})
+	editor.road.sim_set_city({"prefill": city_prefill})
 	editor.road.sim_reset(seed_value)
 	selected_car = 0
 	car_info = {}
@@ -234,7 +243,10 @@ func _process(delta: float) -> void:
 
 func _refresh_stats() -> void:
 	stats = editor.road.sim_stats()
-	stop_stats = editor.road.sim_stop_stats() if int(stats.get("trips", 0)) > 0 else []
+	stop_stats = editor.road.sim_stop_stats() if int(stats.get("trips", 0)) > 0 or stats.get("city_on", false) else []
+	city = editor.road.sim_city_stats() if stats.get("city_on", false) else {}
+	building_states = editor.road.sim_building_states(editor.level) if not city.is_empty() else []
+	_apply_daylight()
 	editor.ui.refresh_sim(stats)
 	if selected_car != 0 or selected_ped != 0:
 		editor.ui.inspector.refresh_car()
@@ -259,6 +271,28 @@ func _update_cars() -> void:
 			pm.instance_count = n
 		if n > 0:
 			pm.buffer = editor.road.sim_ped_buffer(level, ped_scale)
+
+
+static func clock_text(day: int, minute: int) -> String:
+	return "%s %02d:%02d" % [["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][day % 7], minute / 60, minute % 60]
+
+
+## Dusk 19-21, night 21-05, dawn 05-07 (only on maps with buildings).
+func _apply_daylight() -> void:
+	if daylight == null:
+		return
+	if city.is_empty():
+		daylight.color = Color.WHITE
+		return
+	var h: float = float(int(stats.get("clock_minute", 720))) / 60.0
+	var night := 0.0
+	if h >= 21.0 or h < 5.0:
+		night = 1.0
+	elif h >= 19.0:
+		night = (h - 19.0) / 2.0
+	elif h < 7.0:
+		night = 1.0 - (h - 5.0) / 2.0
+	daylight.color = Color.WHITE.lerp(Color(0.5, 0.55, 0.75), night)
 
 
 ## Same look as the map: the level being edited is drawn normally, others dimmed

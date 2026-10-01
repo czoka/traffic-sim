@@ -477,6 +477,7 @@ public:
 	void set_city_data(const CityData *data) { city_data_ = data ? data : &default_city_data(); }
 	int64_t ticks_per_minute() const;
 	int64_t clock_minutes() const; // minutes since Monday 00:00 of week 0
+	int64_t clock_at(uint64_t tick) const; // the clock at a tick
 	int day() const { return static_cast<int>(clock_minutes() / 1440); }
 	int minute_of_day() const { return static_cast<int>(clock_minutes() % 1440); }
 	bool is_weekend() const { return day() % 7 >= 5; }
@@ -485,6 +486,7 @@ public:
 	int32_t find_resident(uint32_t id) const;
 	ResidentInfo resident_info(uint32_t id) const;
 	BuildingInfo building_info(uint32_t building_id) const;
+	std::vector<BuildingInfo> building_infos() const; // every building, in Network::buildings order (one pass)
 	CityStats city_stats() const;
 	// Places people travel between: spawn points, buildings, the main station.
 	size_t place_count() const { return place_entries_.size(); }
@@ -687,7 +689,6 @@ private:
 	BState *bstate(uint32_t building_id);
 	const BState *bstate(uint32_t building_id) const;
 	uint64_t tick_of(int day, int minute) const; // clock -> tick (0 when before the start)
-	int64_t clock_at(uint64_t tick) const; // minutes since Monday 00:00 of week 0
 	bool coaches_run() const;
 	int32_t new_resident(bool visitor);
 	double minutes_between(int32_t from_place, uint32_t to_building) const; // estimate, minutes

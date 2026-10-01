@@ -103,6 +103,13 @@ var _depot := {}
 var _car_box: VBoxContainer
 var _car_info: Label
 
+# Building widgets (M5)
+var _bld := 0
+var _building_box: VBoxContainer
+var _bld_name: LineEdit
+var _bld_info: Label
+var _bld_live: Label
+
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(300, 0)
@@ -121,6 +128,7 @@ func _ready() -> void:
 	_build_segment(outer)
 	_build_node(outer)
 	_build_car(outer)
+	_build_building(outer)
 	_multi_box = VBoxContainer.new()
 	_multi_label = Label.new()
 	_multi_box.add_child(_multi_label)
@@ -402,6 +410,107 @@ func _build_node(outer: VBoxContainer) -> void:
 	_delete_button(_node_box)
 
 
+func _build_building(outer: VBoxContainer) -> void:
+	_building_box = VBoxContainer.new()
+	_building_box.add_theme_constant_override("separation", 4)
+	outer.add_child(_building_box)
+	var r := _row(_building_box, "Name")
+	_bld_name = LineEdit.new()
+	_bld_name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_bld_name.placeholder_text = "unnamed"
+	_bld_name.text_submitted.connect(func(t: String) -> void: editor.road.set_building_name(_bld, t))
+	_bld_name.focus_exited.connect(func() -> void:
+		if _bld != 0 and _bld_name.text != String(editor.road.get_building(_bld).get("name", "")):
+			editor.road.set_building_name(_bld, _bld_name.text))
+	r.add_child(_bld_name)
+	_bld_info = Label.new()
+	_bld_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_bld_info.custom_minimum_size = Vector2(280, 0)
+	_bld_info.add_theme_font_size_override("font_size", 12)
+	_bld_info.add_theme_color_override("font_color", Color(0.75, 0.78, 0.82))
+	_building_box.add_child(_bld_info)
+	_building_box.add_child(EditorUI.section("Now"))
+	_bld_live = Label.new()
+	_bld_live.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_bld_live.custom_minimum_size = Vector2(280, 0)
+	_building_box.add_child(_bld_live)
+	_delete_button(_building_box)
+
+
+static func _hm(minutes: int) -> String:
+	return "%02d:%02d" % [minutes / 60, minutes % 60]
+
+
+func _type_of(id: String) -> Dictionary:
+	for t in editor.road.building_types():
+		if t.id == id:
+			return t
+	return {}
+
+
+func _fill_building(id: int) -> void:
+	_bld = id
+	var b: Dictionary = editor.road.get_building(id)
+	if b.is_empty():
+		return
+	var t := _type_of(String(b.type))
+	_title.text = String(b.label) + ((" · " + String(b.name)) if String(b.name) != "" else "")
+	if not _bld_name.has_focus():
+		_bld_name.text = b.name
+	var lines: Array = []
+	lines.append("%s, %.0f x %.0f m lot · parking: %s" % [String(b.kind).capitalize(), t.get("width", 0), t.get("depth", 0), t.get("parking", "none")])
+	if b.kind == "home":
+		lines.append("%d household%s · rent %d a month (from M6)" % [t.households, "" if int(t.households) == 1 else "s", int(t.rent)])
+	else:
+		if b.kind == "shop":
+			lines.append("Sells: %s · %d customers at once" % [", ".join(t.offers), t.slots])
+		else:
+			lines.append("%d desks" % int(t.desks))
+		var hours := "Weekdays %s-%s" % [_hm(t.weekday_hours.x), _hm(t.weekday_hours.y)] if t.weekday_open else "Closed on weekdays"
+		hours += " · " + ("weekends %s-%s" % [_hm(t.weekend_hours.x), _hm(t.weekend_hours.y)] if t.weekend_open else "closed at weekends")
+		lines.append(hours)
+		var shifts: Array = []
+		for sh in t.weekday_shifts:
+			shifts.append("%s-%s x%d" % [_hm(sh.start), _hm(sh.end), sh.staff])
+		lines.append("Shifts: %s · opens with %d staff · %d on the payroll · %.0f credits an hour (double at weekends)" % [
+			", ".join(shifts), t.min_staff, t.headcount, t.wage])
+	if not b.door:
+		lines.append("No sidewalk or path at the front: nobody can get in.")
+	_bld_info.text = "\n".join(lines)
+	refresh_building_live()
+
+
+func refresh_building_live() -> void:
+	if _bld == 0 or not _building_box.visible:
+		return
+	var b: Dictionary = editor.road.get_building(_bld)
+	var info: Dictionary = editor.road.sim_building_info(_bld)
+	if info.is_empty() or b.is_empty():
+		_bld_live.text = "Press Play to see who lives and works here."
+		return
+	var lines: Array = []
+	if b.kind == "home":
+		lines.append("%d of %d unit%s taken · %d resident%s · %d inside now" % [info.households, info.units,
+			"" if int(info.units) == 1 else "s", info.residents, "" if int(info.residents) == 1 else "s", info.inside])
+	else:
+		var state := "Open"
+		if info.closed_unexpectedly:
+			state = "Closed unexpectedly (not enough staff)"
+		elif not info.in_hours:
+			state = "Closed (outside opening hours)"
+		lines.append(state)
+		lines.append("Staff in %d · %s %d · %d inside" % [info.staff_in, "customers" if b.kind == "shop" else "visitors", info.customers, info.inside])
+		lines.append("Employees %d of %d · today: %d shifts taken, %d left to visitors" % [info.employees, info.headcount,
+			info.booked_today, info.unfilled_today])
+		if int(info.opened_at) >= 0:
+			lines.append("Opened at %s%s" % [_hm(info.opened_at), (" (%d min late)" % info.late_minutes_today) if int(info.late_minutes_today) > 5 else ""])
+		if int(info.unexpected_minutes_today) > 0:
+			lines.append("Closed unexpectedly for %d min today" % info.unexpected_minutes_today)
+		lines.append("Served %d · turned away %d · opened late %d time%s" % [info.served, info.turned_away, info.late_openings,
+			"" if int(info.late_openings) == 1 else "s"])
+	_bld_live.text = "\n".join(lines)
+
+
 func _build_car(outer: VBoxContainer) -> void:
 	_car_box = VBoxContainer.new()
 	outer.add_child(_car_box)
@@ -424,12 +533,20 @@ func refresh() -> void:
 	var sel := editor.selection
 	var n_seg: int = sel.segments.size()
 	var n_node: int = sel.nodes.size()
-	var car: bool = editor.sim != null and (editor.sim.selected_car != 0 or editor.sim.selected_ped != 0) and n_seg + n_node == 0
+	var n_bld: int = sel.get("buildings", []).size()
+	var total := n_seg + n_node + n_bld
+	var car: bool = editor.sim != null and (editor.sim.selected_car != 0 or editor.sim.selected_ped != 0) and total == 0
 	_car_box.visible = car
-	_segment_box.visible = n_seg == 1 and n_node == 0
-	_node_box.visible = n_node == 1 and n_seg == 0
-	_multi_box.visible = n_seg + n_node > 1
-	_empty.visible = n_seg + n_node == 0 and not car
+	_segment_box.visible = n_seg == 1 and total == 1
+	_node_box.visible = n_node == 1 and total == 1
+	_building_box.visible = n_bld == 1 and total == 1
+	_multi_box.visible = total > 1
+	_empty.visible = total == 0 and not car
+	if _building_box.visible:
+		_fill_building(sel.buildings[0])
+		reset_size()
+		return
+	_bld = 0
 	if car:
 		refresh_car()
 	elif _empty.visible:
@@ -437,11 +554,12 @@ func refresh() -> void:
 		_node = 0
 		var st: Dictionary = editor.road.get_stats()
 		_title.text = "Map"
-		_empty.text = "%d roads · %d junctions · %d lanes · %d spawn points\nGeometry %.1f ms · %d vertices\n\nSelect a road or node to edit it. Press R to draw a road, C for a curve, L to paint lanes, N to add spawn points. Press Space to run the traffic and click a car to follow it." % [
+		_empty.text = "%d roads · %d junctions · %d lanes · %d spawn points\nGeometry %.1f ms · %d vertices\n\nSelect a road or node to edit it. Press R to draw a road, C for a curve, L to paint lanes, N to add spawn points, H to place homes, shops and offices. Press Space to run the traffic and click a car or a person to follow them." % [
 			st.segments, st.junctions, st.lanes, editor.road.get_spawners().size(), st.build_ms, st.vertices]
 	elif _multi_box.visible:
 		_title.text = "Selection"
-		_multi_label.text = "%d road%s, %d node%s" % [n_seg, "" if n_seg == 1 else "s", n_node, "" if n_node == 1 else "s"]
+		_multi_label.text = "%d road%s, %d node%s, %d building%s" % [n_seg, "" if n_seg == 1 else "s", n_node,
+			"" if n_node == 1 else "s", n_bld, "" if n_bld == 1 else "s"]
 	elif _node_box.visible:
 		_fill_node(sel.nodes[0])
 	else:
@@ -610,11 +728,25 @@ func _refresh_ped() -> void:
 		lines.append("Waiting for %.0f s" % p.waited)
 	if String(p.route_name) != "":
 		lines.append("Bus %s from %s to %s" % [p.route_name, p.board, p.alight])
+	if int(p.get("resident", 0)) != 0:
+		var r: Dictionary = editor.road.sim_resident_info(p.resident)
+		if not r.is_empty():
+			_title.text = ("Visitor %d" if r.visitor else "Resident %d") % p.resident
+			lines.append(String(r.activity).capitalize())
+			if not r.visitor:
+				lines.append("Lives in %s (household of %d) · works %s" % [r.home_name, r.household_size,
+					("at " + String(r.employer_name)) if String(r.employer_name) != "" else "nowhere yet"])
+				lines.append("Hunger %.0f · energy %.0f · %.0f credits · pantry %.0f portions" % [r.hunger, r.energy, r.money, r.pantry])
+			if int(r.shift_start) >= 0:
+				lines.append("Shift %s-%s at %s" % [_hm(r.shift_start), _hm(r.shift_end), r.shift_name])
+			if int(r.late) > 0:
+				lines.append("Late for %d shift%s" % [r.late, "" if int(r.late) == 1 else "s"])
 	_car_info.text = "\n".join(lines)
 
 
-## Live numbers while the sim runs (stop stats on the selected road).
+## Live numbers while the sim runs (stop stats on the selected road, a building's state).
 func refresh_live() -> void:
+	refresh_building_live()
 	if _seg == 0 or not _segment_box.visible or not _stops_box.visible:
 		return
 	var seg: Dictionary = editor.road.get_segment(_seg)

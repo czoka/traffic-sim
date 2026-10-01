@@ -1461,6 +1461,48 @@ BuildingInfo Traffic::building_info(uint32_t id) const {
 	return out;
 }
 
+std::vector<BuildingInfo> Traffic::building_infos() const {
+	std::vector<BuildingInfo> out;
+	if (!net_) return out;
+	const CityData &cd = *city_data_;
+	out.resize(bstate_.size());
+	for (size_t bi = 0; bi < bstate_.size(); ++bi) {
+		const NetBuilding &nb = net_->buildings[bi];
+		const BState &b = bstate_[bi];
+		BuildingInfo &o = out[bi];
+		o.found = true;
+		o.id = nb.id;
+		o.type = nb.type;
+		o.units = static_cast<int>(b.units.size());
+		for (int32_t u : b.units) {
+			if (u < 0) continue;
+			++o.households;
+			o.residents += static_cast<int>(hh_[static_cast<size_t>(u)].members.size());
+		}
+		o.employees = static_cast<int>(b.employees.size());
+		o.headcount = nb.type >= 0 ? cd.types[static_cast<size_t>(nb.type)].headcount(cd.weekly_hours) : 0;
+		o.staff_in = b.staff_in;
+		o.customers = b.customers;
+		o.booked_today = b.booked_today;
+		o.unfilled_today = b.unfilled_today;
+		o.in_hours = b.in_hours;
+		o.open = b.open;
+		o.closed_unexpectedly = b.unexpected;
+		o.opened_at = b.opened_at;
+		o.late_minutes_today = b.late_minutes;
+		o.unexpected_minutes_today = b.unexpected_minutes;
+		o.served = b.served;
+		o.turned_away = b.turned_away;
+		o.late_openings = b.late_openings;
+	}
+	for (const Resident &r : res_) {
+		if (r.state != ResidentState::Inside) continue;
+		const int32_t bi = net_->building_index(r.at);
+		if (bi >= 0 && static_cast<size_t>(bi) < out.size()) ++out[static_cast<size_t>(bi)].inside;
+	}
+	return out;
+}
+
 CityStats Traffic::city_stats() const {
 	CityStats st = city_acc_;
 	st.on = city_on_;

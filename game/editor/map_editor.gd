@@ -18,7 +18,7 @@ var snap_angle := true
 var show_connectors := false
 ## Draw only the level being edited (H).
 var level_filter := false
-var selection := {"nodes": [], "segments": []}
+var selection := {"nodes": [], "segments": [], "buildings": []}
 ## What the road and curve tools draw: {preset: name} or {profile: dict}.
 var road_template := {"preset": "Street 1+1"}
 var road_template_name := "Street 1+1"
@@ -82,6 +82,7 @@ func _ready() -> void:
 		"crosswalk": CrosswalkTool.new(self),
 		"fence": FenceTool.new(self),
 		"bridge": BridgeTool.new(self),
+		"building": BuildingTool.new(self),
 	}
 	_load_user_presets()
 	ui = EditorUI.new()
@@ -114,7 +115,9 @@ func _load_startup_map() -> void:
 		return
 	for arg in args:
 		if arg.begins_with("--example="):
-			road.load_example(arg.trim_prefix("--example="))
+			var which := arg.trim_prefix("--example=")
+			road.load_example(which)
+			sim.city_prefill = 1.0 if which == "city_town" else 0.95 if which == "city_week" else 0.0
 			return
 	if args.has("--demo"):
 		road.load_demo_town()
@@ -151,6 +154,7 @@ func _apply_cmdline() -> void:
 			sim.reset()
 			for i in int(float(arg.trim_prefix("--sim-seconds=")) * 10.0 / 50.0):
 				road.sim_step(50)
+			sim._refresh_stats()
 		elif arg.begins_with("--select-ped="):
 			sim.select_ped.call_deferred(int(arg.trim_prefix("--select-ped=")))
 		elif arg == "--level-filter":
@@ -210,7 +214,11 @@ func _prune_selection() -> void:
 	for id in selection.segments:
 		if not road.get_segment(id).is_empty():
 			segs.append(id)
-	selection = {"nodes": nodes, "segments": segs}
+	var blds: Array = []
+	for id in selection.buildings:
+		if not road.get_building(id).is_empty():
+			blds.append(id)
+	selection = {"nodes": nodes, "segments": segs, "buildings": blds}
 
 
 # --- Tools, selection, level -------------------------------------------------------
@@ -241,7 +249,7 @@ func select(kind: String, id: int, additive: bool) -> void:
 	if sim.selected_ped != 0:
 		sim.select_ped(0)
 	if not additive:
-		selection = {"nodes": [], "segments": []}
+		selection = {"nodes": [], "segments": [], "buildings": []}
 	var list: Array = selection[kind]
 	if additive and list.has(id):
 		list.erase(id)
@@ -252,19 +260,21 @@ func select(kind: String, id: int, additive: bool) -> void:
 
 
 func clear_selection() -> void:
-	selection = {"nodes": [], "segments": []}
+	selection = {"nodes": [], "segments": [], "buildings": []}
 	ui.refresh_inspector()
 	overlay.queue_redraw()
 
 
 func has_selection() -> bool:
-	return not selection.nodes.is_empty() or not selection.segments.is_empty()
+	return not selection.nodes.is_empty() or not selection.segments.is_empty() or not selection.buildings.is_empty()
 
 
 func delete_selection() -> void:
 	if not has_selection():
 		return
 	road.begin("Delete")
+	for id in selection.buildings:
+		road.remove_building(id)
 	for id in selection.segments:
 		road.delete_segment(id)
 	for id in selection.nodes:
@@ -390,15 +400,21 @@ func autosave() -> void:
 
 
 func new_map() -> void:
-	road.new_map()
+	road.new_city()
 	clear_selection()
+	_refresh_map()
 	sim.reset()
-	notify("New empty map. Undo history cleared.")
+	fit_view()
+	notify("New city: the main station and the city offices. Press H to place homes, shops and offices.")
 
 
 ## "town", "grid", "t_junction", "lane_drop" or "one_way_pair".
 func load_demo(which: String) -> void:
-	road.load_example(which)
+	if which == "empty":
+		road.new_map()
+	else:
+		road.load_example(which)
+	sim.city_prefill = 1.0 if which == "city_town" else 0.95 if which == "city_week" else 0.0
 	clear_selection()
 	_refresh_map()
 	sim.pause()
@@ -538,6 +554,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_B:
 			set_tool("bridge")
 		KEY_H:
+			set_tool("building")
+		KEY_J:
 			set_level_filter(not level_filter)
 		KEY_SPACE:
 			sim.toggle()
