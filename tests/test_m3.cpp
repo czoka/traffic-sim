@@ -347,6 +347,116 @@ TEST_CASE("roundabout: ring traffic has priority and every leg flows") {
 	}
 }
 
+TEST_CASE("turbo roundabout: lanes spiral out, the entry lane decides the exit") {
+	for (int lanes = 2; lanes <= 3; ++lanes) {
+		World w;
+		const Cross x = cross_roads(w.doc, lanes == 2 ? "Avenue 2+2, median" : "Highway 3+3");
+		Roundabout r;
+		r.enabled = true;
+		r.radius = lanes == 2 ? 24.0 : 30.0;
+		r.lanes = lanes;
+		r.turbo = true;
+		w.doc.set_roundabout(x.c, r);
+		for (NodeId end : { x.w, x.e, x.n, x.s }) w.doc.set_spawner(end, spawner(300.0));
+		w.sync();
+		const NodeGeom *g = w.geom.node(x.c);
+		REQUIRE(g);
+		std::map<LaneId, int> ring_k;
+		for (const RingLane &rl : g->ring) ring_k[rl.id] = rl.lane;
+		// The outer lane always leaves at the next exit; others spiral one lane out
+		// per leg (the innermost may also stay inside).
+		int exits_from_outer = 0, bad = 0, shifts = 0, stays = 0;
+		for (const Connector &c : g->connectors) {
+			if (!ring_k.count(c.from_lane)) continue;
+			const int k = ring_k[c.from_lane];
+			if (!ring_k.count(c.to_lane)) {
+				exits_from_outer += k == 0 ? 1 : 0;
+				continue;
+			}
+			const int to = ring_k[c.to_lane];
+			if (k == 0) ++bad; // the outer lane never goes on round
+			else if (to == k - 1) ++shifts;
+			else if (to == k && k == lanes - 1) ++stays;
+			else ++bad;
+		}
+		CHECK(bad == 0);
+		CHECK(exits_from_outer >= 4);
+		CHECK(shifts == 4 * (lanes - 1));
+		CHECK(stays == 4);
+		const Network &n = w.net();
+		for (const NetLane &l : n.lanes) {
+			if (l.ring) CHECK((l.change_left.empty() && l.change_right.empty())); // no lane changes inside
+		}
+		// Which exits each entry lane can reach (no lane changes once in the junction).
+		const SegmentId legs[4] = { x.sw, x.se, x.sn, x.ss };
+		auto exit_leg = [&](int32_t lane) {
+			const NetLane &l = n.lanes[static_cast<size_t>(lane)];
+			for (int k = 0; k < 4; ++k) {
+				if (l.kind == NetLaneKind::Road && !l.ring && l.segment == legs[k] && l.start_node == x.c) return k;
+			}
+			return -1;
+		};
+		for (int k = 0; k < 4; ++k) {
+			std::vector<int32_t> entries;
+			for (size_t i = 0; i < n.lanes.size(); ++i) {
+				const NetLane &l = n.lanes[i];
+				if (l.kind == NetLaneKind::Road && !l.ring && l.segment == legs[k] && l.end_node == x.c && !l.next.empty() &&
+						l.type != LaneType::Bike) {
+					entries.push_back(static_cast<int32_t>(i));
+				}
+			}
+			std::sort(entries.begin(), entries.end(), [&](int32_t a, int32_t b) {
+				// Rightmost first: count lanes to the right.
+				auto rights = [&](int32_t q) {
+					int c = 0;
+					for (int32_t r2 = n.lanes[static_cast<size_t>(q)].right; r2 >= 0; r2 = n.lanes[static_cast<size_t>(r2)].right) ++c;
+					return c;
+				};
+				return rights(a) < rights(b);
+			});
+			REQUIRE(entries.size() == static_cast<size_t>(lanes));
+			std::set<int> all;
+			int first_exit = -1;
+			for (size_t e = 0; e < entries.size(); ++e) {
+				std::set<int> reach;
+				std::set<int32_t> seen{ entries[e] };
+				std::vector<int32_t> todo{ entries[e] };
+				while (!todo.empty()) {
+					const int32_t q = todo.back();
+					todo.pop_back();
+					for (int32_t nx : n.lanes[static_cast<size_t>(q)].next) {
+						const int leg = exit_leg(nx);
+						if (leg >= 0) {
+							reach.insert(leg);
+							continue;
+						}
+						if (seen.insert(nx).second) todo.push_back(nx);
+					}
+				}
+				// Lane e (0 = rightmost) spirals out to the outer lane by exit e + 1 and
+				// must leave there (with multi-lane exits it may leave earlier, into the
+				// matching exit lane); the innermost may stay inside for every later exit,
+				// U-turn included.
+				CHECK(reach.size() == (e + 1 == entries.size() ? 4u : e + 1));
+				all.insert(reach.begin(), reach.end());
+				if (e == 0) first_exit = *reach.begin();
+			}
+			CHECK(all.size() == 4);
+			CHECK(first_exit != k); // the right lane only takes the first exit, never a U-turn
+		}
+		w.t().reset(17);
+		w.run_for(900.0);
+		const TrafficStats st = w.t().stats();
+		std::printf("turbo roundabout (%d lanes): %llu trips in 15 min, longest stop %.0f s, %llu unroutable\n", lanes,
+				static_cast<unsigned long long>(st.arrived), st.max_stopped, static_cast<unsigned long long>(st.unroutable));
+		CHECK(st.arrived > 200);
+		CHECK(st.unroutable == 0);
+		CHECK(st.removed_stuck == 0);
+		CHECK(st.max_stopped < 120.0);
+		CHECK(overlaps(w.t()) == 0);
+	}
+}
+
 TEST_CASE("lane classes: bike lanes for bikes, bus lanes cost cars") {
 	World w;
 	const Cross x = cross_roads(w.doc, "Street 1+1, bike lanes");
