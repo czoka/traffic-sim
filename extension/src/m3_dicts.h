@@ -73,6 +73,7 @@ inline Dictionary signal_dict(const tsim::SignalPlan &p) {
 			moves.push_back(md);
 		}
 		pd["moves"] = moves;
+		pd["walk"] = ids(ph.walk);
 		phases.push_back(pd);
 	}
 	d["phases"] = phases;
@@ -99,6 +100,7 @@ inline tsim::SignalPlan signal_from(const Dictionary &d) {
 			m.permissive = md.get("permissive", false);
 			ph.moves.push_back(m);
 		}
+		ph.walk = ids_from(pd.get("walk", Array()));
 		p.phases.push_back(ph);
 	}
 	p.amber = static_cast<double>(d.get("amber", p.amber));
@@ -166,6 +168,27 @@ inline tsim::Depot depot_from(const Dictionary &d) {
 		dp.routes.push_back(r);
 	}
 	return dp;
+}
+
+// M4: crossings (mid-block, or the one at a junction leg in EndRules).
+inline Dictionary crossing_rules_dict(const tsim::Crossing &c) {
+	Dictionary d;
+	d["id"] = static_cast<int64_t>(c.id);
+	d["u"] = c.u;
+	d["kind"] = tsim::crossing_kind_name(c.kind);
+	d["bike"] = c.bike;
+	d["refuge"] = c.refuge;
+	return d;
+}
+
+inline tsim::Crossing crossing_rules_from(const Dictionary &d, tsim::Crossing c) {
+	c.id = static_cast<uint32_t>(static_cast<int64_t>(d.get("id", static_cast<int64_t>(c.id))));
+	c.u = static_cast<double>(d.get("u", c.u));
+	tsim::CrossingKind k = c.kind;
+	if (tsim::crossing_kind_from_name(str(d.get("kind", tsim::crossing_kind_name(c.kind))), k)) c.kind = k;
+	c.bike = d.get("bike", c.bike);
+	c.refuge = d.get("refuge", c.refuge);
+	return c;
 }
 
 } // namespace m3

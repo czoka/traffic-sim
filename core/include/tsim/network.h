@@ -55,6 +55,7 @@ struct NetLane {
 	LaneKey key;
 	LaneType type = LaneType::General;
 	int level = 0;
+	int level_end = 0; // ramps (M4): the level at the lane's end
 	double length = 0.0;
 	double speed_limit = 13.9; // m/s; connectors: also limited by curvature
 	std::vector<Vec2> pts; // travel direction
@@ -99,7 +100,10 @@ struct NetSignal {
 	std::vector<std::vector<uint8_t>> state;
 	std::vector<uint8_t> right_on_red; // per movement: EU flashing green arrow
 	std::vector<std::pair<SegmentId, SegmentId>> movements; // (from leg, to leg)
+	std::vector<std::vector<SegmentId>> walk; // per phase: legs whose crosswalk shows walk (M4)
 };
+
+enum class WalkLight : uint8_t { DontWalk = 0, Walk = 1, Flashing = 2 };
 
 enum class SignalLight : uint8_t { Red = 0, Green = 1, GreenYield = 2, Amber = 3 };
 
@@ -118,6 +122,87 @@ struct NetJunction {
 	SignalLight light(int32_t movement, int64_t tick) const;
 	// Phase index and ticks into it, for display.
 	int phase_at(int64_t tick, int64_t *into = nullptr) const;
+	// Pedestrian light of the crosswalk across leg `leg` (M4); flashing for the
+	// last `clear_ticks` of the walk phase's green.
+	WalkLight walk_light(SegmentId leg, int64_t tick, int64_t clear_ticks) const;
+};
+
+// --- Pedestrian network (M4) -----------------------------------------------------------
+
+enum class PedEdgeKind : uint8_t {
+	Walk = 0, // sidewalk, path, corner
+	Crossing = 1, // across a road (see NetCrossing)
+	Ramp = 2, // a level change on a ramp
+	Stairs = 3,
+};
+
+struct PedNode {
+	Vec2 pos;
+	int level = 0;
+};
+
+struct PedEdge {
+	int32_t a = -1, b = -1;
+	double length = 0.0;
+	PedEdgeKind kind = PedEdgeKind::Walk;
+	int32_t crossing = -1; // NetCrossing index (Crossing edges)
+	int rise = 0; // levels climbed from a to b
+};
+
+// Where a car lane passes over a crossing: lane distances [s0, s1] (the car's
+// front must not enter it while it is blocked) and the part of the crossing
+// line the lane covers, as distances from the crossing's a end.
+struct CrossingSpan {
+	int32_t lane = -1;
+	double s0 = 0.0, s1 = 0.0;
+	double t0 = 0.0, t1 = 0.0;
+};
+
+struct NetCrossing {
+	SegmentId seg = kNoId;
+	int end = -1; // 0/1 at a junction leg, -1 mid-block
+	uint32_t id = 0;
+	NodeId node = kNoId;
+	// As it behaves: signal crossings at junctions without signals act as zebras.
+	CrossingKind kind = CrossingKind::Zebra;
+	bool unmarked = false; // an informal crossing (uncontrolled; no paint, costs more)
+	bool push_button = false; // a mid-block signal: cars get red only when someone waits
+	int32_t junction = -1; // NetJunction index of a signal crossing at a junction
+	int level = 0;
+	Vec2 a, b;
+	double length = 0.0;
+	std::vector<int32_t> edges; // its ped edges, a -> b (two with a refuge)
+	std::vector<CrossingSpan> spans;
+	int64_t clear_ticks = 80; // flashing time (signals): walking the whole length
+};
+
+struct PedStop {
+	int32_t stop = -1; // Network::stops index
+	int32_t node = -1; // the platform
+	Vec2 pos;
+	int level = 0;
+};
+
+struct PedSpawner {
+	NodeId node = kNoId;
+	Vec2 pos;
+	int level = 0;
+	double people = 0.0; // trips per hour starting here
+	bool sink = true;
+	std::vector<OdWeight> od;
+	std::vector<int32_t> entries; // ped nodes where people appear and leave
+	bool road = false; // also a vehicle spawn point (cars and bikes can start here)
+};
+
+struct PedGraph {
+	std::vector<PedNode> nodes;
+	std::vector<PedEdge> edges;
+	std::vector<std::vector<int32_t>> adj; // node -> edge indices
+	std::vector<NetCrossing> crossings;
+	std::vector<std::vector<int32_t>> lane_crossings; // per Network lane: crossing indices with a span on it
+	std::vector<PedStop> stops;
+	std::vector<PedSpawner> spawners;
+	void clear();
 };
 
 struct NetBay {
@@ -188,6 +273,7 @@ public:
 	std::vector<NetDepot> depots; // ascending node id
 	std::vector<NetCoachLine> coach_lines;
 	int32_t main_station = -1; // index into stops
+	PedGraph ped; // M4
 	int32_t stop_index(uint32_t id) const;
 	double max_speed = 13.9; // fastest speed limit, for the routing heuristic
 

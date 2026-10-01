@@ -2,7 +2,7 @@
 
 A traffic simulation map builder: a C++ simulation core running inside Godot 4, targeting desktop and the browser.
 
-**Status: M3 (junctions and transit) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals) or turn it into a roundabout, place bus stops, depots and routes, and press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
+**Status: M4 (people and levels) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals with walk phases) or turn it into a roundabout, place bus stops, depots and routes, footpaths and bike paths, crossings and fences, and lift roads onto bridges or into tunnels. Press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue, and people walk, wait at the kerb, cross, and ride the bus. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
 
 The design lives in the Game Design Document (claude.ai artifact "Traffic Sim Map Builder — Game Design Document"). Its *Implementation plan* tab has the checklists and gates.
 
@@ -47,6 +47,10 @@ The layout is a tool palette on the left, an inspector on the right, and a botto
 | Bus stop | `K` | Click beside a road to add a stop on that side (the direction it serves). `1` kerbside, `2` bus bay, `3` main station. Shift-click removes the nearest stop. |
 | Bus depot | `D` | Click a road end to add a depot; Shift-click removes it. |
 | Bus route | `U` | Click a depot, then its stops in order; Enter (or the depot again) saves the route. `L` toggles loop / end to end, Backspace drops the last stop, Esc cancels. |
+| Path | `P` | Draws like the road tool. `1` footpath, `2` bike path, `3` shared path. Footpaths never join roads; their ends link to the nearest sidewalk within 10 m. Bike and shared paths join roads and junctions like a road. |
+| Crossing | `W` | Click a road: within 20 m of a junction it marks that leg's crossing, elsewhere it adds a mid-block one. `1` zebra, `2` signal, `3` uncontrolled; `B` adds a bike crossing beside it, `I` a refuge island (roads with a median). Shift-click removes the nearest crossing. |
+| Fence | `E` | Drag along one side of a road to put up a fence (no informal crossing there); drag over a fence, or Shift-drag, to take it down. |
+| Bridge / tunnel | `B` | Click a road where it crosses another: it is lifted to level +1 over the other road, with ramps on both sides at the grade limit. `T` builds a tunnel (level −1) instead. The preview shows where the ramps start and end. |
 
 Snapping order: an existing node, then a point on a road (which splits it into a junction), then 15° angles and the 1 m grid (toggle with `G` / `A`). While drawing, the status bar shows the length and angle of the current leg.
 
@@ -58,7 +62,7 @@ What the editor generates from the map:
 * **Turn pockets:** a turn-lane rule adds a pocket lane for the last N metres with a 15 m taper. Pockets appear only where the turn actually exists.
 * **Tapers:** where two roads with different lane counts join end to end, the outer lanes narrow away and get a merge arrow.
 * **Lane lines:** they are dashed by default and solid within 30 m of a stop line. Painted zones are solid, or double solid/dashed for one-sided zones.
-* **Levels:** roads have a level of −1, 0 or +1, and only roads on the same level connect. The level being edited is drawn normally; other levels are dimmed or see-through.
+* **Levels:** roads have a level of −1, 0 or +1, and only roads on the same level connect (ramps join two levels, M4). The level being edited is drawn normally; other levels are dimmed or see-through, upper levels cast a shadow on what is below them, and the level filter hides the others.
 
 The **inspector** edits a road's name, speed limit, level, lanes per direction, lane width, median, sidewalks, parking, bike and bus lanes, one-way direction and the turn rules at each junction end. Nine built-in profiles are included, and "Save as…" stores your own in `user://profiles.json`.
 
@@ -80,9 +84,23 @@ Selecting a **junction** shows its control: right-hand priority (the default: yi
 
 The problems panel also lists stops with no lane for their direction, depots that aren't on a road end, routes that can't reach a stop or get back to the depot, coach lines without an exit, and coach lines on a map without a main station.
 
+## People and levels (M4)
+
+**Paths.** Roads, footpaths, bike paths and shared paths are all segments. A footpath is a 3 m path for people only. A bike path (two 1.25 m bike lanes) and a shared path (two 2 m lanes for bikes, walkable too) join roads and junctions like any road; bikes route onto them, and their bike connectors reach junctions where only bikes may go. Sidewalks from road profiles join at junction corners and run around roundabouts.
+
+**Crossings.** Every junction leg has a crossing, painted between the junction box and the stop line: *zebra* (people have priority), *signal* (a walk light from the signal plan; at a junction without signals it acts as a zebra), *uncontrolled* (people wait for a gap), or none, in which case people still cross there informally (unpainted, perceived as twice as long plus 20 s). A crossing can have a bike crossing beside it. Mid-block crossings go anywhere along a road: a mid-block *signal* is a push button (cars keep green for at least 20 s, then amber 3 s, all-red 1 s, walk 6 s, flashing while it takes to cross, and back to green once the crossing is clear). A *refuge* island on the median splits a crossing in two. Besides the marked ones, people cross informally every 60 m on roads of up to four lanes without a raised median, at least 25 m from a marked crossing, unless a **fence** is in the way. No parking within 10 m of a mid-block crossing.
+
+**Walk phases.** Each signal phase lists the legs people may cross in it. The default plan lets people cross the legs that aren't moving in that phase (beside the traffic that runs parallel to them). *Add scramble phase* adds a phase with every car movement red and every leg walking. Walk lights flash for the time it takes to cross the leg (at least 4 s of walk first), and are drawn at both ends of each signal crossing.
+
+**People.** Spawn points have a *People* rate (trips per hour starting there on foot); a spawn point at a footpath end is for people only. Each trip picks a destination by the origin-destination weights and then a mode on generalized cost, each option scaled by 1 ± 20 % per person: **walking** (perceived walking time ×2), **the bus** (walking to and from the stops ×2, plus the headway as the expected wait, plus the ride; one transfer allowed for 5 minutes extra), a **bike** (30 % of people have one; the trip becomes a bike from that spawn point) or a **car** (50 %; the trip joins that spawn point's car queue). With coaches running, 5 % of trips leave the map by coach from the main station, and every coach brings 10–40 people who walk on into the city. People walk the pedestrian network at 1.2–1.5 m/s (4.3–5.4 km/h), routing on perceived cost: crossings cost extra time (a signal about half a cycle, a zebra 3 s, uncontrolled 10 s), ramps 30 s per level and stairs more. At a crossing they wait at the kerb until it is safe: a zebra when every car can still stop comfortably, uncontrolled and informal crossings when the gap is long enough to clear each lane (after a minute's wait, people step out in front of any car that can still stop), a signal on walk. Cars give way to anyone on a crossing who hasn't yet passed their lane, slow for someone waiting at a zebra, and don't stop on a crossing when the queue leaves no room after it.
+
+**Passengers.** People going by bus walk to the stop and wait. Buses (80 places, 2 doors) and coaches (50 places, 1 door) let people off first, then board them in the order they arrived until full; the rest are left behind. A bus dwells 3 s plus 2 s per person per door, and people who arrive while it is still there get on too. With no people on the map, buses keep the fixed 20 s dwell. The stop inspector shows, per stop, people waiting, boarded, got off, mean wait and left behind; the depot's routes show the mean load leaving each stop. People are drawn as dots, light blue walking, orange waiting to cross, white crossing, violet waiting for the bus; click one to see their trip, mode, stops and route.
+
+**Levels.** A road can be a ramp (up or down one level, 5 m per level) or, for a footpath, stairs. The grade check flags ramps steeper than 6 % for roads and bike paths, 8 % for footpaths and 50 % for stairs, and ramps that end in a junction. The bridge / tunnel tool lifts the part of a road that crosses another: it finds the road below, keeps a flat span of half its width plus 4 m on each side, and adds ramps at the grade limit (83 m for a road, 63 m for a footpath). The lower half of a ramp still collides with its lower level, so a ramp can't start in the middle of a road it crosses. People and cars change level halfway along a ramp; the level filter and shadows keep stacked levels readable.
+
 ## The simulation (M2)
 
-The bar above the bottom bar runs the sim: **Play/Pause** (`Space`), **Step** one sim second (`.`), **Restart** (remove all cars and start again with the seed), **Speed** (16x real time by default, multipliers 0.25–8 for 4x–128x), **Seed**, **Density** (multiplies every spawn rate) and **Max cars** (spawning pauses at that many cars). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
+The bar above the bottom bar runs the sim: **Play/Pause** (`Space`), **Step** one sim second (`.`), **Restart** (remove all cars and start again with the seed), **Speed** (16x real time by default, multipliers 0.25–8 for 4x–128x), **Seed**, **Density** (multiplies every spawn rate) **Max cars** (spawning pauses at that many cars) and **Max people** (new trips on foot pause at that many people, 1,000 by default). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
 
 How it works:
 
@@ -93,7 +111,7 @@ How it works:
 * **Demand.** Spawn points release cars as a Poisson process at their rate × density, towards destinations drawn from the origin-destination weights (only reachable ones). Cars queue at the map edge when the entry lane is full, and leave the map at their destination's road end.
 * **Editing while paused.** Vehicles, routes and grants are carried over to the recompiled network by stable lane IDs; cars on lanes that no longer exist are removed and every other car re-routes.
 
-**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, or the POC ring benchmark.
+**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, the M4 people town and people city, or the POC ring benchmark.
 
 ### Other controls
 
@@ -105,11 +123,12 @@ How it works:
 | Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y) | Undo, redo |
 | Ctrl/Cmd+S, Ctrl/Cmd+O | Export, open a map file |
 | PgUp / PgDn | Edit the level above / below |
+| `H` | Show only the level being edited (also *Only this level* in the bottom bar) |
 | Esc | Cancel the current drawing, then clear the selection |
 
 ## Map files
 
-Format `"traffic-sim-map"`, version **4**. The file stores nodes (position, level, junction control with main-road segments, signal plan, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate and coach lines) and segments: curve (straight, arc or Bézier), level, speed limit, name, profile (lanes with stable IDs and parking style), turn rules per end (with pocket lane IDs), no-change zones and bus stops. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2 and 3 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v4.json` are written by `tsim_bench --write-maps game/maps`).
+Format `"traffic-sim-map"`, version **5**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–4 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v5.json` are written by `tsim_bench --write-maps game/maps`).
 
 ## M1 gate and measurements
 
@@ -139,13 +158,30 @@ The golden scenario (the grid, seed 42, density ×2, 500-car cap, 6,000 ticks) h
 
 The gate is that **a showcase map using every M3 feature passes validation and runs a full sim day.** It is checked by the C++ tests `showcase map` and `M3 gate` and by `game/tests/sim_smoke_test.gd`:
 
-* **The map** (`build_showcase`, *Examples → Showcase*, `game/maps/showcase_v4.json`): an avenue with bus lanes and parking into a signalized junction (default plan, a left-turn pocket, right on red from the south) and on to a two-lane roundabout with a slip lane; a bike street; roads with parallel, 45° and 90° parking; kerbside stops, two bus bays and a three-bay main station; a depot with a loop route (5 min headway) and an end-to-end route (8 min); a coach line (3 an hour, 5 min at the station); cars in and out at six edges and bikes at two. It has no errors, warnings or network problems.
+* **The map** (`build_showcase`, *Examples → Showcase*, `game/maps/showcase_v5.json`): an avenue with bus lanes and parking into a signalized junction (default plan, a left-turn pocket, right on red from the south) and on to a two-lane roundabout with a slip lane; a bike street; roads with parallel, 45° and 90° parking; kerbside stops, two bus bays and a three-bay main station; a depot with a loop route (5 min headway) and an end-to-end route (8 min); a coach line (3 an hour, 5 min at the station); cars in and out at six edges and bikes at two. It has no errors, warnings or network problems.
 * **The run:** 24 sim hours with seed 2026. About 41,600 trips (1,600–1,800 an hour), 466 bus runs serving 1,800 stops, 72 coach calls, 5,500 bike trips, 5,700 parkings and 1,100 right turns on red.
 * **Checks:** no vehicle taken off the map as stuck, none stopped for 10 minutes (the longest stop is under 4 minutes), no junction stuck by itself for 90 s, trips per hour never below half of the first full hour, no overlaps in any lane, and the bus, coach, bike and parking counts above their floors.
 
 Other M3 tests cover signal timing in ticks, red lights, right on red (full stop first; straight on waits), the default plan, one- and two-lane roundabouts (ring priority, throughput), bike lanes and bike routing, cars keeping out of bus lanes, parking (one car per bay, cars drawn in their bay), a bus following its route stop by stop back to the depot, coaches, taxis and bikes on the showcase, moving stops while buses run, the transit problems, and a golden hash of 15 showcase minutes (`69e85f1801f703bf`, checked on every CI platform).
 
 Cost: the showcase (100–250 vehicles) runs a sim day in about 12 s on one core of a 2.1 GHz Xeon, about 14 µs per tick.
+
+## M4 gate and measurements
+
+The gate is **2,000 vehicles and 1,000 pedestrians at 60 fps on the web build.** It is checked by the C++ test `M4 gate` (which also runs in wasm under Node in CI) and by `game/tests/sim_smoke_test.gd`:
+
+* **The map** (`build_people_city`, *Examples → People city*, `game/maps/people_city_v5.json`): the test grid at 12 × 12 junctions (1.4 km across; 2,330 sim lanes, 145 junctions) with 900 people an hour at every spawn point, signals with walk phases on every other avenue junction and zebras on some streets: 861 crossings (marked and informal) and 3,544 nodes in the pedestrian network.
+* **The run:** density ×3, capped at 2,000 vehicles and 1,000 people; both caps are reached after 4.5 sim minutes, then 5 sim minutes are timed with at least 1,990 vehicles and 1,000 people on the map all the time.
+* **Checks:** at least 1,800 vehicles and 900 people at every sample, people arriving, fewer than 20 vehicles taken off as stuck (none in practice), nobody standing at a kerb for 2 minutes (the longest wait is under a minute, the mean 6 s, with about 3,000 cars giving way in 5 minutes).
+
+| People city, 2,000 vehicles + 1,000 people | Tick |
+| --- | --- |
+| Native C++ (one core of a 2.1 GHz Xeon) | 0.63 ms |
+| wasm in Node (V8) | 0.68 ms |
+
+At the editor's default 16x (160 ticks a second) that is about 1.8 ms of sim work per 60 fps frame in wasm; at 1x, 0.1 ms. Drawing is one MultiMesh each for vehicles and people per level. **The frame rate itself has not been measured in a desktop browser on real hardware** (this environment only has headless and software rendering), so the 60 fps part of the gate still needs that check: open the exported page, load *Examples → People city*, press Play and watch the sim tooltip and the browser's frame rate.
+
+Other M4 tests cover the people town (every crossing kind, the network joins up, the bridge and its ramps), people walking, crossing, riding and arriving there, zebra priority and cars giving way, uncontrolled crossings waiting for gaps (and none without traffic), push-button signals (cars stop, nobody runs the red, back to green), walk lights following the plan with a flashing clearance, bus capacity and people left behind, mode choice (and no car or bike trips without owners), ramp grades and stairs, the bridge tool (plan, build, undo, cars driving over it), fences removing informal crossings, and determinism: same seed same hash, people carried over when the map changes, and a golden hash of 10 people-town minutes (`7fbf36952357709f`, checked on every CI platform). The M2 and M3 golden hashes are unchanged: a map without people runs exactly as before.
 
 ## POC ring benchmark
 
@@ -170,18 +206,21 @@ core/                 pure C++17, no Godot includes
     curve.h           straight / arc / Bézier curves, deterministic lengths
     road_geometry.h   cross-sections, junctions, connectors, paint, meshes
     validation.h      problems panel checks
-    network.h         sim network compile: lanes, connectors, conflict matrices (M2)
+    network.h         sim network compile: lanes, connectors, conflict matrices (M2),
+                      the pedestrian network and crossings (M4, ped_network.cpp)
     traffic.h         traffic sim: routing, IDM, MOBIL, junction grants, signals,
-                      vehicle kinds, parking, buses and coaches, demand (M2, M3)
+                      vehicle kinds, parking, buses and coaches, demand (M2, M3),
+                      people, crossings, mode choice and passengers (M4, traffic_peds.cpp)
     traffic_run.h     keeps network and sim in step with the map; M2 golden scenario
-    demo_maps.h       demo town, the gate test grid, the M2 test maps, the M3 showcase
+    demo_maps.h       demo town, the gate test grid, the M2 test maps, the M3 showcase,
+                      the M4 people town and people city
     map.h, sim.h      POC runtime lane network and IDM simulation
 extension/src/        GDExtension: RoadEditor (editor + sim bridge), TrafficSim (POC)
 game/                 Godot 4.7 project (Compatibility renderer)
   editor/             main scene, map view, sim controller, overlay, tools/, ui/, file I/O
   poc/                ring benchmark scene
   common/             camera controller
-  maps/               example maps (v4, a few v2) and the POC ring (v1)
+  maps/               example maps (v5, a few v2) and the POC ring (v1)
   tests/              headless smoke tests (editor, sim, POC)
 tests/                C++ unit tests (doctest)
 tools/                headless sim benchmark (tsim_bench)
@@ -225,13 +264,15 @@ CI (`.github/workflows/ci.yml`) builds Linux, Windows (MSVC) and macOS (Apple Si
 
 ## Known limits
 
-* Signals are fixed-time only: no actuated or coordinated plans yet, and no pedestrians (so no pedestrian phases).
+* Signals are fixed-time only: no actuated or coordinated plans yet (mid-block push buttons are the only demand-responsive signals).
 * Cars may use a bus lane within 60 m of the stop line (the GDD says 30 m; 60 m leaves room to merge in at speed). Bikes ride in the kerb lane where there is no bike lane, and cars can't overtake them in a single-lane road.
-* Passengers don't exist yet: buses dwell a fixed 20 s and coaches their line's time; parking trips pick a bay on their way rather than near a destination (both come with M4's people).
+* People walk along the pedestrian network without bumping into each other (no crowding or sidewalk capacity), and waiting people stand in a small ring around their spot. Coaches dwell their line's fixed time however many people get on. Parking trips pick a bay on their way rather than near a destination, and people who drive simply join their spawn point's car queue.
+* Spawn points are the only trip ends for people (the GDD's placeholder spawn points); land use comes later.
+* When the map is edited while people are out, they are carried over by position, stop and spawn point, and anyone on a crossing or path that changed starts again from the nearest node.
 * Route lines on the map are the free-flow routes; running buses re-route with traffic.
 * A lane change is instant in the sim and drawn as a 3 s sideways slide. There are no U-turns, and cars never turn around at a dead end: routes only lead to spawn points.
 * The sim is single-threaded. At 128x a 2,000-car map may be CPU-limited; the status bar then shows the speed actually reached.
 * Roads that cross mid-segment don't join automatically; a junction is made by snapping an end onto a road or node. Crossings are flagged in the problems panel.
 * The whole map's geometry is rebuilt after each edit (about 10 ms on the 56-junction grid). Incremental rebuilds can come later if bigger maps need them.
-* Levels are stored and kept apart, but ramps, bridges and level shadows are M4.
+* The bridge tool needs the two roads to cross mid-segment, away from junctions; ramps can't end in a junction. Only one level up or down per bridge or tunnel.
 * The web build has been exported and run in headless Chromium (editor, examples, sim at 16x, autosave); the browser file picker and real-hardware performance are untested. The desktop editor has only been run on Linux so far (headless and under Xvfb).

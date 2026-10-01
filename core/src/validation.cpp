@@ -52,17 +52,38 @@ std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom) {
 		if (!sa) continue;
 		for (size_t j = i + 1; j < segs.size(); ++j) {
 			const SegmentGeom &b = *segs[j];
-			if (a.level != b.level) continue;
+			// A ramp meets the lower level along its lower half (M4).
+			const RoadSegment *sb0 = map.segment(b.id);
+			const bool a_low = sa->is_ramp() && std::min(sa->level, sa->level_end()) == b.level && !(sb0 && sb0->is_ramp());
+			const bool b_low = sb0 && sb0->is_ramp() && std::min(sb0->level, sb0->level_end()) == a.level && !sa->is_ramp();
+			if (a.level != b.level && !a_low && !b_low) continue;
 			if (a.bb_max.x < b.bb_min.x || b.bb_max.x < a.bb_min.x || a.bb_max.y < b.bb_min.y ||
 					b.bb_max.y < a.bb_min.y) {
 				continue;
 			}
 			const RoadSegment *sb = map.segment(b.id);
 			if (!sb || sa->from == sb->from || sa->from == sb->to || sa->to == sb->from || sa->to == sb->to) continue;
-			if (!shapes.count(a.id)) shapes[a.id] = to_paths(a.carriageway());
-			if (!shapes.count(b.id)) shapes[b.id] = to_paths(b.carriageway());
-			const Clipper2Lib::PathsD hit =
-					Clipper2Lib::Intersect(shapes[a.id], shapes[b.id], Clipper2Lib::FillRule::NonZero, 2);
+			auto low_half = [](const SegmentGeom &g, const RoadSegment &rs) {
+				// The half of a ramp nearest its lower end.
+				const double mid = 0.5 * g.length;
+				const bool low_at_start = rs.rise > 0;
+				return low_at_start ? g.carriageway(-1e300, mid) : g.carriageway(mid, 1e300);
+			};
+			Clipper2Lib::PathsD pa, pb;
+			if (a_low) {
+				pa = to_paths(low_half(a, *sa));
+			} else {
+				if (!shapes.count(a.id)) shapes[a.id] = to_paths(a.carriageway());
+				pa = shapes[a.id];
+			}
+			if (b_low) {
+				pb = to_paths(low_half(b, *sb0));
+			} else {
+				if (!shapes.count(b.id)) shapes[b.id] = to_paths(b.carriageway());
+				pb = shapes[b.id];
+			}
+			if (pa.empty() || pa[0].size() < 3 || pb.empty() || pb[0].size() < 3) continue;
+			const Clipper2Lib::PathsD hit = Clipper2Lib::Intersect(pa, pb, Clipper2Lib::FillRule::NonZero, 2);
 			if (std::fabs(Clipper2Lib::Area(hit)) < 0.5) continue;
 			Problem p;
 			p.severity = Severity::Error;
@@ -125,6 +146,51 @@ std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom) {
 		if (!sg) continue;
 		const double drawn = sg->length - sg->trim[0] - sg->trim[1];
 		const Vec2 mid = sg->curve.point(0.5);
+		// Ramps (M4): grade limit, and no junctions on them.
+		if (s.is_ramp()) {
+			const double grade = kLevelHeight * std::abs(s.rise) / std::max(1.0, sg->length);
+			if (grade > s.max_grade() + 1e-9) {
+				Problem p;
+				p.severity = Severity::Error;
+				p.code = "ramp_steep";
+				char buf[200];
+				std::snprintf(buf, sizeof(buf), "Ramp is too steep: %.0f%% (at most %.0f%%%s). It needs %.0f m, it has %.0f m.",
+						grade * 100.0, s.max_grade() * 100.0, s.kind == SegmentKind::Footpath && !s.stairs ? ", or make it stairs" : "",
+						kLevelHeight * std::abs(s.rise) / s.max_grade(), sg->length);
+				p.message = buf;
+				p.pos = mid;
+				p.level = sg->level;
+				p.segments = { s.id };
+				out.push_back(p);
+			}
+			for (NodeId nid : { s.from, s.to }) {
+				const NodeGeom *ng = geom.node(nid);
+				if (!ng || ng->kind != NodeKind::Junction || ng->legs.size() < 3) continue;
+				Problem p;
+				p.severity = Severity::Error;
+				p.code = "ramp_junction";
+				p.message = "Ramps can't have junctions: end the ramp first, then join roads on the level above or below.";
+				p.pos = ng->pos;
+				p.level = ng->level;
+				p.segments = { s.id };
+				p.nodes = { nid };
+				out.push_back(p);
+			}
+		}
+		// Signal crossings at a junction without signals act as zebras (M4).
+		for (int e = 0; e < 2; ++e) {
+			if (s.ends[e].crossing.kind != CrossingKind::Signal) continue;
+			const RoadNode *rn = map.node(e == 0 ? s.from : s.to);
+			if (!rn || rn->control == JunctionControl::Signal) continue;
+			Problem p;
+			p.severity = Severity::Warning;
+			p.code = "crossing_no_signal";
+			p.message = "Signal crossing at a junction without traffic signals: it works as a zebra crossing.";
+			p.pos = rn->pos;
+			p.level = rn->level;
+			p.segments = { s.id };
+			out.push_back(p);
+		}
 		if (drawn < 1.0) {
 			Problem p;
 			p.severity = Severity::Warning;

@@ -63,12 +63,29 @@ func _finish() -> void:
 		var refs: Array = []
 		for p in _points:
 			refs.append(MapEditor.to_ref(p))
-		var ids: PackedInt64Array = editor.road.add_road(refs, editor.road_template, editor.level, editor.speed_kmh)
+		var ids: PackedInt64Array = editor.road.add_road(refs, _template(), editor.level, _speed_kmh())
 		if ids.is_empty():
-			editor.notify("Road not added: the points are too close together.")
+			editor.notify("%s not added: the points are too close together." % _noun().capitalize())
 		else:
-			editor.notify("Added %d road segment%s." % [ids.size(), "" if ids.size() == 1 else "s"])
+			editor.notify("Added %d %s segment%s." % [ids.size(), _noun(), "" if ids.size() == 1 else "s"])
 	_points.clear()
+
+
+## What gets drawn (PathTool overrides these).
+func _template() -> Dictionary:
+	return editor.road_template
+
+
+func _speed_kmh() -> float:
+	return editor.speed_kmh
+
+
+func _width() -> float:
+	return editor.template_width()
+
+
+func _noun() -> String:
+	return "road"
 
 
 func _update_status() -> void:
@@ -90,7 +107,7 @@ func draw(o: EditorOverlay) -> void:
 	if not _cursor.is_empty() and not _points.is_empty():
 		pts.append(_cursor.pos)
 	if pts.size() >= 2:
-		o.draw_polyline(pts, Color(0.4, 0.7, 1.0, 0.35), editor.template_width(), false)
+		o.draw_polyline(pts, Color(0.4, 0.7, 1.0, 0.35), _width(), false)
 		o.draw_polyline(pts, EditorOverlay.SELECT, o.px(2))
 		var a: Vector2 = pts[pts.size() - 2]
 		var b: Vector2 = pts[pts.size() - 1]

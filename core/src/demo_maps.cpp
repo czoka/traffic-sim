@@ -450,4 +450,219 @@ void build_showcase(Document &doc) {
 	doc.commit();
 }
 
+// --- M4 people town --------------------------------------------------------------------
+
+namespace {
+
+void set_crossing_at(Document &doc, SegmentId seg, NodeId node, CrossingKind kind, bool bike = false) {
+	const RoadSegment *s = doc.map().segment(seg);
+	if (!s) return;
+	const int e = s->from == node ? 0 : 1;
+	EndRules r = s->ends[e];
+	r.crossing.kind = kind;
+	r.crossing.bike = bike;
+	doc.set_end_rules(seg, e, r);
+}
+
+SegmentId path(Document &doc, Vec2 a, Vec2 b, SegmentKind kind, RoadMap &scratch) {
+	PointRef pa, pb;
+	pa.pos = a;
+	pb.pos = b;
+	const std::vector<SegmentId> s = doc.add_road({ pa, pb }, path_profile(kind, scratch), 0,
+			(kind == SegmentKind::Footpath ? 5.0 : 20.0) / 3.6, kind);
+	return s.empty() ? kNoId : s.front();
+}
+
+} // namespace
+
+void build_people_town(Document &doc) {
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	const Profile avenue = preset_profile("Avenue 2+2, median", scratch);
+
+	doc.begin("People town");
+	auto node = [&](double x, double y) { return doc.add_node(Vec2{ x, y }, 0); };
+	// Main avenue west-east through a signalized junction (A) and a priority junction (B).
+	const NodeId w = node(-480, 0), a = node(-150, 0), b = node(150, 0), e = node(480, 0);
+	const SegmentId wa = road(doc, w, a, avenue, 50);
+	const SegmentId ab = road(doc, a, b, avenue, 50);
+	const SegmentId be = road(doc, b, e, avenue, 50);
+	// North-south streets through A and B, and a southern street joining them.
+	const NodeId n1 = node(-150, -320), s1 = node(-150, 300), s1e = node(-150, 480);
+	const NodeId n2 = node(150, -320), s2 = node(150, 300), s2e = node(150, 480);
+	const SegmentId n1a = road(doc, n1, a, street, 50);
+	const SegmentId as1 = road(doc, a, s1, street, 50);
+	const SegmentId s1s = road(doc, s1, s1e, street, 50);
+	const SegmentId n2b = road(doc, n2, b, street, 50);
+	const SegmentId bs2 = road(doc, b, s2, street, 50);
+	road(doc, s2, s2e, street, 50);
+	const SegmentId south = road(doc, s1, s2, street, 40);
+
+	// A: signal crosswalks on every leg, the default plan plus a scramble phase.
+	for (SegmentId sid : { wa, ab, n1a, as1 }) set_crossing_at(doc, sid, a, CrossingKind::Signal);
+	SignalPlan plan = default_signal_plan(doc.map(), a);
+	SignalPhase scramble;
+	scramble.green = 12.0;
+	scramble.walk = { wa, ab, n1a, as1 };
+	plan.phases.push_back(scramble);
+	doc.set_signal_plan(a, plan);
+	// B: the avenue has priority; zebras on the side streets.
+	doc.set_junction_control(b, JunctionControl::PriorityRoad, { ab, be });
+	set_crossing_at(doc, n2b, b, CrossingKind::Zebra);
+	set_crossing_at(doc, bs2, b, CrossingKind::Zebra, true);
+	// S1: zebras; S2: right-hand rule with an uncontrolled crossing on the south street.
+	set_crossing_at(doc, as1, s1, CrossingKind::Zebra);
+	set_crossing_at(doc, s1s, s1, CrossingKind::Zebra);
+	// Mid-block: a zebra with a refuge on the avenue, an uncontrolled crossing on the south street.
+	doc.add_crossing(ab, 0.3, CrossingKind::Zebra, false, true);
+	doc.add_crossing(south, 0.5, CrossingKind::Uncontrolled, false, false);
+	// Fences on both sides of the western avenue: cross at the lights.
+	doc.set_fence(wa, 0, 0.3, 1.0, true);
+	doc.set_fence(wa, 1, 0.3, 1.0, true);
+
+	// A park footpath from the avenue's south sidewalk to the south street, with a bend.
+	const double park_x = -60.0;
+	path(doc, Vec2{ park_x - 0.0 + -(0.0), 15.5 }, Vec2{ park_x + 30.0, 150.0 }, SegmentKind::Footpath, scratch);
+	{
+		// Continue from the bend to the south street's north sidewalk.
+		PointRef pa, pb;
+		pa.pos = Vec2{ park_x + 30.0, 150.0 };
+		pa.node = doc.map().segments().rbegin()->second.to;
+		pb.pos = Vec2{ park_x + 10.0, 289.5 };
+		doc.add_road({ pa, pb }, path_profile(SegmentKind::Footpath, scratch), 0, 5.0 / 3.6, SegmentKind::Footpath);
+	}
+	// A bike path west from S1 to the map edge.
+	PointRef bp0, bp1;
+	bp0.node = s1;
+	bp0.pos = doc.map().node(s1)->pos;
+	bp1.pos = Vec2{ -480, 300 };
+	const std::vector<SegmentId> bike = doc.add_road({ bp0, bp1 }, path_profile(SegmentKind::BikePath, scratch), 0,
+			20.0 / 3.6, SegmentKind::BikePath);
+	// A pedestrian bridge over the eastern avenue, between two park entrances.
+	const SegmentId bridge = path(doc, Vec2{ 320, -170 }, Vec2{ 320, 170 }, SegmentKind::Footpath, scratch);
+	const NodeId bridge_n = doc.map().segment(bridge)->from;
+	doc.lift(bridge, Vec2{ 320, 0 }, 1);
+	NodeId bridge_s = kNoId;
+	for (const auto &kv : doc.map().nodes()) {
+		if (kv.second.pos == Vec2{ 320, 170 }) bridge_s = kv.first;
+	}
+	// Footpaths from the bridge ends to the eastern street's sidewalks.
+	for (NodeId end : { bridge_n, bridge_s }) {
+		if (end == kNoId) continue;
+		PointRef pa, pb;
+		pa.node = end;
+		pa.pos = doc.map().node(end)->pos;
+		pb.pos = Vec2{ 155.5, pa.pos.y };
+		doc.add_road({ pa, pb }, path_profile(SegmentKind::Footpath, scratch), 0, 5.0 / 3.6, SegmentKind::Footpath);
+	}
+	// A car overpass: a road from the north edge over the avenue to the south street.
+	PointRef o0, o1;
+	o0.pos = Vec2{ 40, -320 };
+	o1.pos = Vec2{ 40, 300 };
+	o1.segment = south;
+	const std::vector<SegmentId> over = doc.add_road({ o0, o1 }, street, 0, 50.0 / 3.6);
+	if (!over.empty()) doc.lift(over.front(), Vec2{ 40, 0 }, 1);
+
+	// Bus stops and a loop route from a depot at the south end of the eastern street.
+	const uint32_t st_n = doc.add_stop(bs2, 0.6, LaneDir::Backward, StopKind::Kerbside, "Park Gate");
+	const uint32_t st_w = doc.add_stop(ab, 0.65, LaneDir::Backward, StopKind::Bay, "Avenue Centre");
+	const uint32_t st_s = doc.add_stop(as1, 0.5, LaneDir::Forward, StopKind::Kerbside, "Library");
+	const uint32_t st_e = doc.add_stop(south, 0.75, LaneDir::Forward, StopKind::Kerbside, "Market Street");
+	Depot depot;
+	depot.enabled = true;
+	depot.name = "South Depot";
+	depot.capacity = 10;
+	BusRoute loop;
+	loop.name = "3 Town Loop";
+	loop.color = 0x2fa84f;
+	loop.stops = { st_n, st_w, st_s, st_e };
+	loop.headway = 300.0;
+	loop.loop = true;
+	depot.routes = { loop };
+	doc.set_depot(s2e, depot);
+
+	// Demand: cars and people at every road edge, people at the park entrances, bikes on the bike path.
+	Spawner sp;
+	sp.enabled = true;
+	sp.rate = 300.0;
+	sp.people = 400.0;
+	for (NodeId edge : { w, e }) doc.set_spawner(edge, sp);
+	sp.rate = 150.0;
+	sp.people = 250.0;
+	for (NodeId edge : { n1, n2, s1e }) doc.set_spawner(edge, sp);
+	if (!over.empty()) {
+		const RoadSegment *os = doc.map().segment(over.front());
+		if (os) doc.set_spawner(os->from, sp);
+	}
+	// A park entrance at the end of a footpath east of the bridge: people only.
+	{
+		PointRef pa, pb;
+		pa.node = bridge_n;
+		pa.pos = doc.map().node(bridge_n)->pos;
+		pb.pos = Vec2{ 420, -200 };
+		const std::vector<SegmentId> gate = doc.add_road({ pa, pb }, path_profile(SegmentKind::Footpath, scratch), 0,
+				5.0 / 3.6, SegmentKind::Footpath);
+		if (!gate.empty()) {
+			Spawner park;
+			park.enabled = true;
+			park.rate = 0.0;
+			park.people = 200.0;
+			doc.set_spawner(doc.map().segment(gate.front())->to, park);
+		}
+	}
+	if (!bike.empty()) {
+		Spawner bikes;
+		bikes.enabled = true;
+		bikes.rate = 0.0;
+		bikes.bikes = 150.0;
+		doc.set_spawner(doc.map().segment(bike.front())->to, bikes);
+	}
+	doc.commit();
+}
+
+void build_people_city(Document &doc, int cols, int rows) {
+	build_test_grid(doc, cols, rows, 120.0);
+	doc.begin("People city");
+	std::vector<NodeId> edges;
+	for (const auto &kv : doc.map().nodes()) {
+		if (kv.second.spawner.enabled) edges.push_back(kv.first);
+	}
+	for (NodeId n : edges) {
+		Spawner sp = doc.map().node(n)->spawner;
+		sp.people = 900.0;
+		doc.set_spawner(n, sp);
+	}
+	// Avenue junctions in every other column get signals with walk phases.
+	std::vector<NodeId> signals;
+	for (const auto &kv : doc.map().nodes()) {
+		const RoadNode &n = kv.second;
+		const int i = static_cast<int>(n.pos.x / 120.0 + 0.5), j = static_cast<int>(n.pos.y / 120.0 + 0.5);
+		if (n.pos.x < -1.0 || n.pos.y < -1.0 || i >= cols || j >= rows) continue;
+		if (std::fabs(n.pos.x - i * 120.0) > 1.0 || std::fabs(n.pos.y - j * 120.0) > 1.0) continue;
+		if (j % 3 == 1 && i % 2 == 0 && doc.map().segments_at(kv.first).size() == 4) signals.push_back(kv.first);
+	}
+	for (NodeId n : signals) {
+		for (SegmentId s : doc.map().segments_at(n)) {
+			RoadSegment seg = *doc.map().segment(s);
+			const int end = seg.from == n ? 0 : 1;
+			EndRules r = seg.ends[end];
+			r.crossing.kind = CrossingKind::Signal;
+			doc.set_end_rules(s, end, r);
+		}
+		doc.set_junction_control(n, JunctionControl::Signal, {});
+		doc.set_signal_plan(n, default_signal_plan(doc.map(), n));
+	}
+	// Zebras mid-block on some two-way streets.
+	std::vector<SegmentId> streets;
+	for (const auto &kv : doc.map().segments()) {
+		const RoadSegment &seg = kv.second;
+		const Vec2 a = doc.map().node(seg.from)->pos, b = doc.map().node(seg.to)->pos;
+		if (std::fabs(a.x - b.x) < 1.0 && std::fabs(a.y - b.y) > 100.0 && static_cast<int>(a.x / 120.0 + a.y / 120.0) % 3 == 0) {
+			streets.push_back(kv.first);
+		}
+	}
+	for (SegmentId s : streets) doc.add_crossing(s, 0.5, CrossingKind::Zebra, false, false);
+	doc.commit();
+}
+
 } // namespace tsim

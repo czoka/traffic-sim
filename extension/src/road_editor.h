@@ -30,7 +30,7 @@ public:
 	void new_map();
 	void load_demo_town();
 	void load_test_grid(int cols, int rows, double spacing);
-	// "town", "grid", "t_junction", "lane_drop", "one_way_pair", "showcase". False if unknown.
+	// "town", "grid", "t_junction", "lane_drop", "one_way_pair", "showcase", "people", "people_city". False if unknown.
 	bool load_example(const String &name);
 	String save_json() const;
 	// {ok: bool, error: String, migrated_from: int}
@@ -98,6 +98,28 @@ public:
 	Dictionary sim_signal_state(int64_t node);
 	Array sim_route_stats(); // [{id, active, runs, round_trip, fleet}]
 
+	// --- M4: paths, crossings, fences, ramps, bridges ------------------------------
+	// Paths: add_road with road = {preset|params|profile, kind: "footpath" | "bike_path" | "shared_path"}.
+	// kind: "zebra" | "signal" | "uncontrolled". Returns the crossing id (0 if the road doesn't exist).
+	int64_t add_crossing(int64_t seg, double u, const String &kind, bool bike, bool refuge);
+	void set_crossing(int64_t seg, const Dictionary &crossing); // {id, u, kind, bike, refuge}
+	void remove_crossing(int64_t seg, int64_t id);
+	void set_fence(int64_t seg, int side, double u0, double u1, bool on); // side 0 left, 1 right
+	void set_ramp(int64_t seg, int rise, bool stairs);
+	// What the bridge (delta 1) / tunnel (-1) tool would build: {ok, error, length, stations, points}.
+	Dictionary plan_lift(int64_t seg, Vector2 at, int delta);
+	String lift(int64_t seg, Vector2 at, int delta); // "" on success
+	Array get_crossings(int level); // painted crossings: [{segment, end, id, node, kind, bike, a, b, mid, refuge}]
+	// People in the sim: {max_pedestrians, car_owners, bike_owners, bus_capacity}
+	void sim_set_people(const Dictionary &config);
+	int64_t sim_ped_count(int level) const;
+	PackedFloat32Array sim_ped_buffer(int level, double scale); // 12 floats per person (Transform2D + Color)
+	int64_t sim_pick_ped(Vector2 pos, double radius, int level);
+	Dictionary sim_ped_info(int64_t id);
+	Array sim_walk_lights(int level); // [{a, b, walk: "walk"|"flashing"|"dont_walk", push_button, car}]
+	Array sim_stop_stats(); // [{id, name, pos, waiting, boarded, alighted, left_behind, mean_wait}]
+	Array sim_route_loads(); // [{route, load: PackedFloat32Array per stop}]
+
 	// --- Profiles --------------------------------------------------------------
 	Array presets() const; // [{name, params}]
 	Dictionary params_of_profile(const Dictionary &profile) const;
@@ -150,6 +172,7 @@ public:
 
 protected:
 	static void _bind_methods();
+	static void bind_m4_methods();
 
 private:
 	void ensure_geometry();
@@ -181,6 +204,7 @@ private:
 	int last_recompiled_junctions_ = -1;
 	double last_recompile_ms_ = 0.0;
 	PackedFloat32Array car_buffer_;
+	PackedFloat32Array ped_buffer_;
 };
 
 } // namespace godot

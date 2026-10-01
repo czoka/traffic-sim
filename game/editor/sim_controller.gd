@@ -16,6 +16,9 @@ const CAR_WIDTH := 1.8
 ## Cars are drawn at least this many pixels long, however far you zoom out.
 const MIN_CAR_PIXELS := 6.0
 const STATS_INTERVAL := 0.25
+## People are drawn as dots, at least this many pixels across.
+const PED_RADIUS := 0.35
+const MIN_PED_PIXELS := 3.5
 
 var editor: MapEditor
 var playing := false
@@ -23,11 +26,16 @@ var speed_index := 2
 var seed_value := 42
 var demand := 1.0
 var max_cars := 2000
+var max_people := 1000
 var selected_car := 0
+var selected_ped := 0
 var stats := {}
 var car_info := {}
+var ped_info := {}
+var stop_stats: Array = [] # [{id, name, pos, waiting, boarded, ...}] while people ride
 
 var _layers := {} # level -> MultiMeshInstance2D
+var _ped_layers := {} # level -> MultiMeshInstance2D
 var _edit_revision := -1 # map revision when the sim was last running
 var _stats_timer := 0.0
 
@@ -49,14 +57,43 @@ func _ready() -> void:
 		mmi.z_index = (level + 2) * 10 + 5
 		add_child(mmi)
 		_layers[level] = mmi
+		var pm := MultiMesh.new()
+		pm.transform_format = MultiMesh.TRANSFORM_2D
+		pm.use_colors = true
+		pm.mesh = _dot_mesh(PED_RADIUS)
+		var pmi := MultiMeshInstance2D.new()
+		pmi.name = "People%d" % (level + 1)
+		pmi.multimesh = pm
+		pmi.z_index = (level + 2) * 10 + 6
+		add_child(pmi)
+		_ped_layers[level] = pmi
+
+
+static func _dot_mesh(r: float) -> ArrayMesh:
+	var verts := PackedVector2Array([Vector2.ZERO])
+	var idx := PackedInt32Array()
+	for i in 8:
+		verts.append(Vector2.from_angle(TAU * i / 8.0) * r)
+	for i in 8:
+		idx.append_array([0, 1 + i, 1 + (i + 1) % 8])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 func reset() -> void:
 	editor.road.sim_set_demand(demand)
 	editor.road.sim_set_max_vehicles(max_cars)
+	editor.road.sim_set_people({"max_pedestrians": max_people})
 	editor.road.sim_reset(seed_value)
 	selected_car = 0
 	car_info = {}
+	selected_ped = 0
+	ped_info = {}
 	_edit_revision = editor.road.revision()
 	_refresh_stats()
 	_update_cars()
@@ -131,15 +168,37 @@ func set_max_cars(n: int) -> void:
 	editor.road.sim_set_max_vehicles(n)
 
 
+func set_max_people(n: int) -> void:
+	max_people = n
+	editor.road.sim_set_people({"max_pedestrians": n})
+
+
 func select_car(id: int) -> void:
 	selected_car = id
 	car_info = editor.road.sim_car_info(id) if id != 0 else {}
+	if id != 0:
+		selected_ped = 0
+		ped_info = {}
+	editor.ui.refresh_inspector()
+	editor.overlay.queue_redraw()
+
+
+func select_ped(id: int) -> void:
+	selected_ped = id
+	ped_info = editor.road.sim_ped_info(id) if id != 0 else {}
+	if id != 0:
+		selected_car = 0
+		car_info = {}
 	editor.ui.refresh_inspector()
 	editor.overlay.queue_redraw()
 
 
 func has_cars() -> bool:
 	return int(stats.get("vehicles", 0)) > 0
+
+
+func has_people() -> bool:
+	return int(stats.get("pedestrians", 0)) > 0
 
 
 func _process(delta: float) -> void:
@@ -163,13 +222,23 @@ func _process(delta: float) -> void:
 			selected_car = 0
 			editor.ui.refresh_inspector()
 		editor.overlay.queue_redraw()
+	if selected_ped != 0:
+		ped_info = editor.road.sim_ped_info(selected_ped)
+		if ped_info.is_empty():
+			selected_ped = 0
+			editor.ui.refresh_inspector()
+		editor.overlay.queue_redraw()
+	if playing:
+		editor.overlay.queue_redraw() # walk lights
 
 
 func _refresh_stats() -> void:
 	stats = editor.road.sim_stats()
+	stop_stats = editor.road.sim_stop_stats() if int(stats.get("trips", 0)) > 0 else []
 	editor.ui.refresh_sim(stats)
-	if selected_car != 0:
+	if selected_car != 0 or selected_ped != 0:
 		editor.ui.inspector.refresh_car()
+	editor.ui.inspector.refresh_live()
 
 
 func _update_cars() -> void:
@@ -182,15 +251,21 @@ func _update_cars() -> void:
 			mm.instance_count = n
 		if n > 0:
 			mm.buffer = editor.road.sim_car_buffer(level, car_scale)
+	var ped_scale := maxf(1.0, MIN_PED_PIXELS / (PED_RADIUS * 2.0 * zoom))
+	for level in _ped_layers:
+		var pm: MultiMesh = _ped_layers[level].multimesh
+		var n: int = editor.road.sim_ped_count(level)
+		if pm.instance_count != n:
+			pm.instance_count = n
+		if n > 0:
+			pm.buffer = editor.road.sim_ped_buffer(level, ped_scale)
 
 
-## Same look as the map: the level being edited is drawn normally, others dimmed.
-func apply_level_style(current_level: int) -> void:
-	for level in _layers:
-		var mmi: MultiMeshInstance2D = _layers[level]
-		if level == current_level:
-			mmi.modulate = Color.WHITE
-		elif level > current_level:
-			mmi.modulate = Color(1, 1, 1, 0.45)
-		else:
-			mmi.modulate = Color(0.55, 0.55, 0.55, 1)
+## Same look as the map: the level being edited is drawn normally, others dimmed
+## (or hidden with the level filter).
+func apply_level_style(current_level: int, filter := false) -> void:
+	for layers in [_layers, _ped_layers]:
+		for level in layers:
+			var mmi: MultiMeshInstance2D = layers[level]
+			mmi.visible = not filter or level == current_level
+			mmi.modulate = MapView.level_tint(level, current_level)

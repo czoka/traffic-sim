@@ -1,113 +1,108 @@
 {
  "format": "traffic-sim-map",
- "version": 4,
+ "version": 5,
  "next_ids": {
-  "node": 13,
+  "node": 12,
   "segment": 13,
-  "lane": 49
+  "lane": 73
  },
  "nodes": [
   {
    "id": 1,
-   "x": -300.0,
+   "x": -360.0,
    "y": 0.0,
    "level": 0,
    "spawner": {
-    "rate": 500.0,
-    "sink": false
+    "rate": 400.0,
+    "sink": true
    }
   },
   {
    "id": 2,
-   "x": -100.0,
+   "x": -120.0,
    "y": 0.0,
-   "level": 0
+   "level": 0,
+   "control": {
+    "type": "priority_road",
+    "priority": [
+     1,
+     2
+    ]
+   }
   },
   {
    "id": 3,
-   "x": 100.0,
+   "x": 120.0,
    "y": 0.0,
-   "level": 0
+   "level": 0,
+   "control": {
+    "type": "priority_road",
+    "priority": [
+     2,
+     3
+    ]
+   }
   },
   {
    "id": 4,
    "x": 300.0,
    "y": 0.0,
-   "level": 0,
-   "spawner": {
-    "rate": 0.0,
-    "sink": true
-   }
+   "level": 0
   },
   {
    "id": 5,
-   "x": -300.0,
-   "y": 100.0,
+   "x": 480.0,
+   "y": 0.0,
    "level": 0,
    "spawner": {
-    "rate": 0.0,
+    "rate": 400.0,
     "sink": true
    }
   },
   {
    "id": 6,
-   "x": -100.0,
-   "y": 100.0,
+   "x": -120.0,
+   "y": -260.0,
    "level": 0
   },
   {
    "id": 7,
-   "x": 100.0,
-   "y": 100.0,
-   "level": 0
+   "x": -120.0,
+   "y": 240.0,
+   "level": 0,
+   "control": {
+    "type": "all_way_stop"
+   }
   },
   {
    "id": 8,
-   "x": 300.0,
-   "y": 100.0,
-   "level": 0,
-   "spawner": {
-    "rate": 500.0,
-    "sink": false
-   }
+   "x": 120.0,
+   "y": -260.0,
+   "level": 0
   },
   {
    "id": 9,
-   "x": -100.0,
-   "y": -150.0,
-   "level": 0,
-   "spawner": {
-    "rate": 200.0,
-    "sink": true
-   }
+   "x": 120.0,
+   "y": 240.0,
+   "level": 0
   },
   {
    "id": 10,
-   "x": 100.0,
-   "y": -150.0,
+   "x": 120.0,
+   "y": 420.0,
    "level": 0,
    "spawner": {
-    "rate": 200.0,
+    "rate": 0.0,
     "sink": true
    }
   },
   {
    "id": 11,
-   "x": -100.0,
-   "y": 250.0,
+   "x": -380.0,
+   "y": 240.0,
    "level": 0,
    "spawner": {
-    "rate": 200.0,
-    "sink": true
-   }
-  },
-  {
-   "id": 12,
-   "x": 100.0,
-   "y": 250.0,
-   "level": 0,
-   "spawner": {
-    "rate": 200.0,
+    "rate": 150.0,
     "sink": true
    }
   }
@@ -122,36 +117,75 @@
    "curve": {
     "type": "straight"
    },
-   "speed_limit": 13.88888888888889,
+   "speed_limit": 16.666666666666668,
    "profile": {
-    "median": "none",
+    "median": "painted",
+    "median_width": 1.0,
     "lanes": [
      {
       "id": 1,
       "type": "sidewalk",
       "dir": "none",
-      "width": 2.0
+      "width": 3.0
      },
      {
       "id": 2,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
      },
      {
       "id": 3,
+      "type": "bus",
+      "dir": "backward",
+      "width": 3.5
+     },
+     {
+      "id": 4,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 5,
       "type": "general",
       "dir": "forward",
       "width": 3.25
      },
      {
-      "id": 4,
-      "type": "sidewalk",
+      "id": 6,
+      "type": "bus",
+      "dir": "forward",
+      "width": 3.5
+     },
+     {
+      "id": 7,
+      "type": "parking",
       "dir": "none",
       "width": 2.0
+     },
+     {
+      "id": 8,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
      }
     ]
-   }
+   },
+   "ends": [
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 31
+    },
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 32
+    }
+   ]
   },
   {
    "id": 2,
@@ -162,36 +196,83 @@
    "curve": {
     "type": "straight"
    },
-   "speed_limit": 13.88888888888889,
+   "speed_limit": 16.666666666666668,
    "profile": {
-    "median": "none",
+    "median": "painted",
+    "median_width": 1.0,
     "lanes": [
      {
-      "id": 5,
+      "id": 9,
       "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
+     },
+     {
+      "id": 10,
+      "type": "parking",
       "dir": "none",
       "width": 2.0
      },
      {
-      "id": 6,
+      "id": 11,
+      "type": "bus",
+      "dir": "backward",
+      "width": 3.5
+     },
+     {
+      "id": 12,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 13,
       "type": "general",
       "dir": "forward",
       "width": 3.25
      },
      {
-      "id": 7,
-      "type": "general",
+      "id": 14,
+      "type": "bus",
       "dir": "forward",
-      "width": 3.25
+      "width": 3.5
      },
      {
-      "id": 8,
-      "type": "sidewalk",
+      "id": 15,
+      "type": "parking",
       "dir": "none",
       "width": 2.0
+     },
+     {
+      "id": 16,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
      }
     ]
-   }
+   },
+   "ends": [
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 33
+    },
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 34
+    }
+   ],
+   "no_change": [
+    {
+     "edge": 5,
+     "from": 0.3,
+     "to": 0.6,
+     "block": "both"
+    }
+   ]
   },
   {
    "id": 3,
@@ -202,175 +283,95 @@
    "curve": {
     "type": "straight"
    },
-   "speed_limit": 13.88888888888889,
+   "speed_limit": 16.666666666666668,
    "profile": {
-    "median": "none",
-    "lanes": [
-     {
-      "id": 9,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     },
-     {
-      "id": 10,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 11,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 12,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     }
-    ]
-   }
-  },
-  {
-   "id": 4,
-   "from": 8,
-   "to": 7,
-   "kind": "road",
-   "level": 0,
-   "curve": {
-    "type": "straight"
-   },
-   "speed_limit": 13.88888888888889,
-   "profile": {
-    "median": "none",
-    "lanes": [
-     {
-      "id": 13,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     },
-     {
-      "id": 14,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 15,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 16,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     }
-    ]
-   }
-  },
-  {
-   "id": 5,
-   "from": 7,
-   "to": 6,
-   "kind": "road",
-   "level": 0,
-   "curve": {
-    "type": "straight"
-   },
-   "speed_limit": 13.88888888888889,
-   "profile": {
-    "median": "none",
+    "median": "painted",
+    "median_width": 1.0,
     "lanes": [
      {
       "id": 17,
       "type": "sidewalk",
       "dir": "none",
-      "width": 2.0
+      "width": 3.0
      },
      {
       "id": 18,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
      },
      {
       "id": 19,
+      "type": "bus",
+      "dir": "backward",
+      "width": 3.5
+     },
+     {
+      "id": 20,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 21,
       "type": "general",
       "dir": "forward",
       "width": 3.25
      },
      {
-      "id": 20,
-      "type": "sidewalk",
+      "id": 22,
+      "type": "bus",
+      "dir": "forward",
+      "width": 3.5
+     },
+     {
+      "id": 23,
+      "type": "parking",
       "dir": "none",
       "width": 2.0
+     },
+     {
+      "id": 24,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
      }
     ]
-   }
+   },
+   "ends": [
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 35
+    },
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 36
+    }
+   ]
   },
   {
-   "id": 6,
-   "from": 6,
+   "id": 4,
+   "from": 4,
    "to": 5,
    "kind": "road",
    "level": 0,
    "curve": {
     "type": "straight"
    },
-   "speed_limit": 13.88888888888889,
+   "speed_limit": 16.666666666666668,
    "profile": {
-    "median": "none",
-    "lanes": [
-     {
-      "id": 21,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     },
-     {
-      "id": 22,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 23,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 24,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     }
-    ]
-   }
-  },
-  {
-   "id": 7,
-   "from": 9,
-   "to": 2,
-   "kind": "road",
-   "level": 0,
-   "curve": {
-    "type": "straight"
-   },
-   "speed_limit": 13.88888888888889,
-   "profile": {
-    "median": "none",
+    "median": "raised",
+    "median_width": 2.0,
     "lanes": [
      {
       "id": 25,
       "type": "sidewalk",
       "dir": "none",
-      "width": 2.0
+      "width": 3.0
      },
      {
       "id": 26,
@@ -381,102 +382,34 @@
      {
       "id": 27,
       "type": "general",
-      "dir": "forward",
+      "dir": "backward",
       "width": 3.25
      },
      {
       "id": 28,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     }
-    ]
-   }
-  },
-  {
-   "id": 8,
-   "from": 2,
-   "to": 6,
-   "kind": "road",
-   "level": 0,
-   "curve": {
-    "type": "straight"
-   },
-   "speed_limit": 13.88888888888889,
-   "profile": {
-    "median": "none",
-    "lanes": [
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
      {
       "id": 29,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
      },
      {
       "id": 30,
-      "type": "general",
-      "dir": "backward",
-      "width": 3.25
-     },
-     {
-      "id": 31,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 32,
       "type": "sidewalk",
       "dir": "none",
-      "width": 2.0
+      "width": 3.0
      }
     ]
    }
   },
   {
-   "id": 9,
+   "id": 5,
    "from": 6,
-   "to": 11,
-   "kind": "road",
-   "level": 0,
-   "curve": {
-    "type": "straight"
-   },
-   "speed_limit": 13.88888888888889,
-   "profile": {
-    "median": "none",
-    "lanes": [
-     {
-      "id": 33,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     },
-     {
-      "id": 34,
-      "type": "general",
-      "dir": "backward",
-      "width": 3.25
-     },
-     {
-      "id": 35,
-      "type": "general",
-      "dir": "forward",
-      "width": 3.25
-     },
-     {
-      "id": 36,
-      "type": "sidewalk",
-      "dir": "none",
-      "width": 2.0
-     }
-    ]
-   }
-  },
-  {
-   "id": 10,
-   "from": 10,
-   "to": 3,
+   "to": 2,
    "kind": "road",
    "level": 0,
    "curve": {
@@ -511,11 +444,24 @@
       "width": 2.0
      }
     ]
-   }
+   },
+   "ends": [
+    {
+     "left": "allowed",
+     "right": "allowed",
+     "turn_lane_length": 40.0
+    },
+    {
+     "left": "allowed",
+     "right": "turn_lane",
+     "turn_lane_length": 35.0,
+     "right_lane": 45
+    }
+   ]
   },
   {
-   "id": 11,
-   "from": 3,
+   "id": 6,
+   "from": 2,
    "to": 7,
    "kind": "road",
    "level": 0,
@@ -551,12 +497,25 @@
       "width": 2.0
      }
     ]
-   }
+   },
+   "ends": [
+    {
+     "left": "allowed",
+     "right": "turn_lane",
+     "turn_lane_length": 35.0,
+     "right_lane": 46
+    },
+    {
+     "left": "allowed",
+     "right": "allowed",
+     "turn_lane_length": 40.0
+    }
+   ]
   },
   {
-   "id": 12,
-   "from": 7,
-   "to": 12,
+   "id": 7,
+   "from": 8,
+   "to": 3,
    "kind": "road",
    "level": 0,
    "curve": {
@@ -567,25 +526,245 @@
     "median": "none",
     "lanes": [
      {
-      "id": 45,
+      "id": 47,
       "type": "sidewalk",
       "dir": "none",
       "width": 2.0
      },
      {
-      "id": 46,
-      "type": "general",
-      "dir": "backward",
-      "width": 3.25
-     },
-     {
-      "id": 47,
+      "id": 48,
       "type": "general",
       "dir": "forward",
       "width": 3.25
      },
      {
-      "id": 48,
+      "id": 49,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 50,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 8,
+   "from": 3,
+   "to": 9,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 51,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 52,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 53,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 54,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 9,
+   "from": 9,
+   "to": 10,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 55,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 56,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 57,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 58,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 10,
+   "from": 6,
+   "to": 8,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "bezier",
+    "c1": {
+     "x": -40.0,
+     "y": -353.3333333333333
+    },
+    "c2": {
+     "x": 40.0,
+     "y": -353.3333333333333
+    }
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 59,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 60,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 61,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 62,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 11,
+   "from": 7,
+   "to": 11,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 8.333333333333334,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 63,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 64,
+      "type": "bike",
+      "dir": "backward",
+      "width": 1.5
+     },
+     {
+      "id": 65,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 66,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 67,
+      "type": "bike",
+      "dir": "forward",
+      "width": 1.5
+     },
+     {
+      "id": 68,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 12,
+   "from": 7,
+   "to": 9,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 69,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 70,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 71,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 72,
       "type": "sidewalk",
       "dir": "none",
       "width": 2.0

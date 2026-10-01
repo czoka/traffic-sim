@@ -56,6 +56,8 @@ constexpr Color kSidewalk{ 0.620f, 0.639f, 0.604f, 1.0f };
 constexpr Color kIsland{ 0.435f, 0.522f, 0.427f, 1.0f };
 constexpr Color kWhite{ 0.93f, 0.93f, 0.90f, 1.0f };
 constexpr Color kYellow{ 0.91f, 0.77f, 0.28f, 1.0f };
+constexpr Color kPath{ 0.690f, 0.663f, 0.592f, 1.0f }; // footpaths and shared paths (M4)
+constexpr Color kFence{ 0.28f, 0.25f, 0.22f, 1.0f };
 
 constexpr double kLineWidth = 0.15;
 constexpr double kDash = 3.0;
@@ -315,6 +317,9 @@ struct RoadGeometry::SegCtx {
 	double trim[2] = { 0.0, 0.0 };
 	double pocket_len[2] = { 0.0, 0.0 };
 	double pocket_taper = 15.0;
+	// Crosswalks at the ends (M4): band centres as distances from the node, -1 = none.
+	double ped_band[2] = { -1.0, -1.0 };
+	double bike_band[2] = { -1.0, -1.0 };
 
 	void recompute_groups() {
 		bool fwd = false, back = false;
@@ -426,6 +431,7 @@ void RoadGeometry::clear() {
 	segments_.clear();
 	nodes_.clear();
 	meshes_.clear();
+	crossings_.clear();
 }
 
 std::vector<Vec2> SegmentGeom::outline() const {
@@ -446,10 +452,11 @@ std::vector<Vec2> SegmentGeom::outline() const {
 	return left;
 }
 
-std::vector<Vec2> SegmentGeom::carriageway() const {
+std::vector<Vec2> SegmentGeom::carriageway(double s_lo, double s_hi) const {
 	std::vector<Vec2> left, right;
 	const size_t nl = lanes.size();
 	for (size_t k = 0; k < s.size(); ++k) {
+		if (s[k] < s_lo || s[k] > s_hi) continue;
 		double lo = 1e300, hi = -1e300;
 		for (size_t i = 0; i < nl; ++i) {
 			if (lanes[i].type == LaneType::Sidewalk) continue;
@@ -504,6 +511,7 @@ void RoadGeometry::build(const RoadMap &map) {
 		g.pos = n.pos;
 		for (SegmentId sid : map.segments_at(n.id)) {
 			const SegCtx &c = ctx[sid];
+			if (c.seg->kind == SegmentKind::Footpath) continue; // footpaths aren't junction legs (M4)
 			Leg leg;
 			leg.seg = sid;
 			leg.at_start = c.seg->from == n.id;
@@ -708,13 +716,167 @@ void RoadGeometry::build(const RoadMap &map) {
 		}
 	}
 
+	// Crosswalks at junction legs (M4): a band just outside the junction box
+	// (the bike crossing nearest the box), with the stop line set back behind it.
+	for (auto &kv : nodes_) {
+		NodeGeom &g = kv.second;
+		const bool junction = (g.kind == NodeKind::Junction && g.legs.size() >= 3) || g.kind == NodeKind::Roundabout;
+		if (!junction) continue;
+		for (Leg &leg : g.legs) {
+			SegCtx &c = ctx[leg.seg];
+			const int e = leg.at_start ? 0 : 1;
+			const Crossing &cr = c.seg->ends[e].crossing;
+			if (cr.kind == CrossingKind::None || c.seg->kind != SegmentKind::Road) continue;
+			double d = leg.trim + 0.5;
+			double bike = -1.0;
+			if (cr.bike) {
+				bike = d + 1.0;
+				d += 2.0;
+			}
+			const double new_trim = d + 3.0 + 1.0;
+			if (new_trim > 0.45 * c.length) continue; // no room on this road
+			c.ped_band[e] = d + 1.5;
+			c.bike_band[e] = bike;
+			leg.trim = new_trim;
+			c.trim[e] = new_trim;
+		}
+	}
+
+	// Paints a crossing band centred on station sc of a road and records it (M4).
+	auto paint_crossing = [&](const SegCtx &c, int level, double sc, const Crossing &cr, int end, NodeId node,
+								  double bike_sc) {
+		std::vector<std::pair<double, double>> cx;
+		c.cross_section(sc, cx);
+		double lo = 1e300, hi = -1e300;
+		for (size_t i = 0; i < c.lanes.size(); ++i) {
+			if (c.lanes[i].type == LaneType::Sidewalk || cx[i].second - cx[i].first < 0.05) continue;
+			lo = std::min(lo, cx[i].first);
+			hi = std::max(hi, cx[i].second);
+		}
+		if (lo > hi) return;
+		Vec2 p, nrm;
+		c.frame(sc, p, nrm);
+		const Vec2 tan = tangent_of(nrm);
+		MeshBatch &paint = mesh.get(level, Layer::Markings);
+		const double hw = 1.5;
+		// Refuge island on the median.
+		bool refuge = false;
+		double r_lo = 0.0, r_hi = 0.0;
+		if (cr.refuge && c.two_way && c.median_type != MedianType::None && c.right_start > 0 &&
+				c.right_start < c.lanes.size()) {
+			r_lo = cx[c.right_start - 1].second;
+			r_hi = cx[c.right_start].first;
+			if (r_hi - r_lo > 0.8) {
+				refuge = true;
+				const double ext = hw + 1.5;
+				const Vec2 q0 = p + nrm * r_lo - tan * ext, q1 = p + nrm * r_hi - tan * ext;
+				const Vec2 q2 = p + nrm * r_hi + tan * ext, q3 = p + nrm * r_lo + tan * ext;
+				MeshSet::quad(mesh.get(level, Layer::Tint), q0, q1, q2, q3, kIsland);
+				MeshSet::path(paint, { q0, q1, q2, q3, q0 }, 0.12, kWhite);
+			}
+		}
+		auto on_refuge = [&](double x0, double x1) { return refuge && x1 > r_lo && x0 < r_hi; };
+		auto box = [&](double x0, double x1, double t0, double t1, Color col, MeshBatch &b) {
+			MeshSet::quad(b, p + nrm * x0 + tan * t0, p + nrm * x1 + tan * t0, p + nrm * x1 + tan * t1,
+					p + nrm * x0 + tan * t1, col);
+		};
+		switch (cr.kind) {
+			case CrossingKind::Zebra:
+				for (double x = lo + 0.3; x + 0.5 <= hi - 0.1; x += 1.0) {
+					if (!on_refuge(x, x + 0.5)) box(x, x + 0.5, -hw, hw, kWhite, paint);
+				}
+				break;
+			case CrossingKind::Signal:
+				for (double x = lo + 0.1; x + 0.4 <= hi; x += 0.8) {
+					if (on_refuge(x, x + 0.4)) continue;
+					box(x, x + 0.4, -hw, -hw + 0.4, kWhite, paint);
+					box(x, x + 0.4, hw - 0.4, hw, kWhite, paint);
+				}
+				break;
+			case CrossingKind::Uncontrolled:
+				for (double x = lo + 0.1; x + 0.6 <= hi; x += 1.2) {
+					if (on_refuge(x, x + 0.6)) continue;
+					box(x, x + 0.6, -hw, -hw + 0.1, kWhite, paint);
+					box(x, x + 0.6, hw - 0.1, hw, kWhite, paint);
+				}
+				break;
+			case CrossingKind::None:
+				break;
+		}
+		CrossingGeom cg;
+		cg.seg = c.seg->id;
+		cg.end = end;
+		cg.id = cr.id;
+		cg.node = node;
+		cg.kind = cr.kind;
+		cg.bike = cr.bike && bike_sc >= 0.0;
+		cg.level = level;
+		cg.s = sc;
+		cg.dir = tan;
+		cg.a = p + nrm * lo;
+		cg.b = p + nrm * hi;
+		cg.half_width = hw;
+		if (refuge) {
+			cg.refuge_t0 = r_lo - lo;
+			cg.refuge_t1 = r_hi - lo;
+		}
+		if (cg.bike) {
+			Vec2 bp, bn;
+			c.frame(bike_sc, bp, bn);
+			const Vec2 bt = tangent_of(bn);
+			MeshBatch &tint = mesh.get(level, Layer::Tint);
+			const Vec2 b0 = bp + bn * lo - bt * 1.0, b1 = bp + bn * hi - bt * 1.0;
+			const Vec2 b2 = bp + bn * hi + bt * 1.0, b3 = bp + bn * lo + bt * 1.0;
+			MeshSet::quad(tint, b0, b1, b2, b3, kBike);
+			for (double x = lo + 0.1; x + 0.4 <= hi; x += 0.8) {
+				MeshSet::quad(paint, bp + bn * x - bt * 1.0, bp + bn * (x + 0.4) - bt * 1.0, bp + bn * (x + 0.4) - bt * 0.6,
+						bp + bn * x - bt * 0.6, kWhite);
+				MeshSet::quad(paint, bp + bn * x + bt * 0.6, bp + bn * (x + 0.4) + bt * 0.6, bp + bn * (x + 0.4) + bt * 1.0,
+						bp + bn * x + bt * 1.0, kWhite);
+			}
+			cg.bike_a = bp + bn * lo;
+			cg.bike_b = bp + bn * hi;
+		}
+		// Mid-block: give-way teeth (zebra) or a stop line (signal) before the band, per direction.
+		if (end < 0 && (cr.kind == CrossingKind::Zebra || cr.kind == CrossingKind::Signal)) {
+			for (int dir = 0; dir < 2; ++dir) {
+				const LaneDir want = dir == 0 ? LaneDir::Forward : LaneDir::Backward;
+				double dl = 1e300, dh = -1e300;
+				for (size_t i = 0; i < c.lanes.size(); ++i) {
+					if (!is_directional(c.lanes[i].type) || c.lanes[i].dir != want) continue;
+					dl = std::min(dl, cx[i].first);
+					dh = std::max(dh, cx[i].second);
+				}
+				if (dl > dh) continue;
+				const double far = dir == 0 ? -(hw + 2.0) : hw + 2.0;
+				const double bike_extra = cg.bike && ((bike_sc < sc) == (dir == 0)) ? (dir == 0 ? -2.0 : 2.0) : 0.0;
+				const double t = far + bike_extra;
+				if (cr.kind == CrossingKind::Signal) {
+					box(dl, dh, t - 0.2, t + 0.2, kWhite, paint);
+				} else {
+					const Vec2 up = dir == 0 ? tan * -1.0 : tan;
+					const int n = std::max(1, static_cast<int>((dh - dl) / 1.2));
+					const double step = (dh - dl) / n;
+					for (int k = 0; k < n; ++k) {
+						const Vec2 q0 = p + nrm * (dl + step * k + 0.15) + tan * t;
+						const Vec2 q1 = p + nrm * (dl + step * (k + 1) - 0.15) + tan * t;
+						MeshSet::tri(paint, q0, q1, (q0 + q1) * 0.5 + up * 0.9, kWhite);
+					}
+				}
+			}
+		}
+		crossings_.push_back(cg);
+	};
+
 	// --- 6. Segments: samples, lanes, paint ------------------------------------------
 	for (auto &kv : ctx) {
 		SegCtx &c = kv.second;
 		const RoadSegment &seg = *c.seg;
 		SegmentGeom &sg = segments_[seg.id];
 		sg.id = seg.id;
-		sg.level = seg.level;
+		sg.level = seg.top_level();
+		sg.kind = seg.kind;
+		sg.rise = seg.rise;
 		sg.curve = c.curve;
 		sg.length = c.length;
 		sg.trim[0] = c.trim[0];
@@ -748,13 +910,14 @@ void RoadGeometry::build(const RoadMap &map) {
 		for (size_t i = 0; i < nl; ++i) {
 			const GeomLane &l = c.lanes[i];
 			const Layer layer = l.type == LaneType::Sidewalk ? Layer::Ground : Layer::Asphalt;
-			MeshBatch &b = mesh.get(seg.level, layer);
+			MeshBatch &b = mesh.get(sg.level, layer);
+			const Color lane_col = is_walkable(seg.kind) ? kPath : lane_color(l.type);
 			std::vector<Vec2> left, right;
 			for (size_t k = 0; k < ns; ++k) {
 				const auto &e = sg.edge(k, i);
 				if (e.second - e.first < 1e-3) {
 					// Flush a visible run.
-					MeshSet::strip(b, left, right, lane_color(l.type));
+					MeshSet::strip(b, left, right, lane_col);
 					left.clear();
 					right.clear();
 					continue;
@@ -762,7 +925,7 @@ void RoadGeometry::build(const RoadMap &map) {
 				left.push_back(sg.at(k, e.first));
 				right.push_back(sg.at(k, e.second));
 			}
-			MeshSet::strip(b, left, right, lane_color(l.type));
+			MeshSet::strip(b, left, right, lane_col);
 		}
 
 		// Median.
@@ -773,15 +936,15 @@ void RoadGeometry::build(const RoadMap &map) {
 				mr.push_back(sg.at(k, sg.edge(k, c.right_start).first));
 			}
 			if (c.median_type == MedianType::Raised) {
-				MeshSet::strip(mesh.get(seg.level, Layer::Ground), ml, mr, kIsland);
-				MeshSet::thick(mesh.get(seg.level, Layer::Markings), ml, sg.n, 0.2, kWhite);
-				MeshSet::thick(mesh.get(seg.level, Layer::Markings), mr, sg.n, 0.2, kWhite);
+				MeshSet::strip(mesh.get(sg.level, Layer::Ground), ml, mr, kIsland);
+				MeshSet::thick(mesh.get(sg.level, Layer::Markings), ml, sg.n, 0.2, kWhite);
+				MeshSet::thick(mesh.get(sg.level, Layer::Markings), mr, sg.n, 0.2, kWhite);
 			} else {
-				MeshSet::strip(mesh.get(seg.level, Layer::Asphalt), ml, mr, kAsphalt);
-				MeshSet::thick(mesh.get(seg.level, Layer::Markings), ml, sg.n, kLineWidth, kYellow);
-				MeshSet::thick(mesh.get(seg.level, Layer::Markings), mr, sg.n, kLineWidth, kYellow);
+				MeshSet::strip(mesh.get(sg.level, Layer::Asphalt), ml, mr, kAsphalt);
+				MeshSet::thick(mesh.get(sg.level, Layer::Markings), ml, sg.n, kLineWidth, kYellow);
+				MeshSet::thick(mesh.get(sg.level, Layer::Markings), mr, sg.n, kLineWidth, kYellow);
 				// Hatching every 4 m.
-				MeshBatch &mb = mesh.get(seg.level, Layer::Markings);
+				MeshBatch &mb = mesh.get(sg.level, Layer::Markings);
 				for (size_t k = 0; k + 1 < ns; ++k) {
 					const double sa = sg.s[k];
 					if (std::fmod(sa, 4.0) > 2.0) continue;
@@ -792,7 +955,7 @@ void RoadGeometry::build(const RoadMap &map) {
 
 		// Lane lines. Boundary b sits between lane b-1 and lane b.
 		auto boundary_at = [&](size_t k, size_t b) { return sg.edge(k, b).first; };
-		MeshBatch &paint = mesh.get(seg.level, Layer::Markings);
+		MeshBatch &paint = mesh.get(sg.level, Layer::Markings);
 		auto pocket_visible = [&](size_t i, double s) {
 			return c.lanes[i].pocket_end < 0 || c.width_of(i, s) > 0.05;
 		};
@@ -824,6 +987,7 @@ void RoadGeometry::build(const RoadMap &map) {
 					return { A.type == B.type ? kNone : kSolid, kWhite };
 				}
 				if (A.pocket_end >= 0 || B.pocket_end >= 0) return { kSolid, kWhite };
+				if (A.type == LaneType::Bike && B.type == LaneType::Bike && A.dir != B.dir) return { kDashed, kWhite }; // two-way path
 				if (A.type == LaneType::Bike || B.type == LaneType::Bike) return { kSolid, kWhite };
 				Style st = kDashed;
 				const Color col = center ? kYellow : kWhite;
@@ -991,8 +1155,16 @@ void RoadGeometry::build(const RoadMap &map) {
 			if (count > 0) kerb_line(first + count * bay, s1);
 			const Vec2 zero{};
 			(void)zero;
+			auto near_crossing = [&](double sa, double sb2) {
+				for (const Crossing &cr : seg.crossings) {
+					const double sc = cr.u * c.length;
+					if (sb2 > sc - 10.0 && sa < sc + 10.0) return true; // no parking within 10 m (M4)
+				}
+				return false;
+			};
 			for (int m = 0; m <= count && count > 0; ++m) {
 				const double sb = first + m * bay;
+				if (near_crossing(sb - bay, sb + bay)) continue;
 				Vec2 p, nrm;
 				double lo, hi;
 				edges_at(sb, p, nrm, lo, hi);
@@ -1067,7 +1239,7 @@ void RoadGeometry::build(const RoadMap &map) {
 					const double f = std::min(1.0, std::min(static_cast<double>(k), static_cast<double>(n - 1 - k)) / 2.0);
 					b[k] = a[k] + (b[k] - a[k]) * f;
 				}
-				MeshSet::strip(mesh.get(seg.level, Layer::Asphalt), fwd ? a : b, fwd ? b : a, kAsphalt);
+				MeshSet::strip(mesh.get(sg.level, Layer::Asphalt), fwd ? a : b, fwd ? b : a, kAsphalt);
 			}
 			// Yellow box outline on the kerb lane (or in the lay-by). Offsets
 			// are measured outwards, towards the kerb.
@@ -1077,6 +1249,48 @@ void RoadGeometry::build(const RoadMap &map) {
 			MeshSet::path(paint, o2, 0.15, kYellow);
 			MeshSet::path(paint, { o1.front(), o2.front() }, 0.15, kYellow);
 			MeshSet::path(paint, { o1.back(), o2.back() }, 0.15, kYellow);
+		}
+
+		// Crossings (M4): mid-block, and the bands at junction legs.
+		if (seg.kind == SegmentKind::Road) {
+			for (const Crossing &cr : seg.crossings) {
+				const double sc = std::clamp(cr.u * c.length, s0 + 3.0, std::max(s0 + 3.0, s1 - 3.0));
+				paint_crossing(c, sg.level, sc, cr, -1, kNoId, cr.bike ? sc + 3.0 : -1.0);
+			}
+			for (int e = 0; e < 2; ++e) {
+				if (c.ped_band[e] < 0.0) continue;
+				const double sc = e == 0 ? c.ped_band[e] : c.length - c.ped_band[e];
+				const double sb = c.bike_band[e] < 0.0 ? -1.0 : (e == 0 ? c.bike_band[e] : c.length - c.bike_band[e]);
+				const NodeId nid = e == 0 ? seg.from : seg.to;
+				const RoadNode *rn = map.node(nid);
+				paint_crossing(c, rn ? rn->level : sg.level, sc, seg.ends[e].crossing, e, nid, sb);
+			}
+		}
+
+		// Fences (M4) along the kerb, with posts.
+		for (const Fence &f : seg.fences) {
+			const double fa = std::max(s0, f.u0 * c.length), fb = std::min(s1, f.u1 * c.length);
+			if (fb - fa < 0.5) continue;
+			std::vector<Vec2> pts, nrms;
+			for (size_t k = 0; k < ns; ++k) {
+				if (sg.s[k] < fa - 1e-6 || sg.s[k] > fb + 1e-6) continue;
+				double lo = 1e300, hi = -1e300;
+				for (size_t i = 0; i < nl; ++i) {
+					if (c.lanes[i].type == LaneType::Sidewalk) continue;
+					lo = std::min(lo, sg.edge(k, i).first);
+					hi = std::max(hi, sg.edge(k, i).second);
+				}
+				if (lo > hi) lo = hi = 0.0;
+				pts.push_back(sg.at(k, f.side == 0 ? lo - 0.35 : hi + 0.35));
+				nrms.push_back(sg.n[k]);
+			}
+			if (pts.size() < 2) continue;
+			MeshSet::thick(paint, pts, nrms, 0.12, kFence);
+			for (size_t k = 0; k < pts.size(); k += 2) {
+				const Vec2 q = pts[k];
+				const Vec2 t = tangent_of(nrms[k]) * 0.18, r = nrms[k] * 0.18;
+				MeshSet::quad(paint, q - t - r, q + t - r, q + t + r, q - t + r, kFence);
+			}
 		}
 	}
 
@@ -1578,7 +1792,7 @@ void RoadGeometry::build(const RoadMap &map) {
 			const Vec2 along = tangent_of(nrm);
 			const Vec2 a = p + nrm * lo, b = p + nrm * hi;
 			if (major) continue;
-			if (ctl == JunctionControl::AllWayStop) {
+			if (ctl == JunctionControl::AllWayStop || ctl == JunctionControl::Signal) {
 				const Vec2 t = along * 0.25;
 				MeshSet::quad(paint, a - t, b - t, b + t, a + t, kWhite);
 				continue;
@@ -1616,8 +1830,40 @@ void RoadGeometry::build(const RoadMap &map) {
 					general.push_back(l);
 				}
 			}
-			if (general.empty() && !pocket_l && !pocket_r) continue;
 			const EndRules &rules = ctx[leg.seg].seg->ends[leg.at_start ? 0 : 1];
+			// Bike lanes get their own connectors (M3): into the target road's bike
+			// lane, or its kerb-side travel lane when it has none.
+			for (const LegLane &bl : in) {
+				if (bl.type != LaneType::Bike) continue;
+				for (size_t k = 0; k < deg; ++k) {
+					if (k == j) continue;
+					const TurnKind tk = turn_between(g, j, k);
+					if (tk == TurnKind::UTurn) continue;
+					if (tk == TurnKind::Left && rules.left == TurnRule::Disallowed) continue;
+					if (tk == TurnKind::Right && rules.right == TurnRule::Disallowed) continue;
+					const std::vector<LegLane> out = leg_lanes(g.legs[k], false);
+					const LegLane *to = nullptr;
+					for (const LegLane &l : out) {
+						if (l.type == LaneType::Bike) {
+							to = &l;
+							break;
+						}
+					}
+					for (const LegLane &l : out) {
+						if (!to && is_travel(l.type)) to = &l; // sorted right to left: the kerb lane first
+					}
+					if (!to) continue;
+					Connector cn;
+					cn.from_seg = leg.seg;
+					cn.from_lane = bl.id;
+					cn.to_seg = g.legs[k].seg;
+					cn.to_lane = to->id;
+					cn.turn = tk;
+					cn.path = connector_path(bl.point, bl.dir, to->point, to->dir);
+					g.connectors.push_back(cn);
+				}
+			}
+			if (general.empty() && !pocket_l && !pocket_r) continue;
 			const Vec2 in_dir = leg.dir * -1.0;
 			struct Target {
 				size_t leg;
@@ -1699,38 +1945,6 @@ void RoadGeometry::build(const RoadMap &map) {
 					link(general[i], straights[0].leg, true, i, TurnKind::Straight);
 				}
 			}
-			// Bike lanes get their own connectors (M3): into the target road's bike
-			// lane, or its kerb-side travel lane when it has none.
-			for (const LegLane &bl : in) {
-				if (bl.type != LaneType::Bike) continue;
-				for (size_t k = 0; k < deg; ++k) {
-					if (k == j) continue;
-					const TurnKind tk = turn_between(g, j, k);
-					if (tk == TurnKind::UTurn) continue;
-					if (tk == TurnKind::Left && rules.left == TurnRule::Disallowed) continue;
-					if (tk == TurnKind::Right && rules.right == TurnRule::Disallowed) continue;
-					const std::vector<LegLane> out = leg_lanes(g.legs[k], false);
-					const LegLane *to = nullptr;
-					for (const LegLane &l : out) {
-						if (l.type == LaneType::Bike) {
-							to = &l;
-							break;
-						}
-					}
-					for (const LegLane &l : out) {
-						if (!to && is_travel(l.type)) to = &l; // sorted right to left: the kerb lane first
-					}
-					if (!to) continue;
-					Connector cn;
-					cn.from_seg = leg.seg;
-					cn.from_lane = bl.id;
-					cn.to_seg = g.legs[k].seg;
-					cn.to_lane = to->id;
-					cn.turn = tk;
-					cn.path = connector_path(bl.point, bl.dir, to->point, to->dir);
-					g.connectors.push_back(cn);
-				}
-			}
 			// Arrows painted from the connectors, 8 m before the stop line.
 			const SegCtx &c = ctx[leg.seg];
 			const double back = 8.0;
@@ -1753,6 +1967,25 @@ void RoadGeometry::build(const RoadMap &map) {
 				}
 			}
 		}
+	}
+
+	// Footpath joints (M4): a round paving patch where footpaths meet.
+	for (const auto &kv : map.nodes()) {
+		int paths = 0;
+		double width = 0.0;
+		for (SegmentId sid : map.segments_at(kv.first)) {
+			const RoadSegment *rs = map.segment(sid);
+			if (rs->kind != SegmentKind::Footpath) continue;
+			++paths;
+			width = std::max(width, rs->profile.total_width());
+		}
+		if (paths < 2) continue;
+		std::vector<Vec2> disc;
+		for (int k = 0; k < 16; ++k) {
+			const double th = 2.0 * kPi * k / 16;
+			disc.push_back(kv.second.pos + Vec2{ std::cos(th), std::sin(th) } * (0.5 * width));
+		}
+		triangulate(disc, mesh.get(kv.second.level, Layer::Ground), kPath);
 	}
 
 	// --- 8. Assemble meshes by level, then layer ---------------------------------------

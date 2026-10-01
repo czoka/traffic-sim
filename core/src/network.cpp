@@ -248,6 +248,36 @@ uint64_t Network::hash() const {
 		for (int32_t l : s.spawn_lanes) h.u(static_cast<uint64_t>(l));
 		for (int32_t l : s.sink_lanes) h.u(static_cast<uint64_t>(l));
 	}
+	// Pedestrian network (M4).
+	for (const PedNode &n : ped.nodes) {
+		h.v(n.pos);
+		h.u(static_cast<uint64_t>(n.level + 8));
+	}
+	for (const PedEdge &e : ped.edges) {
+		h.u(static_cast<uint64_t>(e.a));
+		h.u(static_cast<uint64_t>(e.b));
+		h.d(e.length);
+		h.u(static_cast<uint64_t>(e.kind));
+		h.u(static_cast<uint64_t>(e.crossing + 1));
+	}
+	for (const NetCrossing &c : ped.crossings) {
+		h.u(static_cast<uint64_t>(c.kind));
+		h.u(c.unmarked);
+		h.u(static_cast<uint64_t>(c.junction + 1));
+		for (const CrossingSpan &sp : c.spans) {
+			h.u(static_cast<uint64_t>(sp.lane));
+			h.d(sp.s0);
+			h.d(sp.s1);
+			h.d(sp.t0);
+			h.d(sp.t1);
+		}
+	}
+	for (const PedSpawner &s : ped.spawners) {
+		h.u(s.node);
+		h.d(s.people);
+		for (int32_t e : s.entries) h.u(static_cast<uint64_t>(e));
+	}
+	for (const PedStop &s : ped.stops) h.u(static_cast<uint64_t>(s.node));
 	return h.h.value();
 }
 
@@ -260,6 +290,7 @@ void Network::clear() {
 	depots.clear();
 	coach_lines.clear();
 	main_station = -1;
+	ped.clear();
 	index_.clear();
 	junction_index_.clear();
 	max_speed = 13.9;
@@ -271,6 +302,8 @@ void NetworkCompiler::clear_cache() {
 	segments_.clear();
 	nodes_.clear();
 }
+
+void build_ped_network(const RoadMap &map, const RoadGeometry &geom, Network &out); // ped_network.cpp
 
 void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Network &out) {
 	const auto t0 = std::chrono::steady_clock::now();
@@ -287,12 +320,13 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 	for (const auto &kv : map.segments()) {
 		const RoadSegment &seg = kv.second;
 		const SegmentGeom *sg = geom.segment(seg.id);
-		if (!sg || seg.kind != SegmentKind::Road) continue;
+		if (!sg || seg.kind == SegmentKind::Footpath) continue; // footpaths: pedestrians only (M4)
 		live_segments.insert(seg.id);
 		const bool stop[2] = { stop_at(seg.from), stop_at(seg.to) };
 
 		Hasher h;
 		h.u(seg.level);
+		h.u(static_cast<uint64_t>(seg.rise + 8));
 		h.d(seg.speed_limit);
 		h.u(stop[0]);
 		h.u(stop[1]);
@@ -356,7 +390,8 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 			l.kind = NetLaneKind::Road;
 			l.key = LaneKey{ NetLaneKind::Road, gl.id, 0 };
 			l.type = gl.type;
-			l.level = seg.level;
+			l.level = gl.dir == LaneDir::Forward ? seg.level : seg.level_end();
+			l.level_end = gl.dir == LaneDir::Forward ? seg.level_end() : seg.level;
 			l.speed_limit = quantize(seg.speed_limit);
 			l.segment = seg.id;
 			l.dir = gl.dir;
@@ -499,7 +534,7 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 			l.kind = NetLaneKind::Road;
 			l.key = LaneKey{ NetLaneKind::Road, r.id, 0 };
 			l.type = LaneType::General;
-			l.level = g.level;
+			l.level = l.level_end = g.level;
 			l.speed_limit = quantize(std::min(13.9, std::sqrt(2.5 * r.radius)));
 			l.segment = 0x80000000u | ((g.id & 0x0FFFFFFFu) << 3) | (static_cast<uint32_t>(r.piece) & 7u);
 			l.dir = LaneDir::Forward;
@@ -541,7 +576,7 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 			NetLane l;
 			l.kind = NetLaneKind::Connector;
 			l.key = LaneKey{ NetLaneKind::Connector, c.from_lane, c.to_lane };
-			l.level = g.level;
+			l.level = l.level_end = g.level;
 			l.node = g.id;
 			l.turn = c.turn;
 			set_polyline(l, c.path);
@@ -766,6 +801,7 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 					}
 				}
 				sg.state.push_back(std::move(st));
+				sg.walk.push_back(ph.walk);
 				sg.cycle += sg.green.back() + sg.amber + sg.all_red;
 			}
 			sg.offset = sg.cycle > 0 ? ((ticks(plan.offset) % sg.cycle) + sg.cycle) % sg.cycle : 0;
@@ -982,6 +1018,9 @@ void NetworkCompiler::compile(const RoadMap &map, const RoadGeometry &geom, Netw
 		}
 	}
 
+	// --- 5. Pedestrian network (M4) ---------------------------------------------------------
+	build_ped_network(map, geom, out);
+
 	stats_.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 }
 
@@ -1100,7 +1139,9 @@ std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net)
 	transit_problems(map, net, out);
 	for (const auto &kv : map.nodes()) {
 		const RoadNode &n = kv.second;
-		if (n.spawner.enabled && !net.spawner_at(n.id)) {
+		bool people_only = false; // a spawn point at a footpath end (M4)
+		for (const PedSpawner &ps : net.ped.spawners) people_only |= ps.node == n.id && !ps.road;
+		if (n.spawner.enabled && !net.spawner_at(n.id) && !people_only) {
 			NetProblem p;
 			p.code = "spawner_not_at_end";
 			p.message = "Spawn point is not on a road end, so it is inactive. Move it to the end of a road.";
@@ -1134,6 +1175,9 @@ std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net)
 		NodeId example = kNoId;
 		for (const NetSpawner &dst : net.spawners) {
 			if (dst.node == src.node || !dst.config.sink || src.config.weight_to(dst.node) <= 0.0) continue;
+			bool cars_end_here = dst.sink_lanes.empty(); // not only a bike path
+			for (int32_t l : dst.sink_lanes) cars_end_here |= net.lanes[static_cast<size_t>(l)].type != LaneType::Bike;
+			if (!cars_end_here) continue;
 			bool ok = false;
 			for (int32_t l : dst.sink_lanes) ok |= seen[static_cast<size_t>(l)] != 0;
 			if (!ok) {

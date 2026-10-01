@@ -18,6 +18,12 @@ const LIGHTS := {
 	"green": Color(0.25, 0.85, 0.35),
 	"yield": Color(0.6, 0.95, 0.35),
 }
+const WALK := {
+	"walk": Color(0.95, 0.97, 1.0),
+	"flashing": Color(1.0, 0.55, 0.15),
+	"dont_walk": Color(0.93, 0.25, 0.2),
+}
+const PERSON := Color(1.0, 0.85, 0.35)
 const TURN_COLORS := {
 	"straight": Color(1, 1, 1, 0.8),
 	"left": Color(0.45, 0.7, 1.0, 0.9),
@@ -89,6 +95,7 @@ func _draw() -> void:
 		var at := p + side * px(0.0) + (h.dir as Vector2) * px(4)
 		draw_circle(at, maxf(px(4.5), 0.9), Color(0.05, 0.05, 0.06, 0.9))
 		draw_circle(at, maxf(px(3.2), 0.65), LIGHTS.get(h.light, Color.WHITE))
+	_draw_people(font)
 	var car: Dictionary = editor.sim.car_info if editor.sim and editor.sim.selected_car != 0 else {}
 	if not car.is_empty():
 		var route: PackedVector2Array = car.route
@@ -163,6 +170,40 @@ func _draw_transit(font: Font) -> void:
 		draw_string(font, sign_at + Vector2(-px(3.5), px(4.5)), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(12)), col)
 		if editor.camera.zoom.x > 1.2:
 			draw_string(font, sign_at + Vector2(r + px(3), px(4)), String(st.name), HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(11)), col)
+
+
+## Walk lights at signal crossings, people waiting at stops, the selected person.
+func _draw_people(font: Font) -> void:
+	var road = editor.road
+	var blink := int(Time.get_ticks_msec() / 400) % 2 == 0
+	if editor.camera.zoom.x > 0.8:
+		for w in road.sim_walk_lights(editor.level):
+			var col: Color = WALK.get(w.walk, Color.WHITE)
+			if w.walk == "flashing" and not blink:
+				col = Color(col.r, col.g, col.b, 0.25)
+			var a: Vector2 = w.a
+			var b: Vector2 = w.b
+			var dir := (b - a).normalized()
+			var s := maxf(px(3.5), 0.45)
+			for p in [a - dir * s * 1.6, b + dir * s * 1.6]:
+				draw_rect(Rect2(p - Vector2(s, s), Vector2(s, s) * 2.0), Color(0.05, 0.05, 0.06, 0.9))
+				draw_rect(Rect2(p - Vector2(s, s) * 0.7, Vector2(s, s) * 1.4), col)
+			if w.push_button:
+				var mid := (a + b) * 0.5
+				draw_circle(mid, maxf(px(3.5), 0.5), Color(0.05, 0.05, 0.06, 0.9))
+				draw_circle(mid, maxf(px(2.5), 0.35), LIGHTS.get(w.car, Color.WHITE))
+	if editor.sim and editor.sim.has_people() and editor.camera.zoom.x > 0.6:
+		for st in editor.sim.stop_stats:
+			if int(st.waiting) > 0:
+				draw_string(font, (st.pos as Vector2) + Vector2(px(14), -px(10)), "%d waiting" % int(st.waiting),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(11)), STOP)
+	var ped: Dictionary = editor.sim.ped_info if editor.sim and editor.sim.selected_ped != 0 else {}
+	if not ped.is_empty():
+		var route: PackedVector2Array = ped.route
+		if route.size() >= 2:
+			draw_polyline(route, PERSON, px(2.5))
+			draw_circle(route[route.size() - 1], px(5), PERSON)
+		draw_circle(ped.pos, maxf(px(9), 1.5), PERSON, false, px(2.5))
 
 
 func _outline(pts: PackedVector2Array, col: Color, width: float) -> void:
