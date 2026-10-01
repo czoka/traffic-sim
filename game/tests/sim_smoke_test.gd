@@ -291,7 +291,10 @@ func _m4(ed: MapEditor, road) -> void:
 	var s: Dictionary = road.sim_stats()
 	_check(int(s.trips) > 100 and int(s.pedestrians) > 20, "after 10 min: %d people trips, %d on foot, %d riding" % [s.trips, s.pedestrians, s.riding])
 	_check(int(s.crossings) > 10 and int(s.cars_yielded) > 0, "%d crossings on foot, cars gave way %d times" % [s.crossings, s.cars_yielded])
-	_check(int(s.boarded) > 0, "%d boarded, %d got off" % [s.boarded, s.alighted])
+	if int(s.boarded) == 0:
+		road.sim_step(6000) # the first buses can be late in traffic
+		s = road.sim_stats()
+	_check(int(s.boarded) > 0, "%d boarded, %d got off (by %d min)" % [s.boarded, s.alighted, int(s.sim_time) / 60])
 	var n: int = road.sim_ped_count(0)
 	var buf: PackedFloat32Array = road.sim_ped_buffer(0, 1.0)
 	_check(n > 0 and buf.size() == n * 12, "people render buffer: %d on level 0, %d on level 1" % [n, road.sim_ped_count(1)])

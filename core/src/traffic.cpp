@@ -56,6 +56,8 @@ const char *vehicle_state_name(VehicleState s) {
 			return "parked";
 		case VehicleState::GivingWay:
 			return "giving way to people crossing";
+		case VehicleState::WaitingInBox:
+			return "waiting in the junction for room ahead";
 	}
 	return "driving";
 }
@@ -177,7 +179,7 @@ void Traffic::set_network(const Network *net) {
 	};
 	struct Saved {
 		LaneKey lane, prev;
-		bool grant = false, held = false;
+		bool grant = false, held = false, staged = false;
 		LaneKey grant_key, held_key;
 		std::vector<SavedWp> wps; // pending waypoints only
 	};
@@ -199,6 +201,7 @@ void Traffic::set_network(const Network *net) {
 				s.held = true;
 				s.held_key = net_->lanes[static_cast<size_t>(v.held)].key;
 			}
+			s.staged = v.staged;
 			for (size_t w = v.wi; w < v.waypoints.size(); ++w) {
 				const Waypoint &wp = v.waypoints[w];
 				SavedWp sw;
@@ -256,6 +259,21 @@ void Traffic::set_network(const Network *net) {
 		// A car needs length + s0 + margin to enter a piece, 6.5 m for each one queued behind.
 		slots[k] += 1 + static_cast<int32_t>(std::max(0.0, (lane.length - 8.5) / 6.5));
 	}
+	stage_hold_.assign(n, -1.0);
+	for (size_t j = 0; net_ && j < net_->junctions.size(); ++j) {
+		const NetJunction &junc = net_->junctions[j];
+		if (!junc.arbitrated || !junc.signal.enabled || junc.roundabout) continue;
+		for (int32_t c : junc.connectors) {
+			const NetLane &cn = net_->lanes[static_cast<size_t>(c)];
+			// Connectors from the same lane are ordered by the lane's queue.
+			double first = cn.length;
+			for (const Conflict &cf : cn.conflicts) {
+				if (net_->lanes[static_cast<size_t>(cf.other)].from != cn.from) first = std::min(first, cf.s_self);
+			}
+			const double hold = first - config_.box_margin;
+			if (hold >= 1.0 && hold < cn.length - 1.0) stage_hold_[static_cast<size_t>(c)] = hold;
+		}
+	}
 	rebuild_reachability();
 	if (!net_) {
 		veh_.clear();
@@ -284,6 +302,7 @@ void Traffic::set_network(const Network *net) {
 		v.grant = s.grant ? nw.find(s.grant_key) : -1;
 		v.held = s.held ? nw.find(s.held_key) : -1;
 		if (v.grant >= 0 && nw.lanes[static_cast<size_t>(v.grant)].from != v.lane) v.grant = -1;
+		v.staged = s.staged && (v.grant >= 0 || v.held >= 0);
 		v.route.clear();
 		v.ri = 0;
 		v.wait_since = 0;
@@ -844,6 +863,8 @@ void Traffic::leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &
 		}
 	};
 	if (peds) crossings_on(lane, -s);
+	// Waiting inside the junction: stop short of the first conflict.
+	if (v.staged && (lane == v.grant || lane == v.held)) take(stage_hold_[static_cast<size_t>(lane)] - 0.5 - s + v.drv.s0, 0.0, kNoId);
 	[&]() {
 		// Car ahead on the same lane.
 		const std::vector<int32_t> &list = cars_[static_cast<size_t>(lane)];
@@ -882,6 +903,7 @@ void Traffic::leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &
 					take(dist - 0.5 + v.drv.s0, 0.0, kNoId); // no grant: stop at the line
 					return;
 				}
+				if (v.staged && nx == v.grant) take(dist + stage_hold_[static_cast<size_t>(nx)] - 0.5 + v.drv.s0, 0.0, kNoId);
 				// Cars that just turned off into another connector from this lane.
 				for (int32_t sib : l.next) {
 					if (sib == nx || cars_[static_cast<size_t>(sib)].empty()) continue;
@@ -951,6 +973,7 @@ bool Traffic::box_clear(const NetJunction &j, int32_t conn, const std::vector<in
 		for (int32_t k : granted) {
 			const Vehicle &o = veh_[static_cast<size_t>(k)];
 			if (o.grant != cf.other && o.held != cf.other) continue;
+			if (o.staged) continue; // waits short of the conflicts
 			if (pos_on(o, cf.other) - o.drv.length < cf.s_other + config_.box_margin) {
 				blocker = o.id;
 				return false;
@@ -1073,12 +1096,13 @@ void Traffic::arbitrate() {
 				else if (L == SignalLight::Amber) revoke = d > stop || (o.v < 0.5 && !permissive(o.grant));
 				if (revoke) {
 					o.grant = -1;
+					o.staged = false;
 					o.state = VehicleState::RedLight;
 					continue;
 				}
 			}
 			// Give back grants of cars that stopped before the line (their exit filled up).
-			if (o.v < 0.3 && d < 8.0 && !exit_clear(o.grant, k, box)) {
+			if (!o.staged && o.v < 0.3 && d < 8.0 && !exit_clear(o.grant, k, box)) {
 				o.grant = -1;
 				o.state = VehicleState::ExitBlocked;
 			}
@@ -1106,6 +1130,76 @@ void Traffic::arbitrate() {
 				break;
 			}
 		}
+		// Cars waiting inside the junction go once their exit has room and nothing is
+		// in their way. Until then, approaching cars that can still stop comfortably
+		// keep out of their path (`ready`), so the box empties before the next phase fills it.
+		std::vector<int32_t> ready;
+		for (int32_t k : box) {
+			Vehicle &o = veh_[static_cast<size_t>(k)];
+			if (!o.staged) continue;
+			const int32_t c = o.grant >= 0 ? o.grant : o.held;
+			if (c < 0 || n.lanes[static_cast<size_t>(c)].junction != static_cast<int32_t>(j)) continue;
+			o.state = VehicleState::WaitingInBox;
+			o.blocker = kNoId;
+			if (!exit_clear(c, k, box)) continue;
+			VehicleId blk = kNoId;
+			bool go = box_clear(junc, c, box, blk);
+			// While its own green lasts it gives way as usual; after that it only lets
+			// through cars that can no longer stop, and the others wait for it.
+			const SignalLight ls = light_of(c);
+			const bool own_green = ls == SignalLight::Green || ls == SignalLight::GreenYield;
+			const double at = pos_on(o, c);
+			for (const Conflict &cf : n.lanes[static_cast<size_t>(c)].conflicts) {
+				for (const Candidate &q : cands) {
+					if (!go) break;
+					if (q.conn != cf.other) continue;
+					const Vehicle &p = veh_[static_cast<size_t>(q.veh)];
+					const SignalLight lq = light_of(q.conn);
+					if (lq == SignalLight::Red) continue;
+					bool yield = p.v * p.v / (2.0 * p.drv.b) > q.dist - 1.0; // can't stop for it any more
+					if (!yield && own_green && (lq == SignalLight::Green || lq == SignalLight::GreenYield) &&
+							(ls == SignalLight::GreenYield ? lq == SignalLight::Green || cf.priority < 0 : cf.priority < 0 && lq == SignalLight::Green)) {
+						const double tp = time_to(p, q.dist + cf.s_other);
+						const double clear = time_to(o, cf.s_self - at + o.drv.length + config_.box_margin);
+						yield = tp < std::max(o.drv.critical_gap, clear + 1.0);
+					}
+					if (yield) {
+						go = false;
+						blk = p.id;
+					}
+				}
+			}
+			if (go) {
+				o.staged = false;
+				o.state = VehicleState::Driving;
+			} else {
+				o.blocker = blk;
+				if (!own_green) ready.push_back(c);
+			}
+		}
+		auto crosses_ready = [&](int32_t conn) {
+			for (const Conflict &cf : n.lanes[static_cast<size_t>(conn)].conflicts) {
+				if (std::find(ready.begin(), ready.end(), cf.other) != ready.end()) return true;
+			}
+			return false;
+		};
+		// Pull forward into the junction on green when the box, its exit or oncoming
+		// traffic holds it up, so the next red doesn't catch it at the line.
+		auto can_stage = [&](const Candidate &c, SignalLight L) {
+			const Vehicle &o = veh_[static_cast<size_t>(c.veh)];
+			const double hold = stage_hold_[static_cast<size_t>(c.conn)];
+			if (!config_.wait_in_box || !sig || (L != SignalLight::Green && L != SignalLight::GreenYield) || hold < 0.0) return false;
+			if (o.v * o.v / (2.0 * o.drv.b) > c.dist + hold - 0.5) return false; // can't stop there comfortably
+			const int32_t from = n.lanes[static_cast<size_t>(c.conn)].from;
+			if (cars_[static_cast<size_t>(from)].empty() || cars_[static_cast<size_t>(from)].front() != c.veh) return false;
+			// Room past the line behind the cars already waiting there.
+			double room = hold;
+			for (int32_t k : box) {
+				const Vehicle &b = veh_[static_cast<size_t>(k)];
+				if (b.staged && (b.grant == c.conn || b.held == c.conn)) room -= b.drv.length + b.drv.s0 + 0.5;
+			}
+			return room >= 1.0;
+		};
 		bool any_waiting = false;
 		bool could_go = false; // someone waits although its exit has room
 		for (const Candidate &c : cands) {
@@ -1150,6 +1244,7 @@ void Traffic::arbitrate() {
 		auto grant = [&](const Candidate &c) {
 			Vehicle &o = veh_[static_cast<size_t>(c.veh)];
 			o.grant = c.conn;
+			o.staged = false;
 			o.wait_since = 0;
 			o.stopped_tick = 0;
 			o.state = VehicleState::Driving;
@@ -1207,14 +1302,23 @@ void Traffic::arbitrate() {
 				o.state = VehicleState::Yielding;
 				continue;
 			}
-			VehicleId blk = kNoId;
-			if (!box_clear(junc, c.conn, box, blk)) {
-				o.state = VehicleState::BoxBlocked;
-				o.blocker = blk;
+			if (!ready.empty() && o.v * o.v / (2.0 * o.drv.b) <= c.dist - 1.0 && crosses_ready(c.conn)) {
+				o.state = VehicleState::BoxBlocked; // a car inside the junction clears first
 				continue;
 			}
-			if (!exit_clear(c.conn, c.veh, box)) {
-				o.state = VehicleState::ExitBlocked;
+			VehicleId blk = kNoId;
+			const bool box_ok = box_clear(junc, c.conn, box, blk);
+			if (!box_ok || !exit_clear(c.conn, c.veh, box)) {
+				if (can_stage(c, L)) {
+					grant(c);
+					o.staged = true;
+					o.state = VehicleState::WaitingInBox;
+					++stats_.box_waits;
+					granted_now = true;
+					continue;
+				}
+				o.state = box_ok ? VehicleState::ExitBlocked : VehicleState::BoxBlocked;
+				o.blocker = box_ok ? kNoId : blk;
 				continue;
 			}
 			bool go = true;
@@ -1297,6 +1401,15 @@ void Traffic::arbitrate() {
 					if (!go) break;
 				}
 				if (!go) {
+					if (can_stage(c, L)) {
+						grant(c);
+						o.staged = true;
+						o.state = VehicleState::WaitingInBox;
+						o.blocker = blk;
+						++stats_.box_waits;
+						granted_now = true;
+						continue;
+					}
 					o.state = VehicleState::Yielding;
 					o.blocker = blk;
 					continue;
@@ -1637,6 +1750,7 @@ void Traffic::move() {
 			} else {
 				s -= l.length;
 				lane = l.next[0];
+				v.staged = false;
 				v.lane_tick = tick_ + 1;
 			}
 		}
@@ -1817,6 +1931,7 @@ bool Traffic::waypoints() {
 					v.off_lane = true;
 					v.grant = -1;
 					v.held = -1;
+					v.staged = false;
 					v.lat = 0.0;
 					v.phase = 3;
 					v.phase_start = now;
@@ -2500,6 +2615,7 @@ uint64_t Traffic::state_hash() const {
 		h.add_u32(v.phase);
 		h.add_u32(v.dest);
 		h.add_u64(v.grant >= 0 ? 1 : 0);
+		if (v.staged) h.add_u64(0x57a6ed); // maps without signals hash as before
 	}
 	for (uint32_t p : pending_) h.add_u32(p);
 	for (VehicleId b : bay_use_) h.add_u32(b);

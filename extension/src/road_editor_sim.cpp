@@ -307,6 +307,7 @@ Dictionary RoadEditor::sim_stats() {
 	d["bus_lane_misuse"] = st.bus_lane_misuse;
 	d["red_light_waits"] = static_cast<int64_t>(st.red_light_waits);
 	d["right_on_red"] = static_cast<int64_t>(st.right_on_red);
+	d["box_waits"] = static_cast<int64_t>(st.box_waits);
 	d["pedestrians"] = static_cast<int64_t>(st.pedestrians);
 	d["riding"] = static_cast<int64_t>(st.riding);
 	d["trips"] = static_cast<int64_t>(st.trips);
