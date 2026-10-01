@@ -241,6 +241,7 @@ Dictionary RoadEditor::sim_ped_info(int64_t id) {
 	}
 	d["route_name"] = route_name;
 	d["vehicle"] = static_cast<int64_t>(info.vehicle);
+	d["resident"] = static_cast<int64_t>(info.resident);
 	PackedVector2Array line;
 	for (const Vec2 &p : info.route_line) line.push_back(gv(p));
 	d["route"] = line;

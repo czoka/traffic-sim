@@ -30,7 +30,8 @@ public:
 	void new_map();
 	void load_demo_town();
 	void load_test_grid(int cols, int rows, double spacing);
-	// "town", "grid", "t_junction", "lane_drop", "one_way_pair", "showcase", "people", "people_city". False if unknown.
+	// "town", "grid", "t_junction", "lane_drop", "one_way_pair", "showcase", "people", "people_city",
+	// "new_city", "city_town", "city_week". False if unknown.
 	bool load_example(const String &name);
 	String save_json() const;
 	// {ok: bool, error: String, migrated_from: int}
@@ -120,6 +121,23 @@ public:
 	Array sim_stop_stats(); // [{id, name, pos, waiting, boarded, alighted, left_behind, mean_wait}]
 	Array sim_route_loads(); // [{route, load: PackedFloat32Array per stop}]
 
+	// --- M5: buildings and city life ------------------------------------------------
+	void new_city(); // a new map: High Street, the main station with coaches, the city offices
+	Array building_types() const; // [{id, label, kind, width, depth, color, households, slots, desks, ...}]
+	// Where a lot of `type` would go near a point: {ok, pos, dir, corners, blocked}.
+	Dictionary snap_building(const String &type, Vector2 near, int level);
+	int64_t add_building(const String &type, Vector2 pos, Vector2 dir, int level);
+	void set_building_name(int64_t id, const String &name);
+	void remove_building(int64_t id);
+	Array get_buildings(int level); // [{id, type, label, kind, name, corners, centre, door}]
+	int64_t pick_building(Vector2 pos, int level); // 0: none
+	Dictionary get_building(int64_t id);
+	Dictionary sim_city_stats();
+	Dictionary sim_building_info(int64_t id);
+	Array sim_building_states(int level); // [{id, centre, kind, open, in_hours, closed_unexpectedly, inside, ...}]
+	Dictionary sim_resident_info(int64_t id);
+	void sim_set_city(const Dictionary &config); // {prefill, employment_share}
+
 	// --- Profiles --------------------------------------------------------------
 	Array presets() const; // [{name, params}]
 	Dictionary params_of_profile(const Dictionary &profile) const;
@@ -173,6 +191,7 @@ public:
 protected:
 	static void _bind_methods();
 	static void bind_m4_methods();
+	static void bind_m5_methods();
 
 private:
 	void ensure_geometry();
