@@ -1,6 +1,6 @@
 {
  "format": "traffic-sim-map",
- "version": 5,
+ "version": 6,
  "next_ids": {
   "node": 13,
   "segment": 13,

@@ -1,0 +1,107 @@
+{
+ "format": "traffic-sim-map",
+ "version": 6,
+ "next_ids": {
+  "node": 3,
+  "segment": 2,
+  "lane": 5,
+  "object": 4
+ },
+ "nodes": [
+  {
+   "id": 1,
+   "x": -450.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 0.0,
+    "sink": true,
+    "coaches": [
+     {
+      "id": 2,
+      "exit": 2,
+      "per_hour": 4.0,
+      "dwell": 240.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 2,
+   "x": 450.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 0.0,
+    "sink": true
+   }
+  }
+ ],
+ "segments": [
+  {
+   "id": 1,
+   "from": 1,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "name": "High Street",
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 1,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 2,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 3,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 4,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   },
+   "stops": [
+    {
+     "id": 1,
+     "u": 0.3333333333333333,
+     "side": "forward",
+     "kind": "main_station",
+     "name": "Main Station",
+     "bays": 4
+    }
+   ]
+  }
+ ],
+ "buildings": [
+  {
+   "id": 3,
+   "type": "city_offices",
+   "pos": {
+    "x": 150.0,
+    "y": -5.75
+   },
+   "dir": {
+    "x": -0.0,
+    "y": -1.0
+   }
+  }
+ ]
+}
