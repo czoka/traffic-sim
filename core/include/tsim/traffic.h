@@ -500,6 +500,7 @@ private:
 		uint64_t since = 0;
 	};
 	std::vector<MidSignal> mid_signal_; // per crossing (push-button signals)
+	bool crossings_live_ = false; // someone on or at a crossing, or a push-button signal not green
 	std::vector<std::vector<double>> ped_cost_; // per ped spawner: cost to every node (s)
 	struct RideTimes {
 		uint32_t route = 0;

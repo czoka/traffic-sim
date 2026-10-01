@@ -818,7 +818,7 @@ void Traffic::leader(const Vehicle &v, int32_t lane, double s, size_t ri, bool &
 	if (wp_on(lane, ri) && wp->s + 0.5 >= s) take(wp->s - s + v.drv.s0, 0.0, kNoId);
 	// People on (or about to step onto) a crossing over a lane at `base` metres
 	// ahead of the lane start, measured from the car's front.
-	const bool peds = !on_crossing_.empty() && n.ped.lane_crossings.size() == n.lanes.size();
+	const bool peds = crossings_live_ && n.ped.lane_crossings.size() == n.lanes.size();
 	auto crossings_on = [&](int32_t ln, double base) {
 		for (int32_t ci : n.ped.lane_crossings[static_cast<size_t>(ln)]) {
 			for (const CrossingSpan &sp : n.ped.crossings[static_cast<size_t>(ci)].spans) {
@@ -2253,7 +2253,7 @@ void Traffic::tick() {
 				break;
 		}
 	}
-	if (people_on_ || !peds_.empty()) peds_prepare();
+	if (people_on_ || !peds_.empty() || crossings_live_) peds_prepare();
 	arbitrate();
 	change_lanes();
 	rebuild_lists();

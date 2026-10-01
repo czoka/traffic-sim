@@ -235,6 +235,7 @@ struct OnCrossing {
 } // namespace
 
 void Traffic::peds_prepare() {
+	crossings_live_ = false;
 	if (!net_) return;
 	const PedGraph &g = net_->ped;
 	const size_t nc = g.crossings.size();
@@ -312,7 +313,9 @@ void Traffic::peds_prepare() {
 				}
 				break;
 		}
+		crossings_live_ |= m.state != 0;
 	}
+	for (const auto &v : on_crossing_) crossings_live_ |= !v.empty();
 }
 
 // 0 no, 1 stop, 2 stop if it still can comfortably.
@@ -993,6 +996,7 @@ void Traffic::peds_reset_network() {
 	on_crossing_.clear();
 	waiting_at_.clear();
 	mid_signal_.assign(net_ ? net_->ped.crossings.size() : 0, MidSignal{});
+	crossings_live_ = false;
 	for (MidSignal &m : mid_signal_) m.since = tick_;
 	car_trips_.assign(net_ ? net_->spawners.size() : 0, {});
 	people_on_ = false;
