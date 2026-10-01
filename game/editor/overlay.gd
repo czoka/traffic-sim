@@ -49,18 +49,63 @@ func _ready() -> void:
 	z_index = 4000
 
 
-## Text `size` screen pixels high at `pos` (world units), the same size at any
-## zoom. (A font size of px(size) would round to 0 when zoomed in past size px/m.)
-func text(font: Font, pos: Vector2, s: String, size: float, col: Color) -> void:
+## Map labels and markers are sized for a window REF_HEIGHT pixels high and
+## scale with the viewport, so they take the same share of the view at any
+## resolution (a 4K or HiDPI screen draws them twice as big as 1080p).
+const REF_HEIGHT := 900.0
+
+static var _label_font: FontFile
+
+
+## The editor font as a multichannel signed distance field: glyphs are drawn
+## from vector outlines, sharp at any size and scale instead of a blurred bitmap.
+static func label_font() -> Font:
+	if _label_font == null:
+		var base := ThemeDB.fallback_font as FontFile
+		if base == null or base.data.is_empty():
+			return ThemeDB.fallback_font
+		_label_font = FontFile.new()
+		_label_font.data = base.data
+		_label_font.multichannel_signed_distance_field = true
+		_label_font.msdf_pixel_range = 16
+		_label_font.msdf_size = 64
+	return _label_font
+
+
+## Screen pixels at the reference resolution -> pixels in this viewport.
+static func ui_scale_for(viewport_size: Vector2) -> float:
+	return clampf(viewport_size.y / REF_HEIGHT, 0.5, 4.0)
+
+
+func ui_scale() -> float:
+	return ui_scale_for(get_viewport_rect().size)
+
+
+## Text `size` reference pixels high at `pos` (world units): the same share of
+## the view at any zoom and resolution. (A font size of px(size) in world units
+## would round to 0 when zoomed in, and bitmap glyphs would blur when scaled.)
+func text(pos: Vector2, s: String, size: float, col: Color) -> void:
 	var z: float = editor.camera.zoom.x
 	draw_set_transform(pos, 0.0, Vector2.ONE / z)
-	draw_string(font, Vector2.ZERO, s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(size), col)
+	draw_string(label_font(), Vector2.ZERO, s, HORIZONTAL_ALIGNMENT_LEFT, -1, maxi(1, roundi(size * ui_scale())), col)
+	draw_set_transform(Vector2.ZERO)
+
+
+## Like text(), centred on `pos` (for letters inside markers).
+func text_centered(pos: Vector2, s: String, size: float, col: Color) -> void:
+	var font := label_font()
+	var fs := maxi(1, roundi(size * ui_scale()))
+	var w := font.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	# Cap height is about 0.7 em: centre the capitals on the marker.
+	var at := Vector2(-0.5 * w, 0.35 * fs)
+	draw_set_transform(pos, 0.0, Vector2.ONE / editor.camera.zoom.x)
+	draw_string(font, at, s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 	draw_set_transform(Vector2.ZERO)
 
 
 ## Converts a width in screen pixels to world units at the current zoom.
 func px(pixels: float) -> float:
-	return pixels / editor.camera.zoom.x
+	return pixels * ui_scale() / editor.camera.zoom.x
 
 
 func _draw() -> void:
@@ -96,20 +141,19 @@ func _draw() -> void:
 		var n: Dictionary = road.get_node(id)
 		if not n.is_empty():
 			draw_circle(n.pos, px(5), SELECT)
-	var font := ThemeDB.fallback_font
 	for sp in _spawners:
 		if int(sp.level) != editor.level:
 			continue
-		_spawn_marker(sp, font)
-	_draw_transit(font)
+		_spawn_marker(sp)
+	_draw_transit()
 	for h in road.sim_signal_heads(editor.level):
 		var p: Vector2 = h.pos
 		var side := Vector2(-(h.dir as Vector2).y, (h.dir as Vector2).x)
 		var at := p + side * px(0.0) + (h.dir as Vector2) * px(4)
 		draw_circle(at, maxf(px(4.5), 0.9), Color(0.05, 0.05, 0.06, 0.9))
 		draw_circle(at, maxf(px(3.2), 0.65), LIGHTS.get(h.light, Color.WHITE))
-	_draw_people(font)
-	_draw_buildings(font)
+	_draw_people()
+	_draw_buildings()
 	var car: Dictionary = editor.sim.car_info if editor.sim and editor.sim.selected_car != 0 else {}
 	if not car.is_empty():
 		var route: PackedVector2Array = car.route
@@ -124,13 +168,13 @@ func _draw() -> void:
 		var col := ERROR if p.severity == "error" else WARNING
 		draw_circle(p.pos, px(9), col)
 		draw_circle(p.pos, px(9), Color.BLACK, false, px(1.5))
-		text(font, p.pos + Vector2(-px(2.5), px(5)), "!", 15, Color.BLACK)
+		text_centered(p.pos, "!", 15, Color.BLACK)
 	if editor.tool:
 		editor.tool.draw(self)
 
 
 ## A ring at the road end with arrows for traffic in and out, and the rate.
-func _spawn_marker(sp: Dictionary, font: Font) -> void:
+func _spawn_marker(sp: Dictionary) -> void:
 	var p: Vector2 = sp.pos
 	var d: Vector2 = sp.dir # into the map
 	var col := SPAWN if sp.active else ERROR
@@ -147,11 +191,11 @@ func _spawn_marker(sp: Dictionary, font: Font) -> void:
 		_arrow_head(b - d * px(6), -d, col)
 		draw_line(b + d * px(5), b - d * px(2), col, px(1.5))
 	var label := "%d/h" % int(sp.rate) if float(sp.rate) > 0.0 else "out"
-	text(font, p + Vector2(px(13), px(5)), label, 13, col)
+	text(p + Vector2(px(13), px(5)), label, 13, col)
 
 
 ## Bus stops (a sign beside the road), depots and route lines.
-func _draw_transit(font: Font) -> void:
+func _draw_transit() -> void:
 	var playing: bool = editor.sim != null and editor.sim.playing
 	for d in _depots:
 		if int(d.level) != editor.level:
@@ -167,8 +211,8 @@ func _draw_transit(font: Font) -> void:
 		var s := px(9)
 		draw_rect(Rect2(p - Vector2(s, s), Vector2(s, s) * 2.0), Color(0.1, 0.12, 0.16, 0.9))
 		draw_rect(Rect2(p - Vector2(s, s), Vector2(s, s) * 2.0), DEPOT if d.active else ERROR, false, px(2))
-		text(font, p + Vector2(-px(4), px(5)), "D", 14, DEPOT)
-		text(font, p + Vector2(px(12), px(5)), String(d.name), 12, DEPOT)
+		text_centered(p, "D", 14, DEPOT)
+		text(p + Vector2(px(12), px(5)), String(d.name), 12, DEPOT)
 	for st in _stops:
 		if int(st.level) != editor.level:
 			continue
@@ -181,13 +225,13 @@ func _draw_transit(font: Font) -> void:
 		draw_circle(sign_at, r, Color(0.1, 0.1, 0.12, 0.9))
 		draw_circle(sign_at, r, col, false, px(2))
 		var letter := "H" if st.kind == "main_station" else "B"
-		text(font, sign_at + Vector2(-px(3.5), px(4.5)), letter, 12, col)
+		text_centered(sign_at, letter, 12, col)
 		if editor.camera.zoom.x > 1.2:
-			text(font, sign_at + Vector2(r + px(3), px(4)), String(st.name), 11, col)
+			text(sign_at + Vector2(r + px(3), px(4)), String(st.name), 11, col)
 
 
 ## Walk lights at signal crossings, people waiting at stops, the selected person.
-func _draw_people(font: Font) -> void:
+func _draw_people() -> void:
 	var road = editor.road
 	var blink := int(Time.get_ticks_msec() / 400) % 2 == 0
 	if editor.camera.zoom.x > 0.8:
@@ -209,7 +253,7 @@ func _draw_people(font: Font) -> void:
 	if editor.sim and editor.sim.has_people() and editor.camera.zoom.x > 0.6:
 		for st in editor.sim.stop_stats:
 			if int(st.waiting) > 0:
-				text(font, (st.pos as Vector2) + Vector2(px(14), -px(10)), "%d waiting" % int(st.waiting),
+				text((st.pos as Vector2) + Vector2(px(14), -px(10)), "%d waiting" % int(st.waiting),
 					11, STOP)
 	var ped: Dictionary = editor.sim.ped_info if editor.sim and editor.sim.selected_ped != 0 else {}
 	if not ped.is_empty():
@@ -222,7 +266,7 @@ func _draw_people(font: Font) -> void:
 
 ## Businesses: green open, grey shut (outside hours), red "!" closed unexpectedly.
 ## Homes: households / units when zoomed in.
-func _draw_buildings(font: Font) -> void:
+func _draw_buildings() -> void:
 	if editor.sim == null or editor.sim.building_states.is_empty():
 		return
 	var zoom: float = editor.camera.zoom.x
@@ -230,16 +274,16 @@ func _draw_buildings(font: Font) -> void:
 		var c: Vector2 = b.centre
 		if b.kind == "home":
 			if zoom > 1.2:
-				text(font, c + Vector2(-px(10), px(4)), "%d/%d" % [b.households, b.units], 11, Color(1, 1, 1, 0.85))
+				text(c + Vector2(-px(10), px(4)), "%d/%d" % [b.households, b.units], 11, Color(1, 1, 1, 0.85))
 			continue
 		var r := maxf(px(6), 1.2)
 		var col := Color(0.25, 0.85, 0.35) if b.open else (ERROR if b.closed_unexpectedly else Color(0.55, 0.57, 0.6))
 		draw_circle(c, r, Color(0.05, 0.05, 0.06, 0.9))
 		draw_circle(c, r * 0.75, col)
 		if b.closed_unexpectedly:
-			text(font, c + Vector2(-px(2.5), px(4.5)), "!", 13, Color.WHITE)
+			text_centered(c, "!", 13, Color.WHITE)
 		elif zoom > 1.2:
-			text(font, c + Vector2(r + px(3), px(4)), "%d in" % b.inside, 11,
+			text(c + Vector2(r + px(3), px(4)), "%d in" % b.inside, 11,
 				Color(1, 1, 1, 0.85))
 
 

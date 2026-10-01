@@ -140,7 +140,7 @@ How it works:
 | `J` | Show only the level being edited (also *Only this level* in the bottom bar) |
 | Esc | Cancel the current drawing, then clear the selection |
 
-The bottom bar has a map-style scale bar (its tooltip gives the exact zoom in screen pixels per metre). In the browser, the page's query string works like the desktop command-line options, so a view can be shared or reopened exactly: `index.html?example=showcase&view=-222,-25,20` opens the showcase centred on (−222, −25) m at 20 px/m (`&play` starts the sim, `&sim-seconds=90` runs it 90 s first).
+Map labels and markers (spawn points, stops, depots, problems, building markers) are drawn with a signed-distance-field font, so text stays sharp at any zoom and screen density, and they are sized relative to the window (designed for 900 px high, twice as big at 1800 px), so they take the same share of the view on every resolution. The bottom bar has a map-style scale bar (its tooltip gives the exact zoom in screen pixels per metre). In the browser, the page's query string works like the desktop command-line options, so a view can be shared or reopened exactly: `index.html?example=showcase&view=-222,-25,20` opens the showcase centred on (−222, −25) m at 20 px/m (`&play` starts the sim, `&sim-seconds=90` runs it 90 s first).
 
 ## Map files
 
