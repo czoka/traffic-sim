@@ -40,6 +40,18 @@ namespace {
 constexpr double kInf = 1e300;
 constexpr float kNoWay = 1e9f;
 
+// A resident's lasting liking for a place, in [-1, 1] (favourite shops), so
+// that people don't all pick the same one. A hash, not the RNG.
+double preference(uint32_t resident, uint32_t building) {
+	uint64_t x = (static_cast<uint64_t>(resident) << 32) ^ building;
+	x ^= x >> 33;
+	x *= 0xff51afd7ed558ccdull;
+	x ^= x >> 33;
+	x *= 0xc4ceb9fe1a85ec53ull;
+	x ^= x >> 33;
+	return static_cast<double>(x % 2001u) / 1000.0 - 1.0;
+}
+
 } // namespace
 
 // --- Clock and lookups -------------------------------------------------------------------
@@ -784,12 +796,19 @@ bool Traffic::city_start_offering(size_t i, int off) {
 	if (nb.kind == BuildingKind::Shop && nb.type >= 0) {
 		const BuildingType &t = cd.types[static_cast<size_t>(nb.type)];
 		if (std::find(t.offers.begin(), t.offers.end(), o.id) == t.offers.end()) return false;
-		if (!b.open || b.customers >= t.slots || r.money < o.price) {
+		// Open right now: within the hours, with enough staff clocked in.
+		const int64_t clock = clock_at(now);
+		const DayPlan &plan = (clock / 1440) % 7 >= 5 ? t.weekend : t.weekday;
+		const bool in_hours = plan.in_hours(static_cast<int>(clock % 1440));
+		const bool open = in_hours && b.staff_in >= t.min_staff;
+		if (!open || b.customers >= t.slots || r.money < o.price) {
 			++b.turned_away;
 			++city_acc_.turned_away;
-			// Closed unexpectedly: remembered for days. Full: for an hour.
-			const uint64_t memory = b.unexpected ? static_cast<uint64_t>(cd.closed_memory_days * 1440 * tpm)
-					: b.open ? static_cast<uint64_t>(60 * tpm) : 0;
+			if (open) ++city_acc_.turned_away_full;
+			else if (in_hours) ++city_acc_.turned_away_closed;
+			// Closed unexpectedly: remembered for days. Full or closed: for an hour.
+			const uint64_t memory = in_hours && !open ? static_cast<uint64_t>(cd.closed_memory_days * 1440 * tpm)
+					: static_cast<uint64_t>(60 * tpm);
 			if (memory > 0) {
 				r.closed.push_back({ r.at, now + memory });
 				if (r.closed.size() > 6) r.closed.erase(r.closed.begin());
@@ -1048,6 +1067,8 @@ void Traffic::city_plan(size_t i) {
 		for (const auto &c : r.closed) {
 			if (c.first == nb.id && c.second > now) closed_penalty = cd.closed_penalty;
 		}
+		// Full right now (people see the queue): only worth it if nothing else is.
+		if (bstate_[bi].customers >= t.slots) closed_penalty = std::max(closed_penalty, 0.5 * cd.closed_penalty);
 		for (const std::string &oid : t.offers) {
 			const int oi = cd.offering_index(oid);
 			const Offering &o = cd.offerings[static_cast<size_t>(oi)];
@@ -1069,7 +1090,8 @@ void Traffic::city_plan(size_t i) {
 				}
 			}
 			if (value <= -kInf) continue;
-			const double score = value - travel * cd.travel_weight - price_k * o.price - closed_penalty;
+			const double score = value * (1.0 + 0.35 * preference(r.id, nb.id)) - travel * cd.travel_weight - price_k * o.price -
+					closed_penalty;
 			if (score > best && fits(m, o.min_minutes, nb.id)) {
 				best = score;
 				best_off = oi;

@@ -352,6 +352,7 @@ struct CityStats {
 	uint64_t immigrants = 0, visitor_trips = 0;
 	uint64_t meals_out = 0, home_meals = 0, groceries = 0, sleeps = 0;
 	uint64_t shifts = 0, late_shifts = 0, late_openings = 0, turned_away = 0, unfilled_shifts = 0;
+	uint64_t turned_away_full = 0, turned_away_closed = 0; // of turned_away (the rest: outside opening hours)
 	double mean_hunger = 0.0, mean_energy = 0.0, min_hunger = 0.0, mean_money = 0.0;
 	uint32_t starving = 0; // hunger at 0
 };

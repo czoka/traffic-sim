@@ -422,6 +422,8 @@ TEST_CASE("city: same seed, same hash; buildings removed while running") {
 	const uint64_t a = run(42);
 	CHECK(a == run(42));
 	CHECK(a != run(43));
+	std::printf("M5 golden: %016llx (expected 95f0620c3af461e3)\n", static_cast<unsigned long long>(a));
+	CHECK(a == 0x95f0620c3af461e3ull); // same on every platform, like the other goldens
 	World w;
 	build_city_town(w.doc);
 	w.sync();
@@ -442,4 +444,81 @@ TEST_CASE("city: same seed, same hash; buildings removed while running") {
 	w.run_minutes(120.0);
 	CHECK(w.t().city_stats().residents == before - static_cast<uint32_t>(gone));
 	CHECK(w.t().stats().removed_stuck == 0);
+}
+
+TEST_CASE("M5 gate: 5,000 residents live a full sim week without stalls") {
+	World w;
+	build_city_week(w.doc);
+	CHECK(w.errors() == 0);
+	w.sync();
+	for (const NetProblem &p : network_problems(w.doc.map(), w.net())) CHECK_MESSAGE(false, "network problem: ", p.message);
+	Traffic &t = w.t();
+	t.config().city_prefill = 0.95;
+	t.reset(2026);
+	print_city("M5 gate start", t);
+	CHECK(t.city_stats().residents >= 4500);
+	const int64_t tpm = t.ticks_per_minute();
+	// Stall watch: a resident whose state, activity, place and plan haven't changed
+	// in 24 hourly looks is stuck; so is anyone travelling for 3 hours.
+	std::map<uint32_t, std::pair<uint64_t, int>> same; // id -> (signature, hours unchanged)
+	std::map<uint32_t, int> travelling;
+	int stuck = 0, stuck_travel = 0, unopened = 0;
+	double worst_tick_ms = 0.0, worst_minute_ms = 0.0;
+	uint32_t min_residents = ~0u;
+	const auto t0 = std::chrono::steady_clock::now();
+	for (int day = 0; day < 7; ++day) {
+		for (int hour = 0; hour < 24; ++hour) {
+			for (int m = 0; m < 60; ++m) {
+				const auto a = std::chrono::steady_clock::now();
+				for (int64_t k = 0; k < tpm; ++k) {
+					const auto b = std::chrono::steady_clock::now();
+					t.tick();
+					worst_tick_ms = std::max(worst_tick_ms, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - b).count());
+				}
+				worst_minute_ms = std::max(worst_minute_ms, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - a).count());
+			}
+			for (const Resident &r : t.residents()) {
+				if (r.visitor) continue;
+				const uint64_t sig = (static_cast<uint64_t>(r.state) << 56) ^ (static_cast<uint64_t>(r.doing) << 48) ^
+						(static_cast<uint64_t>(r.at) << 16) ^ r.until ^ (r.next_plan << 1) ^ static_cast<uint64_t>(r.ped) << 24;
+				auto &e = same[r.id];
+				e.second = e.first == sig ? e.second + 1 : 0;
+				e.first = sig;
+				if (e.second == 24) ++stuck;
+				int &tr = travelling[r.id];
+				tr = r.state == ResidentState::Travelling ? tr + 1 : 0;
+				if (tr == 3) ++stuck_travel;
+			}
+			min_residents = std::min(min_residents, t.city_stats().residents);
+			// Late in a weekday every business has opened (offices are shut at weekends).
+			if (hour == 13 && day % 7 < 5) {
+				for (const auto &kv : w.doc.map().buildings()) {
+					const BuildingInfo bi = t.building_info(kv.first);
+					if (bi.type < 0 || t.city_data().types[static_cast<size_t>(bi.type)].kind == BuildingKind::Home) continue;
+					if (bi.opened_at < 0) ++unopened;
+				}
+			}
+		}
+		print_city("M5 gate", t);
+	}
+	const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+	const CityStats c = t.city_stats();
+	const double us = secs * 1e6 / (7.0 * 24 * 60 * static_cast<double>(tpm));
+	std::printf("M5 gate: a sim week in %.0f s (%.1f us per tick), worst tick %.1f ms, worst sim minute %.0f ms; at 16x a sim "
+				"minute has 3,750 ms\n",
+			secs, us, worst_tick_ms, worst_minute_ms);
+	std::printf("         %u residents at the end (at least %u), %llu immigrants, %llu shifts (%llu late), %llu late openings, "
+				"%llu meals out, %llu at home, %llu grocery trips; stuck %d, stuck travelling %d, businesses not open by 13:00 %d\n",
+			c.residents, min_residents, (unsigned long long)c.immigrants, (unsigned long long)c.shifts, (unsigned long long)c.late_shifts,
+			(unsigned long long)c.late_openings, (unsigned long long)c.meals_out, (unsigned long long)c.home_meals,
+			(unsigned long long)c.groceries, stuck, stuck_travel, unopened);
+	CHECK(min_residents >= 4500);
+	CHECK(stuck == 0);
+	CHECK(stuck_travel == 0);
+	CHECK(unopened == 0);
+	CHECK(c.starving <= 5);
+	CHECK(c.shifts > 20000);
+	CHECK(t.stats().removed_stuck == 0);
+	// At 16x one frame (60 fps) runs about 3 ticks: the worst tick must leave room to draw.
+	CHECK(worst_tick_ms < 8.0);
 }

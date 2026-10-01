@@ -3,6 +3,7 @@
 #include "tsim/buildings.h"
 
 #include <cmath>
+#include <map>
 #include <cstring>
 
 namespace tsim {
@@ -782,12 +783,16 @@ void build_city_week(Document &doc) {
 	for (int j = 0; j < rows; ++j) {
 		for (int i = 0; i < cols; ++i) id(i, j) = doc.add_node(Vec2{ x0 + i * sp, y0 + j * sp }, 0);
 	}
+	std::map<std::pair<int, int>, SegmentId> hseg, vseg;
 	for (int j = 0; j < rows; ++j) {
-		for (int i = 0; i + 1 < cols; ++i) road(doc, id(i, j), id(i + 1, j), street, 40.0);
+		for (int i = 0; i + 1 < cols; ++i) hseg[{ i, j }] = road(doc, id(i, j), id(i + 1, j), street, 40.0);
 	}
 	for (int i = 0; i < cols; ++i) {
-		for (int j = 0; j + 1 < rows; ++j) road(doc, id(i, j), id(i, j + 1), street, 40.0);
+		for (int j = 0; j + 1 < rows; ++j) vseg[{ i, j }] = road(doc, id(i, j), id(i, j + 1), street, 40.0);
 	}
+	// A depot on a spur off the north-east corner.
+	const NodeId depot_node = doc.add_node(Vec2{ x0 + (cols - 1) * sp + 90.0, y0 }, 0);
+	road(doc, id(cols - 1, 0), depot_node, street, 40.0);
 	// Two streets down to High Street.
 	for (int i : { 1, 5 }) {
 		PointRef a, b;
@@ -834,12 +839,24 @@ void build_city_week(Document &doc) {
 			}
 		}
 	}
-	// A bus loop round the middle of town, from a depot at the east end of High Street.
+	// A bus loop round the middle of town (clockwise on screen), from the depot.
+	std::vector<uint32_t> stops;
+	for (int i = 1; i < 5; ++i) stops.push_back(doc.add_stop(hseg[{ i, 1 }], 0.5, LaneDir::Forward, StopKind::Kerbside, "North " + std::to_string(i)));
+	for (int j = 1; j < 5; ++j) stops.push_back(doc.add_stop(vseg[{ 5, j }], 0.5, LaneDir::Forward, StopKind::Kerbside, "East " + std::to_string(j)));
+	for (int i = 4; i >= 1; --i) stops.push_back(doc.add_stop(hseg[{ i, 5 }], 0.5, LaneDir::Backward, StopKind::Kerbside, "South " + std::to_string(i)));
+	for (int j = 4; j >= 1; --j) stops.push_back(doc.add_stop(vseg[{ 1, j }], 0.5, LaneDir::Backward, StopKind::Kerbside, "West " + std::to_string(j)));
 	Depot depot;
 	depot.enabled = true;
 	depot.name = "Town Depot";
 	depot.capacity = 12;
-	(void)depot;
+	BusRoute loop;
+	loop.name = "1 Town Loop";
+	loop.color = 0x2fa84f;
+	loop.stops = stops;
+	loop.headway = 300.0;
+	loop.loop = true;
+	depot.routes = { loop };
+	doc.set_depot(depot_node, depot);
 	doc.commit();
 }
 
