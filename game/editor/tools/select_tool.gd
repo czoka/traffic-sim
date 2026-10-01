@@ -46,8 +46,15 @@ func input(event: InputEvent) -> bool:
 			editor.road.begin("Bend road")
 			_drag = "handle"
 			return true
+		if editor.sim.has_people():
+			# People first (they are small): click someone to see their trip.
+			var ped: int = editor.road.sim_pick_ped(mouse, maxf(0.8, editor.pick_radius() * 0.4), editor.level)
+			if ped != 0:
+				editor.clear_selection()
+				editor.sim.select_ped(ped)
+				return true
 		if editor.sim.has_cars():
-			# Cars first: click a car to see its route and state.
+			# Cars next: click a car to see its route and state.
 			var car: int = editor.road.sim_pick_car(mouse, maxf(1.5, editor.pick_radius() * 0.6), editor.level)
 			if car != 0:
 				editor.clear_selection()

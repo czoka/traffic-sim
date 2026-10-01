@@ -12,6 +12,9 @@ const PARKING_STYLES := ["parallel", "angle45", "perpendicular"]
 const STOP_KINDS := ["kerbside", "bay", "main_station"]
 const STOP_KIND_LABELS := ["Kerbside", "Bus bay", "Main station"]
 const LIGHT_STATES := ["Red", "Green", "Green, yield"]
+const CROSSINGS := ["none", "zebra", "signal", "uncontrolled"]
+const CROSSING_LABELS := ["No crossing", "Zebra", "Signal", "Uncontrolled"]
+const KIND_LABELS := {"road": "Road", "footpath": "Footpath", "bike_path": "Bike path", "shared_path": "Shared path"}
 const PHASE_COLORS := [Color(0.3, 0.8, 0.4), Color(0.3, 0.6, 0.95), Color(0.85, 0.5, 0.9), Color(0.95, 0.75, 0.3)]
 
 var editor: MapEditor
@@ -47,6 +50,14 @@ var _end_rows: Array = [] # [{box, title, left, right, length}]
 var _parking_style: OptionButton
 var _stops_box: VBoxContainer
 var _stops_list: VBoxContainer
+var _stop_stats: Label
+var _ramp: OptionButton
+var _stairs: CheckBox
+var _grade_label: Label
+var _crossings_box: VBoxContainer
+var _crossings_list: VBoxContainer
+var _fences_label: Label
+var _fences_clear: Button
 
 # Node widgets
 var _node_info: Label
@@ -62,6 +73,7 @@ var _od_box: GridContainer
 var _od_scroll: ScrollContainer
 var _od_hint: Label
 var _bikes: SpinBox
+var _people: SpinBox
 var _coach_box: VBoxContainer
 var _coach_list: VBoxContainer
 
@@ -196,6 +208,20 @@ func _build_segment(outer: VBoxContainer) -> void:
 	_curve_label = Label.new()
 	_curve_label.add_theme_color_override("font_color", Color(0.7, 0.72, 0.76))
 	box.add_child(_curve_label)
+	var ramp_row := _row(box, "Ramp")
+	_ramp = _option(ramp_row, ["Flat", "Up a level", "Down a level"], func(i: int) -> void:
+		editor.road.set_ramp(_seg, [0, 1, -1][i], _stairs.button_pressed))
+	_stairs = CheckBox.new()
+	_stairs.text = "Stairs"
+	_stairs.focus_mode = Control.FOCUS_NONE
+	_stairs.tooltip_text = "Footpaths only: steps instead of a ramp (up to 50 %)"
+	_stairs.toggled.connect(func(on: bool) -> void:
+		if not _updating:
+			editor.road.set_ramp(_seg, [0, 1, -1][_ramp.selected], on))
+	ramp_row.add_child(_stairs)
+	_grade_label = Label.new()
+	_grade_label.add_theme_font_size_override("font_size", 12)
+	box.add_child(_grade_label)
 
 	box.add_child(EditorUI.section("Profile"))
 	var pr := HBoxContainer.new()
@@ -260,12 +286,46 @@ func _build_segment(outer: VBoxContainer) -> void:
 		var right := _option(rr, RULE_LABELS, func(_i: int) -> void: _set_rules(e))
 		var len_row := _row(eb, "Turn lane")
 		var length := _spin(len_row, 10, 200, 5, "m", func(_v: float) -> void: _set_rules(e))
+		var cr := _row(eb, "Crossing")
+		var crossing := _option(cr, CROSSING_LABELS, func(_i: int) -> void: _set_leg_crossing(e))
+		var cbike := CheckBox.new()
+		cbike.text = "Bikes"
+		cbike.focus_mode = Control.FOCUS_NONE
+		cbike.tooltip_text = "A bike crossing beside it"
+		cbike.toggled.connect(func(_on: bool) -> void:
+			if not _updating:
+				_set_leg_crossing(e))
+		cr.add_child(cbike)
 		box.add_child(eb)
-		_end_rows.append({"box": eb, "title": t, "left": left, "right": right, "length": length, "length_row": len_row})
+		_end_rows.append({"box": eb, "title": t, "left": left, "right": right, "length": length, "length_row": len_row,
+			"left_row": lr, "right_row": rr, "crossing": crossing, "crossing_bike": cbike})
+	_crossings_box = VBoxContainer.new()
+	_crossings_box.add_child(EditorUI.section("Crossings and fences"))
+	_crossings_list = VBoxContainer.new()
+	_crossings_box.add_child(_crossings_list)
+	var fr := HBoxContainer.new()
+	_fences_label = Label.new()
+	_fences_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_fences_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_fences_label.add_theme_font_size_override("font_size", 12)
+	fr.add_child(_fences_label)
+	_fences_clear = _small_button(fr, "Remove", func() -> void:
+		editor.road.begin("Remove fences")
+		editor.road.set_fence(_seg, 0, 0.0, 1.0, false)
+		editor.road.set_fence(_seg, 1, 0.0, 1.0, false)
+		editor.road.commit())
+	_crossings_box.add_child(fr)
+	box.add_child(_crossings_box)
 	_stops_box = VBoxContainer.new()
 	_stops_box.add_child(EditorUI.section("Bus stops"))
 	_stops_list = VBoxContainer.new()
 	_stops_box.add_child(_stops_list)
+	_stop_stats = Label.new()
+	_stop_stats.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_stop_stats.custom_minimum_size = Vector2(280, 0)
+	_stop_stats.add_theme_font_size_override("font_size", 12)
+	_stop_stats.add_theme_color_override("font_color", Color(0.75, 0.78, 0.82))
+	_stops_box.add_child(_stop_stats)
 	box.add_child(_stops_box)
 	_delete_button(box)
 
@@ -322,6 +382,8 @@ func _build_node(outer: VBoxContainer) -> void:
 	_od_scroll.add_child(_od_box)
 	_spawn_box.add_child(_od_scroll)
 	_bikes = _spin(_row(_spawn_box, "Bikes in"), 0, 2000, 10, "/h", func(_v: float) -> void: _set_spawner())
+	_people = _spin(_row(_spawn_box, "People"), 0, 10000, 50, "/h", func(_v: float) -> void: _set_spawner())
+	_people.tooltip_text = "Trips that start here on foot; each picks walking, the bus, a bike or a car"
 	_coach_box = VBoxContainer.new()
 	var ch := Label.new()
 	ch.text = "Coach lines (to the main station, then on):"
@@ -362,7 +424,7 @@ func refresh() -> void:
 	var sel := editor.selection
 	var n_seg: int = sel.segments.size()
 	var n_node: int = sel.nodes.size()
-	var car: bool = editor.sim != null and editor.sim.selected_car != 0 and n_seg + n_node == 0
+	var car: bool = editor.sim != null and (editor.sim.selected_car != 0 or editor.sim.selected_ped != 0) and n_seg + n_node == 0
 	_car_box.visible = car
 	_segment_box.visible = n_seg == 1 and n_node == 0
 	_node_box.visible = n_node == 1 and n_seg == 0
@@ -497,11 +559,15 @@ func _set_spawner() -> void:
 		"sink": _spawn_sink.button_pressed,
 		"od": od,
 		"bikes": _bikes.value,
+		"people": _people.value,
 		"coaches": _coach_lines(),
 	})
 
 
 func refresh_car() -> void:
+	if editor.sim.selected_ped != 0:
+		_refresh_ped()
+		return
 	var c: Dictionary = editor.sim.car_info
 	if c.is_empty():
 		return
@@ -525,7 +591,45 @@ func refresh_car() -> void:
 		lines.append("Next stop: %s" % c.next_stop)
 	if c.get("parks", false):
 		lines.append("Will park on the way")
+	if int(c.get("riders", 0)) > 0:
+		lines.append("%d passenger%s on board" % [c.riders, "" if int(c.riders) == 1 else "s"])
 	_car_info.text = "\n".join(lines)
+
+
+func _refresh_ped() -> void:
+	var p: Dictionary = editor.sim.ped_info
+	if p.is_empty():
+		return
+	_title.text = "Person %d" % p.id
+	var lines := [
+		"%s · level %+d" % [String(p.state).capitalize(), p.level],
+		"Walks at %.1f km/h · trip %s" % [p.speed_kmh, EditorUI.clock(p.trip_time)],
+		"From node %d to %s" % [p.origin, "the coach" if int(p.dest) == 0 else "node %d" % p.dest],
+	]
+	if float(p.waited) > 0.5:
+		lines.append("Waiting for %.0f s" % p.waited)
+	if String(p.route_name) != "":
+		lines.append("Bus %s from %s to %s" % [p.route_name, p.board, p.alight])
+	_car_info.text = "\n".join(lines)
+
+
+## Live numbers while the sim runs (stop stats on the selected road).
+func refresh_live() -> void:
+	if _seg == 0 or not _segment_box.visible or not _stops_box.visible:
+		return
+	var seg: Dictionary = editor.road.get_segment(_seg)
+	if seg.is_empty():
+		return
+	var ids := {}
+	for st in seg.stops:
+		ids[int(st.id)] = true
+	var lines: Array = []
+	for st in editor.sim.stop_stats:
+		if ids.has(int(st.id)):
+			lines.append("%s: %d waiting · %d boarded, %d got off · mean wait %s · %d left behind" % [
+				st.name, st.waiting, st.boarded, st.alighted, EditorUI.clock(st.mean_wait), st.left_behind])
+	_stop_stats.text = "\n".join(lines)
+	_stop_stats.visible = not lines.is_empty()
 
 
 func _fill_segment(id: int) -> void:
@@ -541,7 +645,17 @@ func _fill_segment(id: int) -> void:
 		_name.text = s.name
 	_speed.value = roundf(float(s.speed_kmh))
 	_level.select(int(s.level) + 1)
-	_curve_label.text = "%s · %.0f m · %s" % [String(s.curve).capitalize(), s.length, "one-way" if s.one_way else "two-way"]
+	_curve_label.text = "%s · %s · %.0f m · %s" % [KIND_LABELS.get(String(s.kind), "Road"), String(s.curve).capitalize(),
+		s.length, "one-way" if s.one_way else "two-way"]
+	_ramp.select([0, 1, -1].find(clampi(int(s.rise), -1, 1)))
+	_stairs.set_pressed_no_signal(bool(s.stairs))
+	_stairs.disabled = String(s.kind) != "footpath"
+	_grade_label.visible = int(s.rise) != 0
+	if int(s.rise) != 0:
+		var steep: bool = float(s.grade) > float(s.max_grade) + 1e-6
+		_grade_label.text = "Grade %.1f %% (limit %.0f %%)%s · level %+d to %+d" % [float(s.grade) * 100.0,
+			float(s.max_grade) * 100.0, " · too steep" if steep else "", s.level, s.level_end]
+		_grade_label.add_theme_color_override("font_color", Color(0.95, 0.45, 0.4) if steep else Color(0.7, 0.72, 0.76))
 	_refresh_preset_items()
 	_forward.value = _params.forward
 	_backward.value = _params.backward
@@ -560,17 +674,22 @@ func _fill_segment(id: int) -> void:
 	for e in 2:
 		var row: Dictionary = _end_rows[e]
 		var end: Dictionary = s.ends[e]
-		var show: bool = end.junction and int(end.incoming) > 0
-		row.box.visible = show
-		if show:
-			row.title.text = "Arriving at junction %d (%d lane%s)" % [end.node, end.incoming, "" if int(end.incoming) == 1 else "s"]
+		var turns: bool = end.junction and int(end.incoming) > 0
+		row.box.visible = end.junction and String(s.kind) != "footpath"
+		row.left_row.visible = turns
+		row.right_row.visible = turns
+		if row.box.visible:
+			row.title.text = "Arriving at junction %d (%d lane%s)" % [end.node, end.incoming, "" if int(end.incoming) == 1 else "s"] if turns else "At junction %d" % end.node
 			row.left.select(RULES.find(end.left))
 			row.right.select(RULES.find(end.right))
 			row.length.value = end.turn_lane_length
-			row.length_row.visible = end.left == "turn_lane" or end.right == "turn_lane"
+			row.length_row.visible = turns and (end.left == "turn_lane" or end.right == "turn_lane")
+			row.crossing.select(maxi(0, CROSSINGS.find(String(end.crossing.kind))))
+			row.crossing_bike.set_pressed_no_signal(bool(end.crossing.bike))
 	_parking_style.select(maxi(0, PARKING_STYLES.find(String(_params.get("parking_style", "parallel")))))
 	_parking_style.disabled = not (_params.parking_left or _params.parking_right)
 	_fill_stops(s)
+	_fill_crossings(s)
 	_updating = false
 
 
@@ -609,6 +728,59 @@ func _apply_preset(i: int) -> void:
 		var err: String = editor.road.set_profile(_seg, up.profile)
 		if err != "":
 			editor.notify("Can't apply profile: %s" % err)
+
+
+func _set_leg_crossing(e: int) -> void:
+	var row: Dictionary = _end_rows[e]
+	editor.road.set_end_rules(_seg, e, {"crossing": {"kind": CROSSINGS[row.crossing.selected],
+		"bike": row.crossing_bike.button_pressed}})
+
+
+func _fill_crossings(s: Dictionary) -> void:
+	for c in _crossings_list.get_children():
+		c.queue_free()
+	var list: Array = s.get("crossings", [])
+	var fences: Array = s.get("fences", [])
+	_crossings_box.visible = String(s.kind) != "footpath"
+	for c in list:
+		var row := HBoxContainer.new()
+		var l := Label.new()
+		l.text = "At %.0f m" % (float(c.u) * float(s.length))
+		l.custom_minimum_size = Vector2(70, 0)
+		row.add_child(l)
+		var crossing: Dictionary = c
+		var kind := OptionButton.new()
+		kind.focus_mode = Control.FOCUS_NONE
+		for k in CROSSING_LABELS.slice(1):
+			kind.add_item(k)
+		kind.select(maxi(0, CROSSINGS.find(String(c.kind)) - 1))
+		kind.tooltip_text = "Signal: a push button stops the cars"
+		kind.item_selected.connect(func(j: int) -> void:
+			if _updating:
+				return
+			crossing["kind"] = CROSSINGS[j + 1]
+			editor.road.set_crossing(_seg, crossing))
+		row.add_child(kind)
+		for opt in [["bike", "Bikes"], ["refuge", "Refuge"]]:
+			var cb := CheckBox.new()
+			cb.text = opt[1]
+			cb.focus_mode = Control.FOCUS_NONE
+			cb.button_pressed = bool(c[opt[0]])
+			var key: String = opt[0]
+			cb.toggled.connect(func(on: bool) -> void:
+				if _updating:
+					return
+				crossing[key] = on
+				editor.road.set_crossing(_seg, crossing))
+			row.add_child(cb)
+		_small_button(row, "×", func() -> void: editor.road.remove_crossing(_seg, int(crossing.id)))
+		_crossings_list.add_child(row)
+	var parts: Array = []
+	for f in fences:
+		parts.append("%s %.0f–%.0f m" % ["left" if int(f.side) == 0 else "right", float(f.from) * float(s.length),
+			float(f.to) * float(s.length)])
+	_fences_label.text = ("Fences: " + ", ".join(parts)) if not parts.is_empty() else "No fences (E draws one). Press W to add a crossing."
+	_fences_clear.visible = not parts.is_empty()
 
 
 func _set_rules(e: int) -> void:
@@ -829,6 +1001,8 @@ func _fill_m3_node(n: Dictionary) -> void:
 	var sp: Dictionary = n.spawner
 	_bikes.value = sp.get("bikes", 0.0)
 	_bikes.editable = sp.enabled
+	_people.value = sp.get("people", 0.0)
+	_people.editable = sp.enabled
 	_coach_box.visible = sp.enabled
 	for c in _coach_list.get_children():
 		c.queue_free()
@@ -942,6 +1116,43 @@ func _fill_phases() -> void:
 					_send_plan())
 				grid.add_child(o)
 		_phases_box.add_child(grid)
+		var walk := HFlowContainer.new()
+		var wl := Label.new()
+		wl.text = "Walk:"
+		wl.add_theme_font_size_override("font_size", 12)
+		walk.add_child(wl)
+		var walking: Array = Array(ph.get("walk", []))
+		for leg in _legs:
+			var cb := CheckBox.new()
+			cb.focus_mode = Control.FOCUS_NONE
+			cb.text = _compass(leg.dir)
+			cb.tooltip_text = "People cross %s in this phase" % _leg_name(int(leg.segment))
+			cb.add_theme_font_size_override("font_size", 12)
+			cb.button_pressed = walking.has(int(leg.segment))
+			var seg := int(leg.segment)
+			cb.toggled.connect(func(on: bool) -> void:
+				if _updating:
+					return
+				var w: Array = Array(_plan.phases[i].get("walk", []))
+				w.erase(seg)
+				if on:
+					w.append(seg)
+				_plan.phases[i]["walk"] = w
+				_send_plan())
+			walk.add_child(cb)
+		_phases_box.add_child(walk)
+	var scramble := Button.new()
+	scramble.text = "Add scramble phase (all walk, cars red)"
+	scramble.focus_mode = Control.FOCUS_NONE
+	scramble.pressed.connect(func() -> void:
+		var all: Array = []
+		for leg in _legs:
+			all.append(int(leg.segment))
+		var list: Array = _plan.phases
+		list.append({"green": 12.0, "moves": [], "walk": all})
+		_plan["phases"] = list
+		_send_plan())
+	_phases_box.add_child(scramble)
 	for c in _ror_box.get_children():
 		c.queue_free()
 	var ror: Array = Array(_plan.get("right_on_red", []))
@@ -994,6 +1205,9 @@ func _fill_routes() -> void:
 	var stats := {}
 	for r in editor.road.sim_route_stats():
 		stats[int(r.id)] = r
+	var loads := {}
+	for r in editor.road.sim_route_loads():
+		loads[int(r.route)] = r.load
 	var names := {}
 	for st in editor.road.get_stops():
 		names[int(st.id)] = String(st.name)
@@ -1055,6 +1269,12 @@ func _fill_routes() -> void:
 			var rs: Dictionary = stats[int(r.id)]
 			line += "\nRound trip %.0f min · needs %d bus%s · %d out now · %d runs" % [
 				float(rs.round_trip) / 60.0, rs.fleet, "" if int(rs.fleet) == 1 else "es", rs.active, rs.runs]
+		if loads.has(int(r.id)):
+			var parts: Array = []
+			var load: PackedFloat32Array = loads[int(r.id)]
+			for k in mini(load.size(), stop_names.size()):
+				parts.append("%s %.0f" % [stop_names[k], load[k]])
+			line += "\nOn board leaving each stop: " + ", ".join(parts)
 		_hint(_routes_box, line)
 
 

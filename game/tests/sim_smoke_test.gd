@@ -1,5 +1,5 @@
 extends SceneTree
-## Simulation smoke test (M2, M3): loads the real editor scene and drives the
+## Simulation smoke test (M2, M3, M4): loads the real editor scene and drives the
 ## sim through the calls the sim bar, the tools, the inspector and car picking
 ## make.
 ## Run headless:
@@ -150,9 +150,10 @@ func _run() -> void:
 	# Save -> load keeps spawn points and controls (map format v4).
 	var text: String = road.save_json()
 	var r: Dictionary = road.load_json(text)
-	_check(r.ok and road.save_json() == text and text.contains("\"version\": 4"), "v4 save -> load -> save is identical")
+	_check(r.ok and road.save_json() == text and text.contains("\"version\": 5"), "v5 save -> load -> save is identical")
 
 	await _m3(ed, road)
+	await _m4(ed, road)
 
 	# Errors block Play.
 	road.new_map()
@@ -268,3 +269,96 @@ func _m3(ed: MapEditor, road) -> void:
 	var text: String = road.save_json()
 	var r: Dictionary = road.load_json(text)
 	_check(r.ok and road.save_json() == text, "M3 objects survive save -> load -> save")
+
+
+## M4: the people town (crossings, bridge, overpass, passengers), the path,
+## crossing, fence and bridge tools, the inspector's M4 sections, people
+## rendering and picking, and the level filter.
+func _m4(ed: MapEditor, road) -> void:
+	ed.load_demo("people")
+	await _frames(2)
+	_check(int(road.get_stats().errors) == 0, "people town loads without errors")
+	var crossings: Array = road.get_crossings(0)
+	var kinds := {}
+	for c in crossings:
+		kinds[String(c.kind)] = int(kinds.get(String(c.kind), 0)) + 1
+	_check(kinds.get("signal", 0) >= 4 and kinds.get("zebra", 0) >= 4 and kinds.get("uncontrolled", 0) >= 1, "painted crossings: %s" % str(kinds))
+	_check(road.get_crossings(1).size() == 0 and road.get_meshes().any(func(m): return int(m.level) == 1), "bridge and overpass on level 1")
+	_check(ed.view._shadows.has(1), "level 1 casts a shadow")
+	ed.sim.reset()
+	road.sim_step(6000) # 10 sim minutes
+	var s: Dictionary = road.sim_stats()
+	_check(int(s.trips) > 100 and int(s.pedestrians) > 20, "after 10 min: %d people trips, %d on foot, %d riding" % [s.trips, s.pedestrians, s.riding])
+	_check(int(s.crossings) > 10 and int(s.cars_yielded) > 0, "%d crossings on foot, cars gave way %d times" % [s.crossings, s.cars_yielded])
+	_check(int(s.boarded) > 0, "%d boarded, %d got off" % [s.boarded, s.alighted])
+	var n: int = road.sim_ped_count(0)
+	var buf: PackedFloat32Array = road.sim_ped_buffer(0, 1.0)
+	_check(n > 0 and buf.size() == n * 12, "people render buffer: %d on level 0, %d on level 1" % [n, road.sim_ped_count(1)])
+	var lights := {}
+	for k in 12:
+		for w in road.sim_walk_lights(0):
+			lights[String(w.walk)] = true
+		road.sim_step(50)
+	_check(lights.size() >= 2, "walk lights show %s" % str(lights.keys()))
+	var stats: Array = road.sim_stop_stats()
+	_check(stats.size() == 4, "stop stats for %d stops" % stats.size())
+	_check(road.sim_route_loads().size() == 1, "route loads for the town loop")
+	# Pick someone and inspect them.
+	var picked := 0
+	var at := Vector2.ZERO
+	for i in n:
+		var p := Vector2(buf[i * 12 + 3], buf[i * 12 + 7])
+		picked = road.sim_pick_ped(p, 0.5, 0)
+		if picked != 0:
+			at = p
+			break
+	_check(picked != 0, "picked person %d at %s" % [picked, str(at)])
+	ed.sim.select_ped(picked)
+	await _frames(1)
+	var info: Dictionary = ed.sim.ped_info
+	_check(not info.is_empty() and ed.ui.inspector._car_box.visible, "person inspector: %s" % String(info.get("state", "")))
+	ed.sim.select_ped(0)
+	# Level filter.
+	ed.set_level_filter(true)
+	var hidden := 0
+	for key in ed.view._instances:
+		hidden += 0 if ed.view._instances[key].visible else 1
+	_check(hidden > 0, "level filter hides %d mesh batches" % hidden)
+	ed.set_level_filter(false)
+
+	# Tools on a fresh map: a street, a footpath, a crossing, a fence and a bridge.
+	road.new_map()
+	var street: PackedInt64Array = road.add_road([{"pos": Vector2(-200, 0)}, {"pos": Vector2(200, 0)}], {"preset": "Street 1+1"}, 0, 50.0)
+	var path: PackedInt64Array = road.add_road([{"pos": Vector2(-100, 30)}, {"pos": Vector2(-100, 120)}], {"kind": "footpath"}, 0, 5.0)
+	_check(street.size() == 1 and path.size() == 1 and road.get_segment(path[0]).kind == "footpath", "path tool template draws a footpath")
+	var ct: CrosswalkTool = ed.tools["crosswalk"]
+	ed.camera.zoom = Vector2.ONE * 2.0 # tools pick within a few screen pixels
+	var t: Dictionary = ct._target(Vector2(0, 1))
+	_check(not t.is_empty() and int(t.end) == -1, "crosswalk tool targets mid-block")
+	var cid: int = road.add_crossing(t.segment, t.u, "zebra", true, false)
+	_check(cid != 0 and road.get_segment(street[0]).crossings.size() == 1, "mid-block zebra with a bike crossing")
+	road.set_fence(street[0], 0, 0.6, 0.9, true)
+	_check(road.get_segment(street[0]).fences.size() == 1, "fence put up")
+	await _frames(1)
+	ed.select("segments", street[0], false)
+	await _frames(1)
+	var insp: Inspector = ed.ui.inspector
+	_check(insp._crossings_box.visible and insp._crossings_list.get_child_count() == 1, "inspector lists the crossing")
+	var cross_road: PackedInt64Array = road.add_road([{"pos": Vector2(60, -250)}, {"pos": Vector2(60, 250)}], {"preset": "Street 1+1"}, 0, 50.0)
+	var plan: Dictionary = road.plan_lift(cross_road[0], Vector2(60, 0), 1)
+	_check(plan.ok and plan.points.size() == 4, "bridge preview: ramps from %.0f to %.0f m" % [plan.stations[0] if plan.ok else 0.0, plan.stations[3] if plan.ok else 0.0])
+	_check(road.lift(cross_road[0], Vector2(60, 0), 1) == "" and int(road.get_stats().errors) == 0, "bridge built, no errors")
+	var ramps := 0
+	for id in road.segment_ids():
+		var sg: Dictionary = road.get_segment(id)
+		if int(sg.rise) != 0:
+			ramps += 1
+			_check(float(sg.grade) <= float(sg.max_grade) + 1e-6, "ramp grade %.1f %% within %.0f %%" % [float(sg.grade) * 100.0, float(sg.max_grade) * 100.0])
+	_check(ramps == 2, "two ramps")
+	ed.undo()
+	_check(int(road.get_stats().errors) > 0, "undo takes the bridge down")
+	ed.redo()
+	var text: String = road.save_json()
+	var r: Dictionary = road.load_json(text)
+	_check(r.ok and road.save_json() == text, "M4 objects survive save -> load -> save")
+	ed.clear_selection()

@@ -173,6 +173,7 @@ bool RoadEditor::load_example(const String &name) {
 	else if (name == "one_way_pair") build_one_way_pair(d);
 	else if (name == "showcase") build_showcase(d);
 	else if (name == "people") build_people_town(d);
+	else if (name == "people_city") build_people_city(d, 12, 12);
 	else return false;
 	doc_.reset(d.map());
 	return true;
@@ -214,6 +215,9 @@ int64_t RoadEditor::redo_size() const { return static_cast<int64_t>(doc_.redo_co
 Profile RoadEditor::road_profile(const Dictionary &road) {
 	RoadMap scratch;
 	if (road.has("profile")) return profile_from(road["profile"]);
+	SegmentKind kind = SegmentKind::Road;
+	segment_kind_from_name(ss(road.get("kind", "road")), kind);
+	if (kind != SegmentKind::Road && !road.has("params")) return path_profile(kind, scratch);
 	if (road.has("params")) return build_profile(params_from(road["params"]), nullptr, scratch);
 	return preset_profile(ss(road.get("preset", "Street 1+1")).c_str(), scratch);
 }
@@ -221,7 +225,9 @@ Profile RoadEditor::road_profile(const Dictionary &road) {
 PackedInt64Array RoadEditor::add_road(const Array &points, const Dictionary &road, int level, double speed_kmh) {
 	std::vector<PointRef> pts;
 	for (int64_t i = 0; i < points.size(); ++i) pts.push_back(point_from(points[i]));
-	const std::vector<SegmentId> ids = doc_.add_road(pts, road_profile(road), level, speed_kmh / 3.6);
+	SegmentKind kind = SegmentKind::Road;
+	segment_kind_from_name(ss(road.get("kind", "road")), kind);
+	const std::vector<SegmentId> ids = doc_.add_road(pts, road_profile(road), level, speed_kmh / 3.6, kind);
 	PackedInt64Array out;
 	for (SegmentId id : ids) out.push_back(id);
 	return out;
@@ -229,7 +235,9 @@ PackedInt64Array RoadEditor::add_road(const Array &points, const Dictionary &roa
 
 int64_t RoadEditor::add_curve(const Dictionary &a, Vector2 control, const Dictionary &b, const Dictionary &road,
 		int level, double speed_kmh) {
-	return doc_.add_curve(point_from(a), tv(control), point_from(b), road_profile(road), level, speed_kmh / 3.6);
+	SegmentKind kind = SegmentKind::Road;
+	segment_kind_from_name(ss(road.get("kind", "road")), kind);
+	return doc_.add_curve(point_from(a), tv(control), point_from(b), road_profile(road), level, speed_kmh / 3.6, kind);
 }
 
 void RoadEditor::move_node(int64_t id, Vector2 pos) { doc_.move_node(static_cast<NodeId>(id), tv(pos)); }
@@ -255,10 +263,13 @@ String RoadEditor::set_lane_type(int64_t seg, int64_t lane, const String &type) 
 }
 bool RoadEditor::flip(int64_t seg) { return doc_.flip(static_cast<SegmentId>(seg)); }
 void RoadEditor::set_end_rules(int64_t seg, int end, const Dictionary &rules) {
-	EndRules r;
-	r.left = rule_from(rules.get("left", "allowed"));
-	r.right = rule_from(rules.get("right", "allowed"));
-	r.turn_lane_length = static_cast<double>(rules.get("turn_lane_length", 40.0));
+	const RoadSegment *s = doc_.map().segment(static_cast<SegmentId>(seg));
+	if (!s || end < 0 || end > 1) return;
+	EndRules r = s->ends[end]; // keeps what the dictionary leaves out (pockets, the crossing)
+	r.left = rule_from(rules.get("left", rule_name(r.left)));
+	r.right = rule_from(rules.get("right", rule_name(r.right)));
+	r.turn_lane_length = static_cast<double>(rules.get("turn_lane_length", r.turn_lane_length));
+	if (rules.has("crossing")) r.crossing = crossing_rules_from(rules["crossing"], r.crossing);
 	doc_.set_end_rules(static_cast<SegmentId>(seg), end, r);
 }
 void RoadEditor::set_speed_kmh(int64_t seg, double kmh) { doc_.set_speed_limit(static_cast<SegmentId>(seg), kmh / 3.6); }
@@ -292,6 +303,7 @@ void RoadEditor::set_spawner(int64_t node, const Dictionary &d) {
 		sp.od.push_back(ow);
 	}
 	sp.bikes = static_cast<double>(d.get("bikes", 0.0));
+	sp.people = static_cast<double>(d.get("people", 0.0));
 	const Array coaches = d.get("coaches", Array());
 	for (int64_t i = 0; i < coaches.size(); ++i) {
 		const Dictionary c = coaches[i];
@@ -395,6 +407,7 @@ Dictionary RoadEditor::get_node(int64_t id) {
 	}
 	sp["od"] = od;
 	sp["bikes"] = n->spawner.bikes;
+	sp["people"] = n->spawner.people;
 	Array coaches;
 	for (const CoachLine &c : n->spawner.coaches) {
 		Dictionary cd;
@@ -429,6 +442,24 @@ Dictionary RoadEditor::get_segment(int64_t id) {
 	d["speed_kmh"] = s->speed_limit * 3.6;
 	d["name"] = gs(s->name);
 	d["one_way"] = s->profile.one_way();
+	d["kind"] = segment_kind_name(s->kind);
+	d["rise"] = s->rise;
+	d["stairs"] = s->stairs;
+	d["level_end"] = s->level_end();
+	d["grade"] = g && g->length > 0.0 ? kLevelHeight * std::abs(s->rise) / g->length : 0.0;
+	d["max_grade"] = s->max_grade();
+	Array crossings;
+	for (const Crossing &c : s->crossings) crossings.push_back(crossing_rules_dict(c));
+	d["crossings"] = crossings;
+	Array fences;
+	for (const Fence &f : s->fences) {
+		Dictionary fd;
+		fd["side"] = f.side;
+		fd["from"] = f.u0;
+		fd["to"] = f.u1;
+		fences.push_back(fd);
+	}
+	d["fences"] = fences;
 	d["profile"] = profile_dict(s->profile);
 	d["params"] = params_dict(params_of(s->profile));
 	Array ends;
@@ -445,6 +476,7 @@ Dictionary RoadEditor::get_segment(int64_t id) {
 		ed["left"] = rule_name(r.left);
 		ed["right"] = rule_name(r.right);
 		ed["turn_lane_length"] = r.turn_lane_length;
+		ed["crossing"] = crossing_rules_dict(r.crossing);
 		ed["incoming"] = incoming;
 		ed["junction"] = ng && ng->kind == NodeKind::Junction && ng->legs.size() >= 3;
 		ends.push_back(ed);
@@ -763,6 +795,7 @@ Dictionary RoadEditor::get_stats() {
 }
 
 void RoadEditor::_bind_methods() {
+	bind_m4_methods();
 	ClassDB::bind_method(D_METHOD("new_map"), &RoadEditor::new_map);
 	ClassDB::bind_method(D_METHOD("load_demo_town"), &RoadEditor::load_demo_town);
 	ClassDB::bind_method(D_METHOD("load_test_grid", "cols", "rows", "spacing"), &RoadEditor::load_test_grid);

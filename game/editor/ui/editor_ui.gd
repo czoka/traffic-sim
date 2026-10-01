@@ -13,6 +13,10 @@ const TOOLS := [
 	["stop", "Bus stop", "K"],
 	["depot", "Bus depot", "D"],
 	["route", "Bus route", "U"],
+	["path", "Path", "P"],
+	["crosswalk", "Crossing", "W"],
+	["fence", "Fence", "E"],
+	["bridge", "Bridge / tunnel", "B"],
 ]
 const PANEL_BG := Color(0.08, 0.09, 0.1, 0.92)
 
@@ -29,6 +33,7 @@ var _levels: Array[Button] = []
 var _grid: Button
 var _angle: Button
 var _connectors: Button
+var _level_only: Button
 var _status: Label
 var _cursor: Label
 var _problems_button: Button
@@ -172,6 +177,8 @@ func _build_palette(root: Control) -> void:
 	demos.get_popup().add_item("Lane drop", 4)
 	demos.get_popup().add_item("One-way pair", 5)
 	demos.get_popup().add_item("Showcase (M3: signals, roundabout, buses, bikes, parking)", 6)
+	demos.get_popup().add_item("People town (M4: crossings, bridge, overpass, passengers)", 7)
+	demos.get_popup().add_item("People city (M4 gate: 2,000 vehicles, 1,000 people)", 8)
 	demos.get_popup().add_separator()
 	demos.get_popup().add_item("POC ring benchmark", 2)
 	demos.get_popup().id_pressed.connect(_on_example)
@@ -200,6 +207,10 @@ func _on_example(id: int) -> void:
 			editor.load_demo("one_way_pair")
 		6:
 			editor.load_demo("showcase")
+		7:
+			editor.load_demo("people")
+		8:
+			editor.load_demo("people_city")
 
 
 func _confirm_new() -> void:
@@ -257,6 +268,9 @@ func _build_bottom_bar(root: Control) -> void:
 		b.toggle_mode = true
 		b.tooltip_text = ["Underpass (level −1)", "Ground (level 0)", "Overpass (level +1)"][l + 1]
 		_levels.append(b)
+	_level_only = _button("Only this level", func() -> void: editor.set_level_filter(not editor.level_filter), bar)
+	_level_only.toggle_mode = true
+	_level_only.tooltip_text = "Hide the other levels (H)"
 	bar.add_child(VSeparator.new())
 	_grid = _button("Grid 1 m", _toggle_grid, bar)
 	_grid.toggle_mode = true
@@ -372,9 +386,22 @@ func _build_sim_bar(root: Control) -> void:
 	_max_cars.tooltip_text = "Spawning pauses while this many cars are on the map (0 = no limit)"
 	_max_cars.value_changed.connect(func(v: float) -> void: sim.set_max_cars(int(v)))
 	bar.add_child(_max_cars)
+	var people_label := Label.new()
+	people_label.text = "Max people"
+	bar.add_child(people_label)
+	var max_people := SpinBox.new()
+	max_people.min_value = 0
+	max_people.max_value = 20000
+	max_people.step = 100
+	max_people.value = sim.max_people
+	max_people.tooltip_text = "New trips on foot pause while this many people are on the map (0 = no limit)"
+	max_people.value_changed.connect(func(v: float) -> void: sim.set_max_people(int(v)))
+	bar.add_child(max_people)
 	bar.add_child(VSeparator.new())
 	_sim_label = Label.new()
-	_sim_label.custom_minimum_size = Vector2(430, 0)
+	_sim_label.custom_minimum_size = Vector2(330, 0)
+	_sim_label.clip_text = true
+	_sim_label.mouse_filter = Control.MOUSE_FILTER_PASS # for the tooltip
 	_sim_label.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
 	bar.add_child(_sim_label)
 	sim.state_changed.connect(_refresh_sim_buttons)
@@ -407,6 +434,8 @@ func refresh_sim(st: Dictionary) -> void:
 		extra.append("%d parked" % st.parked)
 	if not extra.is_empty():
 		text += " (" + ", ".join(extra) + ")"
+	if int(st.trips) > 0:
+		text += " · %d people (%d on buses)" % [int(st.pedestrians) + int(st.riding), st.riding]
 	if int(st.waiting_to_enter) > 0:
 		text += " · %d waiting to enter" % st.waiting_to_enter
 	if editor.sim.playing:
@@ -418,6 +447,10 @@ func refresh_sim(st: Dictionary) -> void:
 		st.tick_us, st.frame_sim_ms, st.lane_changes, st.reroutes, st.max_stopped, st.removed_stuck,
 		st.cars, st.taxis, st.buses, st.coaches, st.bikes, st.bus_runs, st.bus_stops_served, st.coach_calls,
 		st.parkings, st.parking_failed, st.right_on_red]
+	if int(st.trips) > 0:
+		_sim_label.tooltip_text += "\n%d people trips: %d walk, %d bus, %d bike, %d car, %d coach · %d arrived\n%d boarded, %d got off, %d left behind, mean wait at stops %.0f s · %d crossings, mean wait at the kerb %.1f s, %d times cars gave way" % [
+			st.trips, st.trips_walk, st.trips_bus, st.trips_bike, st.trips_car, st.trips_coach, st.people_arrived,
+			st.boarded, st.alighted, st.left_behind, st.mean_wait, st.crossings, st.mean_crossing_wait, st.cars_yielded]
 
 
 func _build_problems(root: Control) -> void:
@@ -467,6 +500,7 @@ func refresh() -> void:
 	_grid.set_pressed_no_signal(editor.snap_grid)
 	_angle.set_pressed_no_signal(editor.snap_angle)
 	_connectors.set_pressed_no_signal(editor.show_connectors)
+	_level_only.set_pressed_no_signal(editor.level_filter)
 	_problems = road.get_problems()
 	var errors := 0
 	_problems_list.clear()

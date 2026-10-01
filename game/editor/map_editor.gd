@@ -16,6 +16,8 @@ var level := 0
 var snap_grid := true
 var snap_angle := true
 var show_connectors := false
+## Draw only the level being edited (H).
+var level_filter := false
 var selection := {"nodes": [], "segments": []}
 ## What the road and curve tools draw: {preset: name} or {profile: dict}.
 var road_template := {"preset": "Street 1+1"}
@@ -76,6 +78,10 @@ func _ready() -> void:
 		"stop": StopTool.new(self),
 		"depot": DepotTool.new(self),
 		"route": RouteTool.new(self),
+		"path": PathDrawTool.new(self),
+		"crosswalk": CrosswalkTool.new(self),
+		"fence": FenceTool.new(self),
+		"bridge": BridgeTool.new(self),
 	}
 	_load_user_presets()
 	ui = EditorUI.new()
@@ -145,6 +151,12 @@ func _apply_cmdline() -> void:
 			sim.reset()
 			for i in int(float(arg.trim_prefix("--sim-seconds=")) * 10.0 / 50.0):
 				road.sim_step(50)
+		elif arg.begins_with("--select-ped="):
+			sim.select_ped.call_deferred(int(arg.trim_prefix("--select-ped=")))
+		elif arg == "--level-filter":
+			set_level_filter(true)
+		elif arg.begins_with("--level="):
+			set_level(int(arg.trim_prefix("--level=")))
 		elif arg.begins_with("--select-car="):
 			sim.select_car.call_deferred(int(arg.trim_prefix("--select-car=")))
 		elif arg.begins_with("--screenshot="):
@@ -183,7 +195,7 @@ func _notification(what: int) -> void:
 func _refresh_map() -> void:
 	_last_revision = road.revision()
 	_last_history = Vector2i(road.history_size(), road.redo_size())
-	view.rebuild(road.get_meshes(), level)
+	view.rebuild(road.get_meshes(), level, level_filter)
 	_prune_selection()
 	ui.refresh()
 	overlay.queue_redraw()
@@ -226,6 +238,8 @@ func tool_name() -> String:
 func select(kind: String, id: int, additive: bool) -> void:
 	if sim.selected_car != 0:
 		sim.select_car(0)
+	if sim.selected_ped != 0:
+		sim.select_ped(0)
 	if not additive:
 		selection = {"nodes": [], "segments": []}
 	var list: Array = selection[kind]
@@ -261,8 +275,18 @@ func delete_selection() -> void:
 
 func set_level(l: int) -> void:
 	level = clampi(l, -1, 1)
-	view.apply_level_style(level)
-	sim.apply_level_style(level)
+	_apply_level_style()
+
+
+func set_level_filter(on: bool) -> void:
+	level_filter = on
+	_apply_level_style()
+	notify("Showing level %d only." % level if on else "Showing every level.")
+
+
+func _apply_level_style() -> void:
+	view.apply_level_style(level, level_filter)
+	sim.apply_level_style(level, level_filter)
 	ui.refresh()
 	overlay.queue_redraw()
 
@@ -505,6 +529,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			set_tool("depot")
 		KEY_U:
 			set_tool("route")
+		KEY_P:
+			set_tool("path")
+		KEY_W:
+			set_tool("crosswalk")
+		KEY_E:
+			set_tool("fence")
+		KEY_B:
+			set_tool("bridge")
+		KEY_H:
+			set_level_filter(not level_filter)
 		KEY_SPACE:
 			sim.toggle()
 		KEY_PERIOD:
@@ -526,6 +560,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_ESCAPE:
 			clear_selection()
 			sim.select_car(0)
+			sim.select_ped(0)
 		_:
 			handled = false
 	if handled:

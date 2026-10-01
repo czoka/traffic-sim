@@ -1139,7 +1139,9 @@ std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net)
 	transit_problems(map, net, out);
 	for (const auto &kv : map.nodes()) {
 		const RoadNode &n = kv.second;
-		if (n.spawner.enabled && !net.spawner_at(n.id)) {
+		bool people_only = false; // a spawn point at a footpath end (M4)
+		for (const PedSpawner &ps : net.ped.spawners) people_only |= ps.node == n.id && !ps.road;
+		if (n.spawner.enabled && !net.spawner_at(n.id) && !people_only) {
 			NetProblem p;
 			p.code = "spawner_not_at_end";
 			p.message = "Spawn point is not on a road end, so it is inactive. Move it to the end of a road.";
@@ -1173,6 +1175,9 @@ std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net)
 		NodeId example = kNoId;
 		for (const NetSpawner &dst : net.spawners) {
 			if (dst.node == src.node || !dst.config.sink || src.config.weight_to(dst.node) <= 0.0) continue;
+			bool cars_end_here = false; // not only a bike path
+			for (int32_t l : dst.sink_lanes) cars_end_here |= net.lanes[static_cast<size_t>(l)].type != LaneType::Bike;
+			if (!cars_end_here) continue;
 			bool ok = false;
 			for (int32_t l : dst.sink_lanes) ok |= seen[static_cast<size_t>(l)] != 0;
 			if (!ok) {
