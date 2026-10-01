@@ -1175,7 +1175,7 @@ std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net)
 		NodeId example = kNoId;
 		for (const NetSpawner &dst : net.spawners) {
 			if (dst.node == src.node || !dst.config.sink || src.config.weight_to(dst.node) <= 0.0) continue;
-			bool cars_end_here = false; // not only a bike path
+			bool cars_end_here = dst.sink_lanes.empty(); // not only a bike path
 			for (int32_t l : dst.sink_lanes) cars_end_here |= net.lanes[static_cast<size_t>(l)].type != LaneType::Bike;
 			if (!cars_end_here) continue;
 			bool ok = false;

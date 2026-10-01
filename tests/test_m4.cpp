@@ -173,6 +173,9 @@ TEST_CASE("people town: valid, round-trips, and its pedestrian network joins up"
 	REQUIRE_MESSAGE(road_map_from_json(json, back, &err), err);
 	CHECK(road_map_to_json(back) == json);
 	w.sync();
+	for (const NetProblem &p : network_problems(w.doc.map(), w.net())) {
+		CHECK_MESSAGE(false, "network problem: ", p.message);
+	}
 	const PedGraph &g = w.net().ped;
 	std::map<std::string, int> kinds;
 	for (const NetCrossing &c : g.crossings) {
