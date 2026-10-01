@@ -109,6 +109,17 @@ var _building_box: VBoxContainer
 var _bld_name: LineEdit
 var _bld_info: Label
 var _bld_live: Label
+# M6: economy
+var _econ_live: Label
+var _econ_rent_row: HBoxContainer
+var _econ_rent: SpinBox
+var _econ_price_row: HBoxContainer
+var _econ_price: SpinBox
+var _econ_wage_row: HBoxContainer
+var _econ_wage: SpinBox
+var _econ_sale: CheckBox
+var _econ_asking: SpinBox
+var _econ_buy: Button
 
 
 func _ready() -> void:
@@ -434,7 +445,54 @@ func _build_building(outer: VBoxContainer) -> void:
 	_bld_live.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_bld_live.custom_minimum_size = Vector2(280, 0)
 	_building_box.add_child(_bld_live)
+	_build_economy(_building_box)
 	_delete_button(_building_box)
+
+
+func _build_economy(box: VBoxContainer) -> void:
+	box.add_child(EditorUI.section("Money"))
+	_econ_live = Label.new()
+	_econ_live.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_econ_live.custom_minimum_size = Vector2(280, 0)
+	box.add_child(_econ_live)
+	_econ_buy = Button.new()
+	_econ_buy.focus_mode = Control.FOCUS_NONE
+	_econ_buy.pressed.connect(func() -> void:
+		if editor.road.sim_buy_building(_bld):
+			editor.notify("Bought. The city owns it now; its settings below apply.")
+		refresh_building_live())
+	box.add_child(_econ_buy)
+	var hint := Label.new()
+	hint.text = "While the city owns it (0 = the default):"
+	hint.add_theme_font_size_override("font_size", 12)
+	hint.add_theme_color_override("font_color", Color(0.7, 0.72, 0.76))
+	box.add_child(hint)
+	_econ_rent_row = _row(box, "Rent / month")
+	_econ_rent = _spin(_econ_rent_row, 0, 100000, 10, "", func(v: float) -> void: _set_econ("rent", v))
+	_econ_price_row = _row(box, "Prices")
+	_econ_price = _spin(_econ_price_row, 0.1, 10, 0.05, " x", func(v: float) -> void: _set_econ("price_factor", v))
+	_econ_wage_row = _row(box, "Wage / hour")
+	_econ_wage = _spin(_econ_wage_row, 0, 500, 0.5, "", func(v: float) -> void: _set_econ("wage", v))
+	var r := _row(box, "For sale")
+	_econ_sale = CheckBox.new()
+	_econ_sale.focus_mode = Control.FOCUS_NONE
+	_econ_sale.toggled.connect(func(on: bool) -> void:
+		if not _updating:
+			_set_econ("for_sale", on))
+	r.add_child(_econ_sale)
+	_econ_asking = _spin(r, 0, 1e10, 1000, "", func(v: float) -> void: _set_econ("asking", v))
+	_econ_asking.tooltip_text = "Asking price (0 = the valuation)"
+
+
+func _set_econ(key: String, v) -> void:
+	if _bld != 0:
+		editor.road.set_building_economy(_bld, {key: v})
+
+
+static func money(v: float) -> String:
+	var a := absf(v)
+	var s := ("%.1fM" % (a / 1e6)) if a >= 1e6 else (("%.1fk" % (a / 1e3)) if a >= 1e4 else "%.0f" % a)
+	return ("-" if v < 0.0 else "") + s
 
 
 static func _hm(minutes: int) -> String:
@@ -477,6 +535,20 @@ func _fill_building(id: int) -> void:
 	if not b.door:
 		lines.append("No sidewalk or path at the front: nobody can get in.")
 	_bld_info.text = "\n".join(lines)
+	_updating = true
+	var home: bool = b.kind == "home"
+	_econ_rent_row.visible = home
+	_econ_price_row.visible = b.kind == "shop"
+	_econ_wage_row.visible = not home
+	_econ_rent.value = float(b.rent)
+	_econ_rent.tooltip_text = "Type default %d a month at the centre, scaled by location" % int(b.get("type_rent", 0))
+	_econ_price.value = float(b.price_factor)
+	_econ_wage.value = float(b.wage)
+	_econ_wage.tooltip_text = "Type default %.1f an hour" % float(b.get("type_wage", 0))
+	_econ_sale.set_pressed_no_signal(bool(b.for_sale))
+	_econ_asking.value = float(b.asking)
+	_econ_asking.editable = bool(b.for_sale)
+	_updating = false
 	refresh_building_live()
 
 
@@ -487,7 +559,10 @@ func refresh_building_live() -> void:
 	var info: Dictionary = editor.road.sim_building_info(_bld)
 	if info.is_empty() or b.is_empty():
 		_bld_live.text = "Press Play to see who lives and works here."
+		_econ_live.text = "Press Play to see who owns it and what it earns."
+		_econ_buy.visible = false
 		return
+	_refresh_economy(b, info)
 	var lines: Array = []
 	if b.kind == "home":
 		lines.append("%d of %d unit%s taken · %d resident%s · %d inside now" % [info.households, info.units,
@@ -509,6 +584,24 @@ func refresh_building_live() -> void:
 		lines.append("Served %d · turned away %d · opened late %d time%s" % [info.served, info.turned_away, info.late_openings,
 			"" if int(info.late_openings) == 1 else "s"])
 	_bld_live.text = "\n".join(lines)
+
+
+func _refresh_economy(b: Dictionary, info: Dictionary) -> void:
+	var lines: Array = []
+	var kind := String(info.owner_kind)
+	var owner := "the city (you)" if kind == "city" else ("a household living here" if kind == "household" else "owner #%d (NPC)" % info.owner)
+	lines.append("Owned by %s · worth %s · location %.2f" % [owner, money(info.value), info.location])
+	if b.kind == "home":
+		lines.append("Rent %s a unit a month (base %s)" % [money(info.rent), money(info.base_rent)])
+	else:
+		lines.append(("Prices x%.2f · " % info.price_factor if b.kind == "shop" else "") + "Wage %.1f an hour" % info.wage)
+	lines.append("This month: in %s · out %s · net %s%s" % [money(info.income_month), money(info.expense_month), money(info.net_month),
+		(" · %d sales" % info.sales) if b.kind == "shop" else ""])
+	if info.listed:
+		lines.append("For sale at %s%s" % [money(info.asking), "" if kind != "city" else " (keeps working until sold)"])
+	_econ_live.text = "\n".join(lines)
+	_econ_buy.visible = info.listed and kind != "city"
+	_econ_buy.text = "Buy for %s" % money(info.asking)
 
 
 func _build_car(outer: VBoxContainer) -> void:
@@ -741,6 +834,17 @@ func _refresh_ped() -> void:
 				lines.append("Shift %s-%s at %s" % [_hm(r.shift_start), _hm(r.shift_end), r.shift_name])
 			if int(r.late) > 0:
 				lines.append("Late for %d shift%s" % [r.late, "" if int(r.late) == 1 else "s"])
+			if not r.visitor:
+				var owns: Array = []
+				if r.has_bike:
+					owns.append("a bike")
+				if r.has_car:
+					owns.append("a car (at %s)" % r.car_at_name if String(r.car_at_name) != "" else "a car")
+				if r.has_pass:
+					owns.append("a bus pass")
+				lines.append("Has %s · travels by %s" % [", ".join(owns) if not owns.is_empty() else "no vehicle or pass", r.mode])
+				lines.append("%s · household savings %s%s" % ["Owns the home" if r.owns_home else "Rent %s a month" % money(r.rent),
+					money(r.household_money), (" · %d month%s behind on rent" % [r.debt_months, "" if int(r.debt_months) == 1 else "s"]) if int(r.debt_months) > 0 else ""])
 	_car_info.text = "\n".join(lines)
 
 

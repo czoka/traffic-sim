@@ -47,6 +47,10 @@ void build_city_town(Document &doc);
 // M5 gate: a 6 x 6 block town for about 5,000 residents, with shops, offices,
 // a bus loop, the main station and coaches.
 void build_city_week(Document &doc);
+// M6 gate: a 5 x 5 block town for about 1,500 residents with a bike shop, a
+// car dealership, a bus loop and the city centre marker; some buildings are
+// on the market from the start.
+void build_city_market(Document &doc);
 // Places a building of `type` on the street edge nearest `near` (level 0).
 // Returns its id, 0 when there is no street within 60 m.
 uint32_t place_building(Document &doc, const RoadGeometry &geom, const char *type, Vec2 near);

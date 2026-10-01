@@ -34,12 +34,32 @@
     "shoppers_per_coach": 4,
     "visitor_arrive_early_minutes": 120
   },
+  "economy": {
+    "month_days": 30,
+    "coach_fare": 12,
+    "car_cost_per_km": 0.25,
+    "outside_drive_km": 15,
+    "bus_pass": 40,
+    "day_pass_share": 0.1,
+    "minutes_per_credit": 0.25,
+    "bike_speed": 4.5,
+    "parking_minutes": 2,
+    "eviction_months": 2,
+    "location": { "centre": 1.0, "edge": 0.5, "edge_distance": 3000 },
+    "market": { "value_years": 10, "sale_rate": 0.1, "npc_list_chance": 0.05, "listing_days": 60 },
+    "npc_owners": {
+      "price_step": 0.05, "wage_step": 0.04, "rent_step": 0.03,
+      "price_range": [0.6, 2.0], "wage_range": [0.8, 1.6], "rent_range": [0.5, 2.0]
+    }
+  },
   "offerings": {
-    "fast_food_meal": { "label": "Fast-food meal", "hunger": 60, "minutes": [15, 15], "price": 30 },
-    "restaurant_meal": { "label": "Restaurant meal", "hunger": 90, "minutes": [60, 60], "price": 80 },
-    "grocery_shop": { "label": "Grocery shopping", "pantry": 14, "minutes": [20, 40], "price": 150 },
+    "fast_food_meal": { "label": "Fast-food meal", "hunger": 60, "minutes": [15, 15], "price": 30, "cost": 12 },
+    "restaurant_meal": { "label": "Restaurant meal", "hunger": 90, "minutes": [60, 60], "price": 80, "cost": 32 },
+    "grocery_shop": { "label": "Grocery shopping", "pantry": 14, "minutes": [20, 40], "price": 150, "cost": 100 },
     "home_meal": { "label": "Meal at home", "hunger": 80, "pantry_use": 1, "minutes": [30, 30], "price": 0 },
-    "sleep": { "label": "Sleep", "energy": 100, "minutes": [420, 540], "price": 0 }
+    "sleep": { "label": "Sleep", "energy": 100, "minutes": [420, 540], "price": 0 },
+    "buy_bike": { "label": "Buying a bicycle", "unlocks": "bike", "minutes": [30, 30], "price": 800, "cost": 560 },
+    "buy_car": { "label": "Buying a car", "unlocks": "car", "minutes": [120, 120], "price": 15000, "cost": 12750 }
   },
   "buildings": {
     "detached_house": {
@@ -74,6 +94,20 @@
       "weekday": { "hours": [12, 23], "shifts": [[12, 18, 3], [17, 23, 4]] },
       "weekend": { "hours": [12, 23], "shifts": [[12, 18, 4], [17, 23, 4]] },
       "min_staff": 2
+    },
+    "bike_shop": {
+      "kind": "shop", "label": "Bike shop", "size": [14, 14], "offers": ["buy_bike"], "slots": 6, "wage": 17,
+      "parking": "street", "color": "8fbf5f",
+      "weekday": { "hours": [9, 19], "shifts": [[9, 14, 1], [14, 19, 1]] },
+      "weekend": { "hours": [10, 17], "shifts": [[10, 17, 1]] },
+      "min_staff": 1
+    },
+    "car_dealership": {
+      "kind": "shop", "label": "Car dealership", "size": [36, 30], "offers": ["buy_car"], "slots": 6, "wage": 22,
+      "parking": "own", "color": "c46a8a",
+      "weekday": { "hours": [9, 19], "shifts": [[9, 14, 2], [14, 19, 2]] },
+      "weekend": { "hours": [10, 17], "shifts": [[10, 17, 2]] },
+      "min_staff": 1
     },
     "office_small": {
       "kind": "office", "label": "Small office", "size": [16, 14], "desks": 10, "wage": 22,

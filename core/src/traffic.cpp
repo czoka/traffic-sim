@@ -226,6 +226,7 @@ void Traffic::set_network(const Network *net) {
 	net_ = net;
 	const size_t n = net_ ? net_->lanes.size() : 0;
 	cars_.assign(n, {});
+	used_lanes_.clear();
 	lane_time_.assign(n, 0.0);
 	for (size_t l = 0; l < n; ++l) {
 		const NetLane &lane = net_->lanes[l];
@@ -1685,6 +1686,7 @@ void Traffic::list_insert(size_t i) {
 		return o.s < v.s || (o.s == v.s && o.id > v.id);
 	});
 	const size_t at = static_cast<size_t>(pos - list.begin());
+	if (list.empty()) used_lanes_.push_back(v.lane);
 	list.insert(pos, static_cast<int32_t>(i));
 	for (size_t k = at; k < list.size(); ++k) veh_[static_cast<size_t>(list[k])].list_pos = static_cast<int32_t>(k);
 }
@@ -1732,6 +1734,7 @@ void Traffic::move() {
 			if (is_road(l)) {
 				if (at_route_end(v, lane, v.ri)) {
 					v.done = true;
+					v.res_end = 2;
 					break;
 				}
 				const int32_t c = next_connector(v, lane, v.ri);
@@ -1821,6 +1824,7 @@ void Traffic::begin_waypoint(size_t i) {
 	if (serves_people(v, wp)) serve_stop(v, wp.stop, wp); // dwell from boarding
 	switch (wp.action) {
 		case WaypointAction::KerbStop:
+		case WaypointAction::Arrive:
 			v.phase = 1;
 			v.phase_until = now + ticks(wp.dwell);
 			break;
@@ -1920,6 +1924,13 @@ bool Traffic::waypoints() {
 					if (late > 0) v.phase_until += boarding_ticks(v, late);
 				}
 				if (now >= v.phase_until) {
+					if (wp.action == WaypointAction::Arrive) {
+						// A resident's car or bike: put away at the building.
+						v.done = true;
+						v.res_end = 1;
+						removed = true;
+						break;
+					}
 					if (serves_people(v, wp)) bus_departs(v, wp.stop);
 					complete_waypoint(v);
 					if (!retarget(v)) {
@@ -2329,11 +2340,19 @@ VehicleId Traffic::add_vehicle(int32_t lane, double s, double v, NodeId dest, co
 // --- Tick --------------------------------------------------------------------------------------
 
 void Traffic::rebuild_lists() {
-	for (auto &c : cars_) c.clear();
-	for (size_t i = 0; i < veh_.size(); ++i) {
-		if (!veh_[i].off_lane) cars_[static_cast<size_t>(veh_[i].lane)].push_back(static_cast<int32_t>(i));
+	// Only the lanes that had cars need clearing (a big map has thousands of empty ones).
+	for (int32_t l : used_lanes_) {
+		if (static_cast<size_t>(l) < cars_.size()) cars_[static_cast<size_t>(l)].clear();
 	}
-	for (auto &c : cars_) {
+	used_lanes_.clear();
+	for (size_t i = 0; i < veh_.size(); ++i) {
+		if (veh_[i].off_lane) continue;
+		std::vector<int32_t> &c = cars_[static_cast<size_t>(veh_[i].lane)];
+		if (c.empty()) used_lanes_.push_back(veh_[i].lane);
+		c.push_back(static_cast<int32_t>(i));
+	}
+	for (int32_t l : used_lanes_) {
+		std::vector<int32_t> &c = cars_[static_cast<size_t>(l)];
 		if (c.size() < 2) {
 			if (!c.empty()) veh_[static_cast<size_t>(c[0])].list_pos = 0;
 			continue;
@@ -2351,6 +2370,9 @@ void Traffic::compact() {
 	size_t w = 0;
 	for (size_t i = 0; i < veh_.size(); ++i) {
 		if (veh_[i].done) {
+			if (veh_[i].resident != 0) {
+				city_vehicle_done_.push_back(VehDone{ veh_[i].resident, veh_[i].res_end == 1, veh_[i].res_end == 2, veh_[i].distance });
+			}
 			// Anyone still on board leaves the map with it.
 			for (uint32_t id : veh_[i].riders) {
 				const int32_t pi = find_pedestrian(id);
@@ -2620,6 +2642,7 @@ uint64_t Traffic::state_hash() const {
 		h.add_u32(v.phase);
 		h.add_u32(v.dest);
 		h.add_u64(v.grant >= 0 ? 1 : 0);
+		if (v.resident != 0) h.add_u32(v.resident); // maps without residents' vehicles hash as before
 		if (v.staged) h.add_u64(0x57a6ed); // maps without signals hash as before
 	}
 	for (uint32_t p : pending_) h.add_u32(p);
@@ -2649,6 +2672,16 @@ uint64_t Traffic::state_hash() const {
 			h.add_double(r.money);
 		}
 		for (const Household &hh : hh_) h.add_double(hh.pantry);
+		// M6
+		for (const Resident &r : res_) h.add_u32(static_cast<uint32_t>(r.has_bike) | static_cast<uint32_t>(r.has_car) << 1 | r.car_at << 2);
+		for (const auto &kv : econ_) {
+			h.add_u32(kv.first);
+			h.add_u32(kv.second.owner | static_cast<uint32_t>(kv.second.listed) << 30 | static_cast<uint32_t>(kv.second.player_sold) << 31);
+			h.add_double(kv.second.price_factor);
+			h.add_double(kv.second.rent);
+			h.add_double(kv.second.wage);
+			h.add_double(kv.second.income);
+		}
 	}
 	return h.value();
 }

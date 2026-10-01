@@ -860,4 +860,106 @@ void build_city_week(Document &doc) {
 	doc.commit();
 }
 
+void build_city_market(Document &doc) {
+	doc.begin("City market");
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	const int cols = 5, rows = 5;
+	const double sp = 140.0;
+	const double x0 = -2.0 * sp, y0 = -4.0 * sp - 60.0; // the grid lies north of High Street
+	const CityBase base = city_base(doc, 3.0 * sp, -1.5 * sp, 10.0);
+	std::vector<NodeId> ids(static_cast<size_t>(cols * rows));
+	auto id = [&](int i, int j) -> NodeId & { return ids[static_cast<size_t>(j * cols + i)]; };
+	for (int j = 0; j < rows; ++j) {
+		for (int i = 0; i < cols; ++i) id(i, j) = doc.add_node(Vec2{ x0 + i * sp, y0 + j * sp }, 0);
+	}
+	std::map<std::pair<int, int>, SegmentId> hseg, vseg;
+	for (int j = 0; j < rows; ++j) {
+		for (int i = 0; i + 1 < cols; ++i) hseg[{ i, j }] = road(doc, id(i, j), id(i + 1, j), street, 40.0);
+	}
+	for (int i = 0; i < cols; ++i) {
+		for (int j = 0; j + 1 < rows; ++j) vseg[{ i, j }] = road(doc, id(i, j), id(i, j + 1), street, 40.0);
+	}
+	const NodeId depot_node = doc.add_node(Vec2{ x0 + (cols - 1) * sp + 90.0, y0 }, 0);
+	road(doc, id(cols - 1, 0), depot_node, street, 40.0);
+	// A road out to the north edge: a way out of the map by car.
+	const NodeId north = doc.add_node(Vec2{ x0 + 2.0 * sp, y0 - 160.0 }, 0);
+	road(doc, north, id(2, 0), street, 50.0);
+	Spawner edge;
+	edge.enabled = true;
+	edge.rate = 0.0;
+	edge.sink = true;
+	doc.set_spawner(north, edge);
+	for (int i : { 1, 3 }) {
+		PointRef a, b;
+		a.node = id(i, rows - 1);
+		a.pos = doc.map().node(a.node)->pos;
+		b.pos = Vec2{ a.pos.x, 0.0 };
+		b.segment = base.main;
+		doc.add_road({ a, b }, street, 0, 40.0 / 3.6);
+	}
+	RoadGeometry geom;
+	geom.build(doc.map());
+	int k = 0;
+	auto pick = [&](int i, int j) -> const char * {
+		const bool centre = i >= 1 && i <= 2 && j >= 1 && j <= 2;
+		const int r = k++;
+		if (centre) {
+			const char *mix[] = { "office_medium", "grocery", "bike_shop", "fast_food", "office_medium", "restaurant",
+				"car_dealership", "office_small" };
+			return mix[r % 8];
+		}
+		const char *homes[] = { "apartment_block", "townhouse", "apartment_block", "grocery", "detached_house",
+			"apartment_block", "fast_food", "townhouse" };
+		return homes[r % 8];
+	};
+	std::vector<uint32_t> placed;
+	for (int j = 0; j < rows; ++j) {
+		for (int i = 0; i + 1 < cols; ++i) {
+			for (double side : { -1.0, 1.0 }) {
+				if ((j == 0 && side < 0) || (j == rows - 1 && side > 0)) continue;
+				for (double f : { 0.3, 0.7 }) {
+					const Vec2 p{ x0 + (i + f) * sp, y0 + j * sp + side * 16.0 };
+					placed.push_back(place_building(doc, geom, pick(i, j), p));
+				}
+			}
+		}
+	}
+	for (int i = 0; i < cols; ++i) {
+		for (int j = 0; j + 1 < rows; ++j) {
+			for (double side : { -1.0, 1.0 }) {
+				if ((i == 0 && side < 0) || (i == cols - 1 && side > 0)) continue;
+				const Vec2 p{ x0 + i * sp + side * 16.0, y0 + (j + 0.5) * sp };
+				placed.push_back(place_building(doc, geom, i % 2 == 0 ? "townhouse" : pick(i, j), p));
+			}
+		}
+	}
+	// Every fifth building is on the market from the start, at what buyers think it's worth.
+	for (size_t q = 0; q < placed.size(); ++q) {
+		if (placed[q] == 0 || q % 5 != 2) continue;
+		Building b = *doc.map().building(placed[q]);
+		b.for_sale = true;
+		doc.set_building(b);
+	}
+	std::vector<uint32_t> stops;
+	for (int i = 1; i < 3; ++i) stops.push_back(doc.add_stop(hseg[{ i, 1 }], 0.5, LaneDir::Forward, StopKind::Kerbside, "North " + std::to_string(i)));
+	for (int j = 1; j < 3; ++j) stops.push_back(doc.add_stop(vseg[{ 3, j }], 0.5, LaneDir::Forward, StopKind::Kerbside, "East " + std::to_string(j)));
+	for (int i = 2; i >= 1; --i) stops.push_back(doc.add_stop(hseg[{ i, 3 }], 0.5, LaneDir::Backward, StopKind::Kerbside, "South " + std::to_string(i)));
+	for (int j = 2; j >= 1; --j) stops.push_back(doc.add_stop(vseg[{ 1, j }], 0.5, LaneDir::Backward, StopKind::Kerbside, "West " + std::to_string(j)));
+	Depot depot;
+	depot.enabled = true;
+	depot.name = "Town Depot";
+	depot.capacity = 8;
+	BusRoute loop;
+	loop.name = "1 Town Loop";
+	loop.color = 0x2fa84f;
+	loop.stops = stops;
+	loop.headway = 300.0;
+	loop.loop = true;
+	depot.routes = { loop };
+	doc.set_depot(depot_node, depot);
+	doc.set_city_centre(Vec2{ x0 + 2.0 * sp, y0 + 2.0 * sp });
+	doc.commit();
+}
+
 } // namespace tsim

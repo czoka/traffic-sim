@@ -31,7 +31,7 @@ public:
 	void load_demo_town();
 	void load_test_grid(int cols, int rows, double spacing);
 	// "town", "grid", "t_junction", "lane_drop", "one_way_pair", "showcase", "people", "people_city",
-	// "new_city", "city_town", "city_week". False if unknown.
+	// "new_city", "city_town", "city_week", "city_market". False if unknown.
 	bool load_example(const String &name);
 	String save_json() const;
 	// {ok: bool, error: String, migrated_from: int}
@@ -138,6 +138,16 @@ public:
 	Dictionary sim_resident_info(int64_t id);
 	void sim_set_city(const Dictionary &config); // {prefill, employment_share}
 
+	// --- M6: the economy ----------------------------------------------------------
+	// The player's numbers for a city-owned building: {rent, price_factor, wage,
+	// for_sale, asking} (0 = the default). Undoable.
+	void set_building_economy(int64_t id, const Dictionary &settings);
+	void set_city_centre(Vector2 pos); // undoable
+	void clear_city_centre();
+	Dictionary get_city_centre(); // {placed, pos} (pos: the marker, or the centroid of shops and offices)
+	Array sim_market(); // [{id, name, label, by_city, owner, asking, value, days}]
+	bool sim_buy_building(int64_t id); // the player buys an NPC owner's listing
+
 	// --- Profiles --------------------------------------------------------------
 	Array presets() const; // [{name, params}]
 	Dictionary params_of_profile(const Dictionary &profile) const;
@@ -192,6 +202,7 @@ protected:
 	static void _bind_methods();
 	static void bind_m4_methods();
 	static void bind_m5_methods();
+	static void bind_m6_methods();
 
 private:
 	void ensure_geometry();

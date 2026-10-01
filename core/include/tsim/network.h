@@ -274,6 +274,16 @@ struct NetBuilding {
 	Vec2 centre;
 	int level = 0;
 	int32_t entrance = -1; // ped node on the sidewalk or path in front (-1: none within reach)
+	// M6: where its cars and bikes join and leave the traffic, per direction of
+	// the street in front (lane -1: none), at distance s along the lane.
+	int32_t car_lane[2] = { -1, -1 };
+	double car_s[2] = { 0.0, 0.0 };
+	int32_t bike_lane[2] = { -1, -1 };
+	double bike_s[2] = { 0.0, 0.0 };
+	// M6: the player's numbers while the city owns it (see Building).
+	double rent = 0.0, price_factor = 1.0, wage = 0.0;
+	bool for_sale = false;
+	double asking = 0.0;
 };
 
 class Network {
@@ -288,6 +298,8 @@ public:
 	int32_t main_station = -1; // index into stops
 	PedGraph ped; // M4
 	std::vector<NetBuilding> buildings; // M5, ascending id
+	bool has_city_centre = false; // M6: the marker; otherwise the centroid of shops and offices
+	Vec2 city_centre;
 	int32_t stop_index(uint32_t id) const;
 	int32_t building_index(uint32_t id) const;
 	double max_speed = 13.9; // fastest speed limit, for the routing heuristic

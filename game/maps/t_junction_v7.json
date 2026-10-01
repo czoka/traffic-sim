@@ -1,35 +1,52 @@
 {
  "format": "traffic-sim-map",
- "version": 6,
+ "version": 7,
  "next_ids": {
-  "node": 4,
-  "segment": 3,
-  "lane": 8
+  "node": 5,
+  "segment": 4,
+  "lane": 13
  },
  "nodes": [
   {
    "id": 1,
-   "x": -300.0,
+   "x": -200.0,
    "y": 0.0,
    "level": 0,
    "spawner": {
-    "rate": 900.0,
-    "sink": false
+    "rate": 400.0,
+    "sink": true
    }
   },
   {
    "id": 2,
    "x": 0.0,
    "y": 0.0,
-   "level": 0
+   "level": 0,
+   "control": {
+    "type": "priority_road",
+    "priority": [
+     1,
+     2
+    ]
+   }
   },
   {
    "id": 3,
-   "x": 300.0,
+   "x": 200.0,
    "y": 0.0,
    "level": 0,
    "spawner": {
-    "rate": 0.0,
+    "rate": 400.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 4,
+   "x": 0.0,
+   "y": 200.0,
+   "level": 0,
+   "spawner": {
+    "rate": 300.0,
     "sink": true
    }
   }
@@ -57,7 +74,7 @@
      {
       "id": 2,
       "type": "general",
-      "dir": "forward",
+      "dir": "backward",
       "width": 3.25
      },
      {
@@ -97,11 +114,57 @@
      {
       "id": 6,
       "type": "general",
-      "dir": "forward",
+      "dir": "backward",
       "width": 3.25
      },
      {
       "id": 7,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 8,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "from": 4,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 9,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 10,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 11,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 12,
       "type": "sidewalk",
       "dir": "none",
       "width": 2.0

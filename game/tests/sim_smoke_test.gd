@@ -156,11 +156,12 @@ func _run() -> void:
 	# Save -> load keeps spawn points and controls (map format v4).
 	var text: String = road.save_json()
 	var r: Dictionary = road.load_json(text)
-	_check(r.ok and road.save_json() == text and text.contains("\"version\": 6"), "v6 save -> load -> save is identical")
+	_check(r.ok and road.save_json() == text and text.contains("\"version\": 7"), "v7 save -> load -> save is identical")
 
 	await _m3(ed, road)
 	await _m4(ed, road)
 	await _m5(ed, road)
+	await _m6(ed, road)
 
 	# Errors block Play.
 	road.new_map()
@@ -442,6 +443,71 @@ func _m5(ed: MapEditor, road) -> void:
 	var text: String = road.save_json()
 	var r2: Dictionary = road.load_json(text)
 	_check(r2.ok and road.save_json() == text, "buildings survive save -> load -> save")
+	ed.clear_selection()
+
+
+## M6: money and ownership - the market city, the economy inspector, the city
+## centre tool, the market panel and the finance stats.
+func _m6(ed: MapEditor, road) -> void:
+	ed.load_demo("city_market")
+	await _frames(2)
+	_check(int(road.get_stats().errors) == 0 and road.get_city_centre().placed, "city market: %d buildings, centre placed, no errors" % road.get_buildings(0).size())
+	ed.sim.reset()
+	road.sim_step(36000 * 26) # 06:00 day 1 -> 08:00 day 2
+	var c: Dictionary = road.sim_city_stats()
+	_check(c.on and int(c.residents) > 500, "%d residents, %d households" % [c.residents, c.households])
+	_check(float(c.month_income) > 0.0 and int(c.in_debt) == 0, "city income %.0f, spending %.0f this month, %d in debt" % [c.month_income, c.month_spending, c.in_debt])
+	_check(int(c.passes) > 0 and int(c.trips_bus) + int(c.trips_walk) > 0, "%d bus passes, %d walk / %d bus / %d bike trips" % [c.passes, c.trips_walk, c.trips_bus, c.trips_bike])
+	_check(int(c.listed) > 0, "%d buildings on the market" % c.listed)
+	ed.sim._refresh_stats()
+	ed.ui.refresh_sim(ed.sim.stats)
+	_check(ed.ui._sim_label.tooltip_text.contains("city income"), "the sim tooltip has the finances")
+	# A listed city building in the inspector, and its settings.
+	var listed := 0
+	var home := 0
+	for b in road.get_buildings(0):
+		var full: Dictionary = road.get_building(b.id)
+		if full.for_sale and listed == 0:
+			listed = b.id
+		if full.kind == "home" and not full.for_sale and home == 0:
+			home = b.id
+	ed.select("buildings", home, false)
+	await _frames(1)
+	var insp: Inspector = ed.ui.inspector
+	_check(insp._econ_live.text.contains("Owned by") and insp._econ_rent_row.visible, "the inspector shows the owner: %s" % insp._econ_live.text.get_slice("\n", 0))
+	insp._econ_rent.value = 900.0
+	_check(is_equal_approx(float(road.get_building(home).rent), 900.0), "rent set from the inspector")
+	ed.undo()
+	_check(float(road.get_building(home).rent) == 0.0, "undo restores the default rent")
+	# The market panel lists the sales; buying an NPC listing if one is up.
+	ed.ui._market_panel.visible = true
+	ed.ui._refresh_market()
+	_check(ed.ui._market.size() == int(c.listed), "the market panel lists %d sale%s" % [ed.ui._market.size(), "" if ed.ui._market.size() == 1 else "s"])
+	var npc := 0
+	for l in road.sim_market():
+		if not l.by_city:
+			npc = int(l.id)
+	if npc != 0:
+		_check(road.sim_buy_building(npc) and String(road.sim_building_info(npc).owner_kind) == "city", "bought an NPC listing")
+	else:
+		_check(listed != 0, "no NPC listings yet (fine); city building %d is for sale" % listed)
+	ed.ui._market_panel.visible = false
+	# The city centre tool: click to move it, Shift-click removes it, undo.
+	ed.set_tool("centre")
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	(ed.tools["centre"] as CentreTool).input(press)
+	_check(road.get_city_centre().placed, "the centre tool places the centre")
+	press.shift_pressed = true
+	(ed.tools["centre"] as CentreTool).input(press)
+	_check(not road.get_city_centre().placed, "Shift-click removes it")
+	ed.undo()
+	_check(road.get_city_centre().placed, "undo puts it back")
+	ed.set_tool("select")
+	var text: String = road.save_json()
+	var r: Dictionary = road.load_json(text)
+	_check(r.ok and road.save_json() == text, "economy settings survive save -> load -> save")
 	ed.clear_selection()
 
 

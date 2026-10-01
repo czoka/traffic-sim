@@ -100,12 +100,12 @@ TEST_CASE("city data: the default table parses, and bad tables are rejected") {
 	CHECK(err.find("unknown offering") != std::string::npos);
 }
 
-TEST_CASE("city town: valid, round-trips as v6, doors on the sidewalk") {
+TEST_CASE("city town: valid, round-trips as v7, doors on the sidewalk") {
 	World w;
 	build_city_town(w.doc);
 	CHECK(w.errors() == 0);
 	const std::string json = road_map_to_json(w.doc.map());
-	CHECK(json.find("\"version\": 6") != std::string::npos);
+	CHECK(json.find("\"version\": 7") != std::string::npos);
 	RoadMap back;
 	std::string err;
 	REQUIRE_MESSAGE(road_map_from_json(json, back, &err), err);
@@ -422,8 +422,8 @@ TEST_CASE("city: same seed, same hash; buildings removed while running") {
 	const uint64_t a = run(42);
 	CHECK(a == run(42));
 	CHECK(a != run(43));
-	std::printf("M5 golden: %016llx (expected 95f0620c3af461e3)\n", static_cast<unsigned long long>(a));
-	CHECK(a == 0x95f0620c3af461e3ull); // same on every platform, like the other goldens
+	std::printf("M5 golden: %016llx (expected 7ca7601c9fbb356f)\n", static_cast<unsigned long long>(a));
+	CHECK(a == 0x7ca7601c9fbb356full); // same on every platform, like the other goldens
 	World w;
 	build_city_town(w.doc);
 	w.sync();

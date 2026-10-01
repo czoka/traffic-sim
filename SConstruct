@@ -30,6 +30,8 @@ CORE_SOURCES = [
     "core/src/road_map_json.cpp",
     "core/src/traffic.cpp",
     "core/src/traffic_city.cpp",
+    "core/src/traffic_drive.cpp",
+    "core/src/traffic_economy.cpp",
     "core/src/traffic_peds.cpp",
     "core/src/traffic_run.cpp",
     "core/src/sim.cpp",

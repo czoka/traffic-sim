@@ -36,6 +36,7 @@ Document::Document() = default;
 
 void Document::reset(const RoadMap &map) {
 	map_ = map;
+	open_centre_ = false;
 	undo_.clear();
 	redo_.clear();
 	depth_ = 0;
@@ -55,6 +56,7 @@ void Document::begin(const std::string &label) {
 	if (depth_ == 0) {
 		open_ = Change{};
 		open_.label = label;
+		open_centre_ = false;
 		open_nodes_.clear();
 		open_segments_.clear();
 		open_buildings_.clear();
@@ -96,7 +98,13 @@ bool Document::commit() {
 	open_nodes_.clear();
 	open_segments_.clear();
 	open_buildings_.clear();
-	if (c.nodes.empty() && c.segments.empty() && c.buildings.empty()) {
+	if (open_centre_) {
+		c.centre_changed = true;
+		c.centre_before = open_centre_before_;
+		c.centre_after = map_.city_centre();
+		open_centre_ = false;
+	}
+	if (c.nodes.empty() && c.segments.empty() && c.buildings.empty() && !c.centre_changed) {
 		return false;
 	}
 	undo_.push_back(std::move(c));
@@ -109,6 +117,12 @@ void Document::cancel() {
 		return;
 	}
 	Change c = open_;
+	if (open_centre_) {
+		c.centre_changed = true;
+		c.centre_before = open_centre_before_;
+		c.centre_after = map_.city_centre();
+		open_centre_ = false;
+	}
 	depth_ = 0;
 	open_ = Change{};
 	open_nodes_.clear();
@@ -144,6 +158,7 @@ void Document::apply(const Change &c, bool forward) {
 			map_.erase_building(b.id);
 		}
 	}
+	if (c.centre_changed) map_.set_city_centre(forward ? c.centre_after : c.centre_before);
 	++revision_;
 }
 
@@ -225,6 +240,16 @@ void Document::set_building(const Building &b) {
 	Scope scope(*this, "Edit building");
 	touch_building(b.id);
 	map_.put_building(b);
+	++revision_;
+}
+
+void Document::set_city_centre(const std::optional<Vec2> &c) {
+	Scope scope(*this, c ? "Place city centre" : "Remove city centre");
+	if (!open_centre_) {
+		open_centre_ = true;
+		open_centre_before_ = map_.city_centre();
+	}
+	map_.set_city_centre(c);
 	++revision_;
 }
 

@@ -83,6 +83,7 @@ func _ready() -> void:
 		"fence": FenceTool.new(self),
 		"bridge": BridgeTool.new(self),
 		"building": BuildingTool.new(self),
+		"centre": CentreTool.new(self),
 	}
 	_load_user_presets()
 	ui = EditorUI.new()
@@ -129,7 +130,7 @@ func _load_startup_map() -> void:
 		if arg.begins_with("--example="):
 			var which := arg.trim_prefix("--example=")
 			road.load_example(which)
-			sim.city_prefill = 1.0 if which == "city_town" else 0.95 if which == "city_week" else 0.0
+			sim.city_prefill = 1.0 if which == "city_town" else 0.95 if which in ["city_week", "city_market"] else 0.0
 			return
 	if args.has("--demo"):
 		road.load_demo_town()
@@ -426,7 +427,7 @@ func load_demo(which: String) -> void:
 		road.new_map()
 	else:
 		road.load_example(which)
-	sim.city_prefill = 1.0 if which == "city_town" else 0.95 if which == "city_week" else 0.0
+	sim.city_prefill = 1.0 if which == "city_town" else 0.95 if which in ["city_week", "city_market"] else 0.0
 	clear_selection()
 	_refresh_map()
 	sim.pause()
@@ -567,6 +568,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			set_tool("bridge")
 		KEY_H:
 			set_tool("building")
+		KEY_T:
+			set_tool("centre")
 		KEY_J:
 			set_level_filter(not level_filter)
 		KEY_SPACE:

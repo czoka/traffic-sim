@@ -22,7 +22,7 @@
 
 namespace tsim {
 
-constexpr int kRoadMapVersion = 6;
+constexpr int kRoadMapVersion = 7;
 
 std::string road_map_to_json(const RoadMap &map);
 
