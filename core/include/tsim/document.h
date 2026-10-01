@@ -63,11 +63,13 @@ public:
 	// segment at the closest point, or a new node.
 	NodeId resolve_point(const PointRef &p, int level);
 	// Straight road through the points. Returns the new segment IDs.
+	// Paths (kind != Road) never split a road or join a road node when they
+	// are footpaths: those points become free nodes (M4).
 	std::vector<SegmentId> add_road(const std::vector<PointRef> &points, const Profile &proto, int level,
-			double speed_limit);
+			double speed_limit, SegmentKind kind = SegmentKind::Road);
 	// Bezier road from a to b shaped by a quadratic control point.
 	SegmentId add_curve(const PointRef &a, Vec2 control, const PointRef &b, const Profile &proto, int level,
-			double speed_limit);
+			double speed_limit, SegmentKind kind = SegmentKind::Road);
 	// Arc road (used by generators and v1 imports).
 	SegmentId add_arc(NodeId a, NodeId b, double sweep, const Profile &proto, double speed_limit);
 	NodeId add_node(Vec2 pos, int level);
@@ -116,6 +118,29 @@ public:
 	// an id get one.
 	void set_depot(NodeId id, const Depot &depot);
 
+	// --- M4: crossings, fences, levels ---------------------------------------------
+	// Mid-block crossing; returns its id (0 if the road doesn't exist).
+	uint32_t add_crossing(SegmentId seg, double u, CrossingKind kind, bool bike, bool refuge);
+	void set_crossing(SegmentId seg, const Crossing &c);
+	void remove_crossing(SegmentId seg, uint32_t crossing);
+	// Paints (on = true) or erases a fence on one side of a road over [u0, u1].
+	void set_fence(SegmentId seg, int side, double u0, double u1, bool on);
+	// Makes a road a ramp (rise levels from its from-node to its to-node), or flat.
+	void set_ramp(SegmentId seg, int rise, bool stairs);
+	// Bridge (delta +1) or tunnel (-1): lifts the part of a road that crosses
+	// another road nearest `at`, with ramps at the grade limit on both sides.
+	// Returns an error message, or an empty string on success.
+	std::string lift(SegmentId seg, Vec2 at, int delta);
+	// What lift() would build, for the tool's preview: the stations (m along
+	// the road) of the ramps' outer ends and of the raised span, and whether it fits.
+	struct LiftPlan {
+		bool ok = false;
+		std::string error;
+		double s[4] = { 0, 0, 0, 0 }; // ramp start, span start, span end, ramp end
+		double length = 0.0; // of the road
+	};
+	LiftPlan plan_lift(SegmentId seg, Vec2 at, int delta) const;
+
 	// Fresh lane IDs for a profile template.
 	Profile instantiate(const Profile &proto);
 
@@ -136,6 +161,8 @@ private:
 		std::vector<SegmentChange> segments;
 	};
 
+	PointRef footpath_ref(const PointRef &p, SegmentKind kind) const;
+	void retarget_ends(RoadSegment &s, bool from_end, bool to_end); // node levels follow level / rise
 	void touch_node(NodeId id);
 	void touch_segment(SegmentId id);
 	void put_node(const RoadNode &n);

@@ -261,7 +261,7 @@ NodeId Document::resolve_point(const PointRef &p, int level) {
 }
 
 std::vector<SegmentId> Document::add_road(const std::vector<PointRef> &points, const Profile &proto, int level,
-		double speed_limit) {
+		double speed_limit, SegmentKind kind) {
 	Scope scope(*this, "Add road");
 	std::vector<SegmentId> out;
 	if (points.size() < 2 || !validate_profile(proto).empty()) {
@@ -269,7 +269,7 @@ std::vector<SegmentId> Document::add_road(const std::vector<PointRef> &points, c
 	}
 	std::vector<NodeId> nodes;
 	for (const PointRef &p : points) {
-		PointRef ref = p;
+		PointRef ref = footpath_ref(p, kind);
 		// A segment snapped earlier in this road may have been split already;
 		// re-snap onto whichever piece is closest.
 		if (ref.segment != kNoId && !map_.segment(ref.segment)) {
@@ -307,6 +307,7 @@ std::vector<SegmentId> Document::add_road(const std::vector<PointRef> &points, c
 		s.from = nodes[i];
 		s.to = nodes[i + 1];
 		s.level = level;
+		s.kind = kind;
 		s.curve = CurveKind::Straight;
 		s.profile = instantiate(proto);
 		s.speed_limit = speed_limit;
@@ -320,13 +321,13 @@ std::vector<SegmentId> Document::add_road(const std::vector<PointRef> &points, c
 }
 
 SegmentId Document::add_curve(const PointRef &a, Vec2 control, const PointRef &b, const Profile &proto, int level,
-		double speed_limit) {
+		double speed_limit, SegmentKind kind) {
 	Scope scope(*this, "Add curve");
 	if (!validate_profile(proto).empty()) {
 		return kNoId;
 	}
-	const NodeId na = resolve_point(a, level);
-	PointRef bref = b;
+	const NodeId na = resolve_point(footpath_ref(a, kind), level);
+	PointRef bref = footpath_ref(b, kind);
 	if (bref.segment != kNoId && !map_.segment(bref.segment)) {
 		bref.segment = kNoId;
 	}
@@ -343,6 +344,7 @@ SegmentId Document::add_curve(const PointRef &a, Vec2 control, const PointRef &b
 	s.from = na;
 	s.to = nb;
 	s.level = level;
+	s.kind = kind;
 	s.curve = CurveKind::Bezier;
 	quadratic_to_cubic(pa->pos, control, pb->pos, s.c1, s.c2);
 	s.profile = instantiate(proto);
@@ -371,9 +373,29 @@ SegmentId Document::add_arc(NodeId a, NodeId b, double sweep, const Profile &pro
 	return s.id;
 }
 
+PointRef Document::footpath_ref(const PointRef &p, SegmentKind kind) const {
+	if (kind != SegmentKind::Footpath) return p;
+	// Footpaths stay off the roads: they join other footpaths only, and link to
+	// sidewalks by being near them.
+	PointRef out = p;
+	if (p.node != kNoId) {
+		for (SegmentId s : map_.segments_at(p.node)) {
+			if (map_.segment(s)->kind != SegmentKind::Footpath) {
+				out.node = kNoId;
+				break;
+			}
+		}
+	}
+	if (p.segment != kNoId) {
+		const RoadSegment *s = map_.segment(p.segment);
+		if (!s || s->kind != SegmentKind::Footpath) out.segment = kNoId;
+	}
+	return out;
+}
+
 NodeId Document::split_segment(SegmentId id, double u) {
 	const RoadSegment *orig = map_.segment(id);
-	if (!orig) {
+	if (!orig || orig->is_ramp()) {
 		return kNoId;
 	}
 	Scope scope(*this, "Split road");
@@ -422,6 +444,29 @@ NodeId Document::split_segment(SegmentId id, double u) {
 			b.stops.push_back(c);
 		}
 	}
+	// Crossings too; fences are clipped like no-change zones.
+	a.crossings.clear();
+	b.crossings.clear();
+	for (const Crossing &cr : seg.crossings) {
+		Crossing c = cr;
+		if (cr.u < u) {
+			c.u = cr.u / u;
+			a.crossings.push_back(c);
+		} else {
+			c.u = (cr.u - u) / (1.0 - u);
+			b.crossings.push_back(c);
+		}
+	}
+	auto clip_fences = [](const std::vector<Fence> &fs, double lo, double hi) {
+		std::vector<Fence> out;
+		for (const Fence &f : fs) {
+			const double a0 = std::max(f.u0, lo), a1 = std::min(f.u1, hi);
+			if (a1 - a0 > 1e-9) out.push_back(Fence{ f.side, (a0 - lo) / (hi - lo), (a1 - lo) / (hi - lo) });
+		}
+		return out;
+	};
+	a.fences = clip_fences(seg.fences, 0.0, u);
+	b.fences = clip_fences(seg.fences, u, 1.0);
 
 	put_segment(a);
 	put_segment(b);
@@ -646,6 +691,16 @@ bool Document::flip(SegmentId id) {
 		st.u = 1.0 - st.u;
 		st.side = st.side == LaneDir::Forward ? LaneDir::Backward : LaneDir::Forward;
 	}
+	for (Crossing &c : s.crossings) c.u = 1.0 - c.u;
+	for (Fence &f : s.fences) {
+		const double u0 = 1.0 - f.u1;
+		f.u1 = 1.0 - f.u0;
+		f.u0 = u0;
+		f.side = 1 - f.side;
+	}
+	// A ramp now starts at its old top.
+	s.level += s.rise;
+	s.rise = -s.rise;
 	put_segment(s);
 	return true;
 }
@@ -698,22 +753,7 @@ void Document::set_level(SegmentId id, int level) {
 	Scope scope(*this, "Change level");
 	RoadSegment s = *orig;
 	s.level = level;
-	for (NodeId *end : { &s.from, &s.to }) {
-		const RoadNode n = *map_.node(*end);
-		if (map_.segments_at(n.id).size() > 1) {
-			// Shared with roads on the old level: this road gets its own node.
-			RoadNode copy;
-			copy.id = map_.alloc_node_id();
-			copy.pos = n.pos;
-			copy.level = level;
-			put_node(copy);
-			*end = copy.id;
-		} else {
-			RoadNode moved = n;
-			moved.level = level;
-			put_node(moved);
-		}
-	}
+	retarget_ends(s, true, true);
 	put_segment(s);
 }
 
@@ -876,6 +916,14 @@ SignalPlan default_signal_plan(const RoadMap &map, NodeId node) {
 			}
 		}
 		ph.green = group.size() > 1 ? 25.0 : 15.0;
+		// Pedestrians walk alongside this phase's traffic: across the other legs
+		// (turning cars yield to them), wherever those legs have a crosswalk.
+		for (size_t t = 0; t < legs.size(); ++t) {
+			if (std::find(group.begin(), group.end(), t) != group.end()) continue;
+			const RoadSegment *seg = map.segment(legs[t]);
+			const int e = seg->from == node ? 0 : 1;
+			if (seg->ends[e].crossing.kind == CrossingKind::Signal) ph.walk.push_back(legs[t]);
+		}
 		plan.phases.push_back(ph);
 	}
 	return plan;
@@ -968,6 +1016,276 @@ void Document::set_depot(NodeId id, const Depot &depot) {
 		r.headway = std::clamp(r.headway, 60.0, 7200.0);
 	}
 	put_node(n);
+}
+
+// --- M4: crossings, fences, levels ----------------------------------------------------
+
+void Document::retarget_ends(RoadSegment &s, bool from_end, bool to_end) {
+	for (int e = 0; e < 2; ++e) {
+		if (!(e == 0 ? from_end : to_end)) continue;
+		NodeId &end = e == 0 ? s.from : s.to;
+		const int want = e == 0 ? s.level : s.level + s.rise;
+		const RoadNode n = *map_.node(end);
+		if (n.level == want) continue;
+		if (map_.segments_at(n.id).size() > 1) {
+			// Shared with roads on the old level: this road gets its own node.
+			RoadNode copy;
+			copy.id = map_.alloc_node_id();
+			copy.pos = n.pos;
+			copy.level = want;
+			put_node(copy);
+			end = copy.id;
+		} else {
+			RoadNode moved = n;
+			moved.level = want;
+			put_node(moved);
+		}
+	}
+}
+
+uint32_t Document::add_crossing(SegmentId seg, double u, CrossingKind kind, bool bike, bool refuge) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig || kind == CrossingKind::None) return 0;
+	Scope scope(*this, "Add crossing");
+	RoadSegment s = *orig;
+	Crossing c;
+	c.id = map_.alloc_object_id();
+	c.u = std::clamp(u, 0.0, 1.0);
+	c.kind = kind;
+	c.bike = bike;
+	c.refuge = refuge && s.profile.median != MedianType::None;
+	s.crossings.push_back(c);
+	std::sort(s.crossings.begin(), s.crossings.end(), [](const Crossing &a, const Crossing &b) { return a.u < b.u; });
+	put_segment(s);
+	return c.id;
+}
+
+void Document::set_crossing(SegmentId seg, const Crossing &c) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig) return;
+	Scope scope(*this, "Change crossing");
+	RoadSegment s = *orig;
+	for (Crossing &x : s.crossings) {
+		if (x.id != c.id) continue;
+		const uint32_t keep = x.id;
+		x = c;
+		x.id = keep;
+		x.u = std::clamp(x.u, 0.0, 1.0);
+		if (x.kind == CrossingKind::None) x.kind = CrossingKind::Zebra;
+		x.refuge = x.refuge && s.profile.median != MedianType::None;
+	}
+	std::sort(s.crossings.begin(), s.crossings.end(), [](const Crossing &a, const Crossing &b) { return a.u < b.u; });
+	put_segment(s);
+}
+
+void Document::remove_crossing(SegmentId seg, uint32_t crossing) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig) return;
+	Scope scope(*this, "Remove crossing");
+	RoadSegment s = *orig;
+	s.crossings.erase(std::remove_if(s.crossings.begin(), s.crossings.end(),
+							  [crossing](const Crossing &c) { return c.id == crossing; }),
+			s.crossings.end());
+	put_segment(s);
+}
+
+void Document::set_fence(SegmentId seg, int side, double u0, double u1, bool on) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig || side < 0 || side > 1) return;
+	if (u0 > u1) std::swap(u0, u1);
+	u0 = std::clamp(u0, 0.0, 1.0);
+	u1 = std::clamp(u1, 0.0, 1.0);
+	if (u1 - u0 < 1e-6) return;
+	Scope scope(*this, on ? "Add fence" : "Remove fence");
+	RoadSegment s = *orig;
+	std::vector<Fence> out;
+	for (const Fence &f : s.fences) {
+		if (f.side != side || f.u1 <= u0 || f.u0 >= u1) {
+			out.push_back(f);
+			continue;
+		}
+		if (f.u0 < u0) out.push_back(Fence{ side, f.u0, u0 });
+		if (f.u1 > u1) out.push_back(Fence{ side, u1, f.u1 });
+	}
+	if (on) out.push_back(Fence{ side, u0, u1 });
+	std::sort(out.begin(), out.end(), [](const Fence &a, const Fence &b) { return a.side != b.side ? a.side < b.side : a.u0 < b.u0; });
+	std::vector<Fence> merged;
+	for (const Fence &f : out) {
+		if (!merged.empty() && merged.back().side == f.side && f.u0 <= merged.back().u1 + 1e-9) {
+			merged.back().u1 = std::max(merged.back().u1, f.u1);
+			continue;
+		}
+		merged.push_back(f);
+	}
+	s.fences = merged;
+	put_segment(s);
+}
+
+void Document::set_ramp(SegmentId seg, int rise, bool stairs) {
+	const RoadSegment *orig = map_.segment(seg);
+	if (!orig) return;
+	rise = std::clamp(rise, -2, 2);
+	Scope scope(*this, rise != 0 ? "Make ramp" : "Flatten road");
+	RoadSegment s = *orig;
+	s.rise = rise;
+	s.stairs = stairs && s.kind == SegmentKind::Footpath && rise != 0;
+	retarget_ends(s, false, true);
+	put_segment(s);
+}
+
+namespace {
+
+// Points where two polylines cross: (station along a, angle between them).
+void crossings_of(const std::vector<Vec2> &a, const std::vector<double> &sa, const std::vector<Vec2> &b,
+		std::vector<std::pair<double, double>> &out) {
+	for (size_t i = 0; i + 1 < a.size(); ++i) {
+		const Vec2 p = a[i], r = a[i + 1] - a[i];
+		for (size_t j = 0; j + 1 < b.size(); ++j) {
+			const Vec2 q = b[j], d = b[j + 1] - b[j];
+			const double den = cross(r, d);
+			if (std::fabs(den) < 1e-12) continue;
+			const double t = cross(q - p, d) / den;
+			const double u = cross(q - p, r) / den;
+			if (t < 0.0 || t > 1.0 || u < 0.0 || u > 1.0) continue;
+			const double sin_angle = std::fabs(den) / (r.length() * d.length());
+			out.push_back({ sa[i] + (sa[i + 1] - sa[i]) * t, sin_angle });
+		}
+	}
+}
+
+} // namespace
+
+Document::LiftPlan Document::plan_lift(SegmentId seg, Vec2 at, int delta) const {
+	LiftPlan plan;
+	const RoadSegment *s = map_.segment(seg);
+	if (!s) {
+		plan.error = "no such road";
+		return plan;
+	}
+	if (s->is_ramp()) {
+		plan.error = "this road is already a ramp";
+		return plan;
+	}
+	if (delta != 1 && delta != -1) {
+		plan.error = "lift by one level";
+		return plan;
+	}
+	if (s->level + delta < -1 || s->level + delta > 1) {
+		plan.error = delta > 0 ? "this road is already on the top level" : "this road is already on the bottom level";
+		return plan;
+	}
+	const Curve c = map_.curve_of(*s);
+	ArcTable table;
+	table.build(c);
+	const double len = table.length();
+	plan.length = len;
+	const int n = std::max(8, static_cast<int>(len / 2.0));
+	std::vector<Vec2> pts;
+	std::vector<double> st;
+	for (int k = 0; k <= n; ++k) {
+		const double sk = len * k / n;
+		pts.push_back(c.point(table.t_at(sk)));
+		st.push_back(sk);
+	}
+	// The crossing road nearest the click, on this road's level.
+	double best = 1e300, sc = -1.0, half = 10.0;
+	double at_s = 0.0;
+	{
+		double d = 0.0;
+		const double t = closest_t(c, at, &d);
+		at_s = table.s_at(t);
+	}
+	for (const auto &kv : map_.segments()) {
+		const RoadSegment &o = kv.second;
+		if (o.id == s->id || o.top_level() != s->level || o.from == s->from || o.from == s->to || o.to == s->from ||
+				o.to == s->to) {
+			continue;
+		}
+		const Curve oc = map_.curve_of(o);
+		std::vector<Vec2> op;
+		for (int k = 0; k <= 32; ++k) op.push_back(oc.point(k / 32.0));
+		std::vector<std::pair<double, double>> hits;
+		crossings_of(pts, st, op, hits);
+		for (const auto &h : hits) {
+			if (std::fabs(h.first - at_s) < best) {
+				best = std::fabs(h.first - at_s);
+				sc = h.first;
+				// Clear the other road's full width at this angle, plus 4 m each side.
+				half = 0.5 * o.profile.total_width() / std::max(0.3, h.second) + 4.0;
+			}
+		}
+	}
+	if (sc < 0.0) {
+		sc = at_s; // nothing to cross: lift the part under the cursor
+		half = 10.0;
+	}
+	const double ramp = kLevelHeight / (s->kind == SegmentKind::Footpath ? kMaxGradePath : kMaxGradeRoad);
+	plan.s[0] = sc - half - ramp;
+	plan.s[1] = sc - half;
+	plan.s[2] = sc + half;
+	plan.s[3] = sc + half + ramp;
+	const double margin = 2.0;
+	if (plan.s[0] < margin || plan.s[3] > len - margin) {
+		const double need = 2.0 * (half + ramp) + 2.0 * margin;
+		plan.error = "the ramps need " + std::to_string(static_cast<int>(std::ceil(need))) + " m of road around the crossing (" +
+				std::to_string(static_cast<int>(ramp)) + " m each at " + (s->kind == SegmentKind::Footpath ? "8" : "6") +
+				"%), this road has " + std::to_string(static_cast<int>(len)) + " m";
+		return plan;
+	}
+	plan.ok = true;
+	return plan;
+}
+
+std::string Document::lift(SegmentId seg, Vec2 at, int delta) {
+	const LiftPlan plan = plan_lift(seg, at, delta);
+	if (!plan.ok) return plan.error;
+	Scope scope(*this, delta > 0 ? "Build bridge" : "Build tunnel");
+	const double len = plan.length;
+	// Split from the far end so the remaining piece keeps the segment id.
+	SegmentId piece = seg;
+	NodeId cut[4] = { kNoId, kNoId, kNoId, kNoId };
+	double span = len; // length of `piece`, which always starts at the road's start
+	for (int k = 3; k >= 0; --k) {
+		const NodeId mid = split_segment(piece, plan.s[k] / span);
+		if (mid == kNoId) {
+			cancel();
+			return "could not split the road";
+		}
+		cut[k] = mid;
+		span = plan.s[k];
+	}
+	// Pieces: [start, cut0] ground, [cut0, cut1] ramp, [cut1, cut2] raised, [cut2, cut3] ramp, [cut3, end] ground.
+	auto between = [&](NodeId a, NodeId b) {
+		for (SegmentId sid : map_.segments_at(a)) {
+			const RoadSegment *x = map_.segment(sid);
+			if (x->from == a && x->to == b) return sid;
+		}
+		return kNoId;
+	};
+	const SegmentId up = between(cut[0], cut[1]);
+	const SegmentId top = between(cut[1], cut[2]);
+	const SegmentId down = between(cut[2], cut[3]);
+	if (up == kNoId || top == kNoId || down == kNoId) {
+		cancel();
+		return "could not split the road";
+	}
+	const int base = map_.segment(up)->level;
+	for (NodeId nid : { cut[1], cut[2] }) {
+		RoadNode nn = *map_.node(nid);
+		nn.level = base + delta;
+		put_node(nn);
+	}
+	RoadSegment a = *map_.segment(up);
+	a.rise = delta;
+	put_segment(a);
+	RoadSegment t = *map_.segment(top);
+	t.level = base + delta;
+	put_segment(t);
+	RoadSegment d = *map_.segment(down);
+	d.level = base + delta;
+	d.rise = -delta;
+	put_segment(d);
+	return std::string();
 }
 
 } // namespace tsim

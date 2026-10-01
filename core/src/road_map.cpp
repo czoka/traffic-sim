@@ -31,6 +31,57 @@ bool junction_control_from_name(const std::string &s, JunctionControl &out) {
 	return true;
 }
 
+const char *segment_kind_name(SegmentKind k) {
+	switch (k) {
+		case SegmentKind::Road:
+			return "road";
+		case SegmentKind::Footpath:
+			return "footpath";
+		case SegmentKind::BikePath:
+			return "bike_path";
+		case SegmentKind::SharedPath:
+			return "shared_path";
+	}
+	return "road";
+}
+
+bool segment_kind_from_name(const std::string &s, SegmentKind &out) {
+	if (s == "road") out = SegmentKind::Road;
+	else if (s == "footpath") out = SegmentKind::Footpath;
+	else if (s == "bike_path") out = SegmentKind::BikePath;
+	else if (s == "shared_path") out = SegmentKind::SharedPath;
+	else return false;
+	return true;
+}
+
+const char *crossing_kind_name(CrossingKind k) {
+	switch (k) {
+		case CrossingKind::None:
+			return "none";
+		case CrossingKind::Zebra:
+			return "zebra";
+		case CrossingKind::Signal:
+			return "signal";
+		case CrossingKind::Uncontrolled:
+			return "uncontrolled";
+	}
+	return "none";
+}
+
+bool crossing_kind_from_name(const std::string &s, CrossingKind &out) {
+	if (s == "none") out = CrossingKind::None;
+	else if (s == "zebra") out = CrossingKind::Zebra;
+	else if (s == "signal") out = CrossingKind::Signal;
+	else if (s == "uncontrolled") out = CrossingKind::Uncontrolled;
+	else return false;
+	return true;
+}
+
+double RoadSegment::max_grade() const {
+	if (kind == SegmentKind::Footpath) return stairs ? kMaxGradeStairs : kMaxGradePath;
+	return kMaxGradeRoad;
+}
+
 double Spawner::weight_to(NodeId to) const {
 	for (const OdWeight &w : od) {
 		if (w.to == to) return w.weight;
@@ -60,6 +111,7 @@ void RoadNode::rename_segment(SegmentId from, SegmentId to) {
 		p.moves.erase(std::remove_if(p.moves.begin(), p.moves.end(),
 							  [](const SignalMovement &m) { return m.from == kNoId || m.to == kNoId; }),
 				p.moves.end());
+		fix(p.walk);
 	}
 }
 
@@ -207,7 +259,7 @@ bool RoadSegment::operator==(const RoadSegment &o) const {
 	return id == o.id && from == o.from && to == o.to && kind == o.kind && level == o.level && curve == o.curve &&
 			c1 == o.c1 && c2 == o.c2 && sweep == o.sweep && profile == o.profile && speed_limit == o.speed_limit &&
 			name == o.name && ends[0] == o.ends[0] && ends[1] == o.ends[1] && no_change == o.no_change &&
-			stops == o.stops;
+			stops == o.stops && rise == o.rise && stairs == o.stairs && crossings == o.crossings && fences == o.fences;
 }
 
 // --- RoadMap -----------------------------------------------------------------
@@ -296,6 +348,7 @@ void RoadMap::put_segment(const RoadSegment &s) {
 		next_lane_id_ = std::max({ next_lane_id_, e.left_lane + 1, e.right_lane + 1 });
 	}
 	for (const BusStop &b : s.stops) next_object_id_ = std::max(next_object_id_, b.id + 1);
+	for (const Crossing &c : s.crossings) next_object_id_ = std::max(next_object_id_, c.id + 1);
 }
 
 void RoadMap::erase_node(NodeId id) { nodes_.erase(id); }
@@ -378,6 +431,33 @@ std::vector<LaneRole> profile_roles(const Profile &p) {
 		out.push_back(LaneRole{ std::get<0>(r), std::get<1>(r), std::get<2>(r) });
 	}
 	return out;
+}
+
+Profile path_profile(SegmentKind kind, RoadMap &map) {
+	Profile p;
+	auto lane = [&](LaneType t, LaneDir d, double w) {
+		LaneSpec l;
+		l.id = map.alloc_lane_id();
+		l.type = t;
+		l.dir = d;
+		l.width = w;
+		p.lanes.push_back(l);
+	};
+	switch (kind) {
+		case SegmentKind::Road:
+		case SegmentKind::Footpath:
+			lane(LaneType::Sidewalk, LaneDir::None, 3.0);
+			break;
+		case SegmentKind::BikePath:
+			lane(LaneType::Bike, LaneDir::Backward, 1.25);
+			lane(LaneType::Bike, LaneDir::Forward, 1.25);
+			break;
+		case SegmentKind::SharedPath:
+			lane(LaneType::Bike, LaneDir::Backward, 2.0);
+			lane(LaneType::Bike, LaneDir::Forward, 2.0);
+			break;
+	}
+	return p;
 }
 
 Profile build_profile(const ProfileParams &p, const Profile *previous, RoadMap &map) {

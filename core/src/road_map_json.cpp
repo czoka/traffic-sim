@@ -315,6 +315,7 @@ bool parse_node_extras(const json &jn, RoadNode &n, std::string &err) {
 			}
 		}
 		num(*sp, "bikes", s.bikes);
+		num(*sp, "people", s.people);
 		auto cl = sp->find("coaches");
 		if (cl != sp->end()) {
 			if (!cl->is_array()) {
@@ -380,6 +381,12 @@ bool parse_node_extras(const json &jn, RoadNode &n, std::string &err) {
 				if (pm != jm.end() && pm->is_boolean()) m.permissive = pm->get<bool>();
 				ph.moves.push_back(m);
 			}
+			auto wk = jp.find("walk");
+			if (wk != jp.end() && wk->is_array()) {
+				for (const json &v : *wk) {
+					if (v.is_number_unsigned()) ph.walk.push_back(static_cast<SegmentId>(v.get<uint64_t>()));
+				}
+			}
 			pl.phases.push_back(ph);
 		}
 		auto ror = sg->find("right_on_red");
@@ -427,6 +434,32 @@ bool parse_node_extras(const json &jn, RoadNode &n, std::string &err) {
 	return true;
 }
 
+bool parse_crossing(const json &jc, Crossing &c, bool mid_block) {
+	std::string kind;
+	if (!jc.is_object() || !str(jc, "kind", kind) || !crossing_kind_from_name(kind, c.kind)) return false;
+	if (mid_block && (!id(jc, "id", c.id) || !num(jc, "u", c.u) || !(c.u >= 0.0 && c.u <= 1.0) ||
+							 c.kind == CrossingKind::None)) {
+		return false;
+	}
+	auto b = jc.find("bike");
+	if (b != jc.end() && b->is_boolean()) c.bike = b->get<bool>();
+	auto r = jc.find("refuge");
+	if (r != jc.end() && r->is_boolean()) c.refuge = r->get<bool>();
+	return true;
+}
+
+ojson crossing_json(const Crossing &c, bool mid_block) {
+	ojson o;
+	if (mid_block) {
+		o["id"] = c.id;
+		o["u"] = c.u;
+	}
+	o["kind"] = crossing_kind_name(c.kind);
+	if (c.bike) o["bike"] = true;
+	if (c.refuge) o["refuge"] = true;
+	return o;
+}
+
 ojson node_json(const RoadNode &n) {
 	ojson o{ { "id", n.id }, { "x", n.pos.x }, { "y", n.pos.y }, { "level", n.level } };
 	if (n.control != JunctionControl::RightHand || !n.priority.empty()) {
@@ -442,6 +475,7 @@ ojson node_json(const RoadNode &n) {
 			s["od"] = std::move(od);
 		}
 		if (n.spawner.bikes != 0.0) s["bikes"] = n.spawner.bikes;
+		if (n.spawner.people != 0.0) s["people"] = n.spawner.people;
 		if (!n.spawner.coaches.empty()) {
 			ojson cl = ojson::array();
 			for (const CoachLine &c : n.spawner.coaches) {
@@ -468,7 +502,9 @@ ojson node_json(const RoadNode &n) {
 				if (m.permissive) jm["permissive"] = true;
 				moves.push_back(std::move(jm));
 			}
-			phases.push_back(ojson{ { "green", ph.green }, { "moves", std::move(moves) } });
+			ojson jp{ { "green", ph.green }, { "moves", std::move(moves) } };
+			if (!ph.walk.empty()) jp["walk"] = ph.walk;
+			phases.push_back(std::move(jp));
 		}
 		sg["phases"] = std::move(phases);
 		if (!n.signal.right_on_red.empty()) sg["right_on_red"] = n.signal.right_on_red;
@@ -540,10 +576,17 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 			err = where + "invalid end nodes";
 			return false;
 		}
-		if (a->level != s.level || b->level != s.level) {
+		integer(js, "rise", s.rise);
+		if (s.rise < -2 || s.rise > 2) {
+			err = where + "invalid rise";
+			return false;
+		}
+		if (a->level != s.level || b->level != s.level + s.rise) {
 			err = where + "nodes must be on the segment's level";
 			return false;
 		}
+		auto st_flag = js.find("stairs");
+		if (st_flag != js.end() && st_flag->is_boolean()) s.stairs = st_flag->get<bool>();
 		auto curve = js.find("curve");
 		std::string type;
 		if (curve == js.end() || !str(*curve, "type", type)) {
@@ -591,6 +634,11 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 				}
 				id(je, "left_lane", r.left_lane);
 				id(je, "right_lane", r.right_lane);
+				auto jc = je.find("crossing");
+				if (jc != je.end() && !parse_crossing(*jc, r.crossing, false)) {
+					err = where + "invalid crossing";
+					return false;
+				}
 			}
 		}
 		auto zones = js.find("no_change");
@@ -635,6 +683,37 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 				str(jst, "name", b.name);
 				integer(jst, "bays", b.bays);
 				s.stops.push_back(b);
+			}
+		}
+		auto crossings = js.find("crossings");
+		if (crossings != js.end()) {
+			if (!crossings->is_array()) {
+				err = where + "crossings must be an array";
+				return false;
+			}
+			for (const json &jc : *crossings) {
+				Crossing c;
+				if (!parse_crossing(jc, c, true)) {
+					err = where + "invalid crossing";
+					return false;
+				}
+				s.crossings.push_back(c);
+			}
+		}
+		auto fences = js.find("fences");
+		if (fences != js.end()) {
+			if (!fences->is_array()) {
+				err = where + "fences must be an array";
+				return false;
+			}
+			for (const json &jf : *fences) {
+				Fence f;
+				if (!jf.is_object() || !integer(jf, "side", f.side) || !num(jf, "from", f.u0) || !num(jf, "to", f.u1) ||
+						f.side < 0 || f.side > 1 || !(f.u0 >= 0.0 && f.u0 < f.u1 && f.u1 <= 1.0)) {
+					err = where + "invalid fence";
+					return false;
+				}
+				s.fences.push_back(f);
 			}
 		}
 		map.put_segment(s);
@@ -686,6 +765,8 @@ std::string road_map_to_json(const RoadMap &map) {
 		js["to"] = s.to;
 		js["kind"] = kind_name(s.kind);
 		js["level"] = s.level;
+		if (s.rise != 0) js["rise"] = s.rise;
+		if (s.stairs) js["stairs"] = true;
 		switch (s.curve) {
 			case CurveKind::Straight:
 				js["curve"] = ojson{ { "type", "straight" } };
@@ -709,6 +790,7 @@ std::string road_map_to_json(const RoadMap &map) {
 					{ "turn_lane_length", r.turn_lane_length } };
 				if (r.left_lane != kNoId) je["left_lane"] = r.left_lane;
 				if (r.right_lane != kNoId) je["right_lane"] = r.right_lane;
+				if (r.crossing.kind != CrossingKind::None) je["crossing"] = crossing_json(r.crossing, false);
 				ends.push_back(std::move(je));
 			}
 			js["ends"] = std::move(ends);
@@ -732,6 +814,16 @@ std::string road_map_to_json(const RoadMap &map) {
 				stops.push_back(std::move(jst));
 			}
 			js["stops"] = std::move(stops);
+		}
+		if (!s.crossings.empty()) {
+			ojson cs = ojson::array();
+			for (const Crossing &c : s.crossings) cs.push_back(crossing_json(c, true));
+			js["crossings"] = std::move(cs);
+		}
+		if (!s.fences.empty()) {
+			ojson fs = ojson::array();
+			for (const Fence &f : s.fences) fs.push_back(ojson{ { "side", f.side }, { "from", f.u0 }, { "to", f.u1 } });
+			js["fences"] = std::move(fs);
 		}
 		segments.push_back(std::move(js));
 	}

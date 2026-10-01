@@ -14,12 +14,59 @@
 
 namespace tsim {
 
+// What a segment is (M4): a road, or a free-standing path. Footpaths are for
+// pedestrians only and link to sidewalks within a few metres of their ends;
+// bike and shared paths join road nodes like roads (their bike lanes get
+// connectors), and pedestrians may also walk shared paths.
 enum class SegmentKind : uint8_t {
 	Road = 0,
-	Footpath = 1, // data only until M4
-	BikePath = 2, // data only until M4
-	SharedPath = 3, // data only until M4
+	Footpath = 1,
+	BikePath = 2,
+	SharedPath = 3,
 };
+const char *segment_kind_name(SegmentKind k);
+bool segment_kind_from_name(const std::string &s, SegmentKind &out);
+inline bool is_path(SegmentKind k) { return k != SegmentKind::Road; }
+inline bool is_walkable(SegmentKind k) { return k == SegmentKind::Footpath || k == SegmentKind::SharedPath; }
+
+// Pedestrian crossings (M4).
+enum class CrossingKind : uint8_t {
+	None = 0,
+	Zebra = 1, // cars yield to pedestrians on or about to step onto it
+	Signal = 2, // walk / flashing / don't walk; at a junction from its signal plan, mid-block on demand
+	Uncontrolled = 3, // pedestrians wait for a gap; cars have priority
+};
+const char *crossing_kind_name(CrossingKind k);
+bool crossing_kind_from_name(const std::string &s, CrossingKind &out);
+
+// A crossing at a junction leg (EndRules) or mid-block (RoadSegment::crossings).
+struct Crossing {
+	uint32_t id = 0; // mid-block crossings only
+	double u = 0.5; // mid-block: fraction of the centreline length
+	CrossingKind kind = CrossingKind::None;
+	bool bike = false; // a bike crossing beside it
+	bool refuge = false; // a refuge island on the median (needs a median)
+
+	bool operator==(const Crossing &o) const {
+		return id == o.id && u == o.u && kind == o.kind && bike == o.bike && refuge == o.refuge;
+	}
+};
+
+// A fence along one side of a road (M4): no crossing the road there, marked
+// or not. side 0 = the left of the profile list, 1 = the right.
+struct Fence {
+	int side = 1;
+	double u0 = 0.0;
+	double u1 = 1.0;
+
+	bool operator==(const Fence &o) const { return side == o.side && u0 == o.u0 && u1 == o.u1; }
+};
+
+// Height of one level (m) and the steepest grades (M4).
+constexpr double kLevelHeight = 5.0;
+constexpr double kMaxGradeRoad = 0.06;
+constexpr double kMaxGradePath = 0.08;
+constexpr double kMaxGradeStairs = 0.5;
 
 enum class LaneType : uint8_t {
 	General = 0,
@@ -101,10 +148,12 @@ struct EndRules {
 	// Stable IDs of generated pocket lanes (0 until the rule is TurnLane).
 	LaneId left_lane = kNoId;
 	LaneId right_lane = kNoId;
+	// Crosswalk across this end of the road, just before the junction (M4).
+	Crossing crossing;
 
 	bool operator==(const EndRules &o) const {
 		return left == o.left && right == o.right && turn_lane_length == o.turn_lane_length &&
-				left_lane == o.left_lane && right_lane == o.right_lane;
+				left_lane == o.left_lane && right_lane == o.right_lane && crossing == o.crossing;
 	}
 };
 
@@ -168,10 +217,13 @@ struct Spawner {
 	std::vector<OdWeight> od;
 	double bikes = 0.0; // bicycles per hour entering here (M3)
 	std::vector<CoachLine> coaches; // coach lines entering here (M3)
+	// People per hour starting a trip here (M4): each picks walking, the bus,
+	// a bike or a car. Spawn points on footpath ends only take pedestrians.
+	double people = 0.0;
 
 	bool operator==(const Spawner &o) const {
 		return enabled == o.enabled && rate == o.rate && sink == o.sink && od == o.od && bikes == o.bikes &&
-				coaches == o.coaches;
+				coaches == o.coaches && people == o.people;
 	}
 	double weight_to(NodeId to) const;
 };
@@ -204,8 +256,11 @@ struct SignalMovement {
 struct SignalPhase {
 	double green = 20.0; // s
 	std::vector<SignalMovement> moves;
+	// Legs whose crosswalk shows walk in this phase (M4). A phase with walks
+	// and no moves is an exclusive ("scramble") pedestrian phase.
+	std::vector<SegmentId> walk;
 
-	bool operator==(const SignalPhase &o) const { return green == o.green && moves == o.moves; }
+	bool operator==(const SignalPhase &o) const { return green == o.green && moves == o.moves && walk == o.walk; }
 };
 
 // Fixed-time plan: each phase is green, then amber, then all-red.
@@ -273,6 +328,7 @@ struct RoadNode {
 	void rename_segment(SegmentId from, SegmentId to);
 };
 
+
 // Bus stops (M3) sit on a road, on the kerb of one travel direction.
 enum class StopKind : uint8_t {
 	Kerbside = 0, // the bus stops in its lane
@@ -300,7 +356,11 @@ struct RoadSegment {
 	NodeId from = kNoId;
 	NodeId to = kNoId;
 	SegmentKind kind = SegmentKind::Road;
-	int level = 0;
+	int level = 0; // at the from-node
+	// Levels gained from the from-node to the to-node (M4): a ramp when not
+	// zero. Ramps must respect the grade limits.
+	int rise = 0;
+	bool stairs = false; // footpath ramps: stairs instead of a ramp (steeper, slower)
 	// Curve shape. p0/p3 mirror the node positions and are refreshed whenever
 	// a node moves; for arcs the centre is recomputed to keep the sweep.
 	CurveKind curve = CurveKind::Straight;
@@ -313,8 +373,15 @@ struct RoadSegment {
 	EndRules ends[2]; // [0] lanes arriving at the from-node, [1] at the to-node
 	std::vector<NoChangeZone> no_change;
 	std::vector<BusStop> stops;
+	std::vector<Crossing> crossings; // mid-block crossings (M4)
+	std::vector<Fence> fences; // (M4)
 
 	bool operator==(const RoadSegment &o) const;
+	bool is_ramp() const { return rise != 0; }
+	int level_end() const { return level + rise; }
+	int level_at(double u) const { return u < 0.5 ? level : level + rise; } // for overlap checks
+	int top_level() const { return rise > 0 ? level + rise : level; } // drawn on this level
+	double max_grade() const; // limit for this kind
 };
 
 class RoadMap {
@@ -392,6 +459,9 @@ struct ProfileParams {
 // (sidewalk, parking, bike, n-th travel lane from the median) so IDs, custom
 // types and widths survive edits. New lanes get IDs from `map`.
 Profile build_profile(const ProfileParams &p, const Profile *previous, RoadMap &map);
+// Profiles for path segments (M4): a 3 m footpath, a two-way bike path
+// (2 x 1.25 m) or a 4 m shared path (two-way bike lanes pedestrians walk on).
+Profile path_profile(SegmentKind kind, RoadMap &map);
 // Best-effort inverse, for showing a profile in the inspector.
 ProfileParams params_of(const Profile &p);
 // Checks lane order and widths. Returns an empty string when valid.
