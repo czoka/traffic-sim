@@ -180,6 +180,12 @@ bool Network::can_change(int32_t lane, bool to_left, double s) const {
 	return false;
 }
 
+int32_t Network::building_index(uint32_t id) const {
+	auto it = std::lower_bound(buildings.begin(), buildings.end(), id,
+			[](const NetBuilding &b, uint32_t x) { return b.id < x; });
+	return it != buildings.end() && it->id == id ? static_cast<int32_t>(it - buildings.begin()) : -1;
+}
+
 uint64_t Network::hash() const {
 	Hasher h;
 	for (const NetLane &l : lanes) {
@@ -278,6 +284,11 @@ uint64_t Network::hash() const {
 		for (int32_t e : s.entries) h.u(static_cast<uint64_t>(e));
 	}
 	for (const PedStop &s : ped.stops) h.u(static_cast<uint64_t>(s.node));
+	for (const NetBuilding &b : buildings) {
+		h.u(b.id);
+		h.u(static_cast<uint64_t>(static_cast<int64_t>(b.type)));
+		h.u(static_cast<uint64_t>(static_cast<int64_t>(b.entrance)));
+	}
 	return h.h.value();
 }
 
@@ -291,6 +302,7 @@ void Network::clear() {
 	coach_lines.clear();
 	main_station = -1;
 	ped.clear();
+	buildings.clear();
 	index_.clear();
 	junction_index_.clear();
 	max_speed = 13.9;
@@ -1148,6 +1160,64 @@ std::vector<NetProblem> network_problems(const RoadMap &map, const Network &net)
 			p.pos = n.pos;
 			p.level = n.level;
 			p.node = n.id;
+			out.push_back(p);
+		}
+	}
+	// Buildings (M5): a door on the pedestrian network, and homes people can
+	// reach from the main station (immigrants arrive by coach).
+	if (!net.buildings.empty()) {
+		std::vector<char> from_station(net.ped.nodes.size(), 0);
+		int32_t platform = -1;
+		for (const PedStop &ps : net.ped.stops) {
+			if (ps.stop == net.main_station) platform = ps.node;
+		}
+		if (platform >= 0) {
+			std::vector<int32_t> stack = { platform };
+			from_station[static_cast<size_t>(platform)] = 1;
+			while (!stack.empty()) {
+				const int32_t n = stack.back();
+				stack.pop_back();
+				for (int32_t ei : net.ped.adj[static_cast<size_t>(n)]) {
+					const PedEdge &e = net.ped.edges[static_cast<size_t>(ei)];
+					const int32_t m = e.a == n ? e.b : e.a;
+					if (!from_station[static_cast<size_t>(m)]) {
+						from_station[static_cast<size_t>(m)] = 1;
+						stack.push_back(m);
+					}
+				}
+			}
+		}
+		bool homes = false;
+		for (const NetBuilding &b : net.buildings) {
+			if (b.type < 0) continue;
+			homes |= b.kind == BuildingKind::Home;
+			NetProblem p;
+			p.pos = b.centre;
+			p.level = b.level;
+			p.building = b.id;
+			if (b.entrance < 0) {
+				p.code = "building_no_door";
+				p.message = "No sidewalk or path in front of this building, so nobody can get in. Put it beside a street with a sidewalk.";
+				out.push_back(p);
+			} else if (b.kind == BuildingKind::Home && platform >= 0 && !from_station[static_cast<size_t>(b.entrance)]) {
+				p.code = "home_unreachable";
+				p.message = "Nobody can walk to this home from the main station, so no one will move in.";
+				out.push_back(p);
+			}
+		}
+		if (homes && net.main_station < 0) {
+			NetProblem p;
+			p.code = "no_main_station_city";
+			p.message = "Homes but no main station: immigrants and visitors arrive by coach. Add a main station stop.";
+			p.pos = net.buildings.front().centre;
+			p.level = net.buildings.front().level;
+			out.push_back(p);
+		} else if (homes && net.coach_lines.empty()) {
+			NetProblem p;
+			p.code = "no_coaches_city";
+			p.message = "No coach line serves the main station, so no one can move in. Add a coach line at a spawn point.";
+			p.pos = net.stops[static_cast<size_t>(net.main_station)].pos;
+			p.level = net.buildings.front().level;
 			out.push_back(p);
 		}
 	}

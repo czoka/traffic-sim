@@ -295,6 +295,18 @@ Curve RoadMap::curve_of(const RoadSegment &s) const {
 	return c;
 }
 
+const Building *RoadMap::building(uint32_t id) const {
+	auto it = buildings_.find(id);
+	return it == buildings_.end() ? nullptr : &it->second;
+}
+
+void RoadMap::put_building(const Building &b) {
+	buildings_[b.id] = b;
+	next_object_id_ = std::max(next_object_id_, b.id + 1);
+}
+
+void RoadMap::erase_building(uint32_t id) { buildings_.erase(id); }
+
 void RoadMap::set_next_ids(uint32_t n, uint32_t s, uint32_t l, uint32_t o) {
 	next_node_id_ = std::max(next_node_id_, n);
 	next_segment_id_ = std::max(next_segment_id_, s);
@@ -365,6 +377,7 @@ void RoadMap::erase_segment(SegmentId id) {
 void RoadMap::clear() {
 	nodes_.clear();
 	segments_.clear();
+	buildings_.clear();
 	adjacency_.clear();
 	next_node_id_ = next_segment_id_ = next_lane_id_ = next_object_id_ = 1;
 }

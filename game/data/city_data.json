@@ -1,0 +1,103 @@
+{
+  "format": "traffic-sim-city-data",
+  "version": 1,
+  "clock": {
+    "start_day": 0,
+    "start_hour": 6
+  },
+  "needs": {
+    "hunger_empty_hours": 6,
+    "energy_empty_hours": 16,
+    "asleep_hunger_factor": 0.3,
+    "pantry_full": 14
+  },
+  "scoring": {
+    "calm_above": 60,
+    "steep_below": 30,
+    "price_weight": 0.02,
+    "travel_weight_per_minute": 1.0,
+    "closed_penalty": 200,
+    "closed_memory_days": 3,
+    "replan_minutes": 15,
+    "leave_margin_minutes": 10,
+    "break_minutes": 30
+  },
+  "people": {
+    "start_money": 10000,
+    "household_sizes": [0.35, 0.35, 0.2, 0.1],
+    "weekly_hours": 40,
+    "weekend_dislike": 30,
+    "money_low": 3000,
+    "outside_commute_minutes": 30,
+    "outside_wage": 20,
+    "immigrants_per_coach": 6,
+    "shoppers_per_coach": 4,
+    "visitor_arrive_early_minutes": 120
+  },
+  "offerings": {
+    "fast_food_meal": { "label": "Fast-food meal", "hunger": 60, "minutes": [15, 15], "price": 30 },
+    "restaurant_meal": { "label": "Restaurant meal", "hunger": 90, "minutes": [60, 60], "price": 80 },
+    "grocery_shop": { "label": "Grocery shopping", "pantry": 14, "minutes": [20, 40], "price": 150 },
+    "home_meal": { "label": "Meal at home", "hunger": 80, "pantry_use": 1, "minutes": [30, 30], "price": 0 },
+    "sleep": { "label": "Sleep", "energy": 100, "minutes": [420, 540], "price": 0 }
+  },
+  "buildings": {
+    "detached_house": {
+      "kind": "home", "label": "Detached house", "size": [12, 14], "households": 1,
+      "rent": 1200, "price": 180000, "parking": "own", "color": "c9a26b"
+    },
+    "townhouse": {
+      "kind": "home", "label": "Townhouse", "size": [7, 12], "households": 1,
+      "rent": 800, "price": 120000, "parking": "street", "color": "d4b483"
+    },
+    "apartment_block": {
+      "kind": "home", "label": "Apartment block", "size": [30, 20], "households": 24,
+      "rent": 500, "price": 75000, "parking": "garage", "color": "b8956a"
+    },
+    "grocery": {
+      "kind": "shop", "label": "Grocery", "size": [24, 20], "offers": ["grocery_shop"], "slots": 40, "wage": 18,
+      "parking": "own", "color": "6fb5a8",
+      "weekday": { "hours": [7, 22], "shifts": [[7, 15, 3], [14, 22, 3]] },
+      "weekend": { "hours": [8, 20], "shifts": [[8, 14, 2], [14, 20, 2]] },
+      "min_staff": 1
+    },
+    "fast_food": {
+      "kind": "shop", "label": "Fast food", "size": [14, 14], "offers": ["fast_food_meal"], "slots": 20, "wage": 16,
+      "parking": "street", "color": "e0a04f",
+      "weekday": { "hours": [10, 23], "shifts": [[10, 17, 2], [16, 23, 2]] },
+      "weekend": { "hours": [11, 23], "shifts": [[11, 17, 2], [17, 23, 2]] },
+      "min_staff": 1
+    },
+    "restaurant": {
+      "kind": "shop", "label": "Restaurant", "size": [18, 16], "offers": ["restaurant_meal"], "slots": 40, "wage": 18,
+      "parking": "street", "color": "d4785f",
+      "weekday": { "hours": [12, 23], "shifts": [[12, 18, 3], [17, 23, 4]] },
+      "weekend": { "hours": [12, 23], "shifts": [[12, 18, 4], [17, 23, 4]] },
+      "min_staff": 2
+    },
+    "office_small": {
+      "kind": "office", "label": "Small office", "size": [16, 14], "desks": 10, "wage": 22,
+      "parking": "street", "color": "7f9cc4",
+      "weekday": { "hours": [8, 17], "shifts": [[8, 16, 10]] },
+      "min_staff": 1
+    },
+    "office_medium": {
+      "kind": "office", "label": "Medium office", "size": [26, 20], "desks": 60, "wage": 22,
+      "parking": "own", "color": "6f8fbf",
+      "weekday": { "hours": [8, 18], "shifts": [[8, 16, 40], [9, 17, 20]] },
+      "min_staff": 2
+    },
+    "office_tower": {
+      "kind": "office", "label": "Office tower", "size": [36, 30], "desks": 300, "wage": 24,
+      "parking": "garage", "color": "5d7fb3",
+      "weekday": { "hours": [7, 19], "shifts": [[7, 15, 100], [8, 16, 100], [10, 18, 100]] },
+      "min_staff": 5
+    },
+    "city_offices": {
+      "kind": "office", "label": "City offices", "size": [30, 24], "desks": 100, "wage": 22,
+      "parking": "own", "color": "8f8fb8", "city": true,
+      "weekday": { "hours": [8, 17], "shifts": [[8, 16, 70], [9, 17, 30]] },
+      "min_staff": 2
+    }
+  }
+}

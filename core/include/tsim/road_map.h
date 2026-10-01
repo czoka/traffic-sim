@@ -384,12 +384,30 @@ struct RoadSegment {
 	double max_grade() const; // limit for this kind
 };
 
+// A building on a lot fronting a street (M5). Its type comes from the city
+// data table; the lot is a width x depth rectangle (from the type) whose front
+// edge is centred on `pos`, running back from the street along `dir`.
+struct Building {
+	uint32_t id = 0;
+	std::string type; // CityData building type id, e.g. "grocery"
+	Vec2 pos; // middle of the front edge, at the back of the sidewalk
+	Vec2 dir{ 0.0, -1.0 }; // unit vector from the street into the lot
+	int level = 0;
+	std::string name;
+	bool operator==(const Building &o) const {
+		return id == o.id && type == o.type && pos.x == o.pos.x && pos.y == o.pos.y && dir.x == o.dir.x &&
+				dir.y == o.dir.y && level == o.level && name == o.name;
+	}
+};
+
 class RoadMap {
 public:
 	const std::map<NodeId, RoadNode> &nodes() const { return nodes_; }
 	const std::map<SegmentId, RoadSegment> &segments() const { return segments_; }
 	const RoadNode *node(NodeId id) const;
 	const RoadSegment *segment(SegmentId id) const;
+	const std::map<uint32_t, Building> &buildings() const { return buildings_; }
+	const Building *building(uint32_t id) const;
 
 	// Segments that start or end at a node, in ascending ID order.
 	std::vector<SegmentId> segments_at(NodeId id) const;
@@ -406,7 +424,7 @@ public:
 	NodeId alloc_node_id() { return next_node_id_++; }
 	SegmentId alloc_segment_id() { return next_segment_id_++; }
 	LaneId alloc_lane_id() { return next_lane_id_++; }
-	// Stops, bus routes and coach lines.
+	// Stops, bus routes, coach lines, crossings and buildings.
 	uint32_t alloc_object_id() { return next_object_id_++; }
 	void set_next_ids(uint32_t n, uint32_t s, uint32_t l, uint32_t o = 1);
 
@@ -415,10 +433,12 @@ public:
 	void put_segment(const RoadSegment &s);
 	void erase_node(NodeId id);
 	void erase_segment(SegmentId id);
+	void put_building(const Building &b);
+	void erase_building(uint32_t id);
 	void clear();
 
 	bool operator==(const RoadMap &o) const {
-		return nodes_ == o.nodes_ && segments_ == o.segments_;
+		return nodes_ == o.nodes_ && segments_ == o.segments_ && buildings_ == o.buildings_;
 	}
 
 private:
@@ -427,6 +447,7 @@ private:
 
 	std::map<NodeId, RoadNode> nodes_;
 	std::map<SegmentId, RoadSegment> segments_;
+	std::map<uint32_t, Building> buildings_; // ids from the object counter
 	std::map<NodeId, std::vector<SegmentId>> adjacency_;
 	uint32_t next_node_id_ = 1;
 	uint32_t next_segment_id_ = 1;

@@ -718,6 +718,30 @@ bool parse_v2(const json &root, RoadMap &map, std::string &err) {
 		}
 		map.put_segment(s);
 	}
+	// v6: buildings.
+	auto blds = root.find("buildings");
+	if (blds != root.end()) {
+		if (!blds->is_array()) {
+			err = "buildings must be an array";
+			return false;
+		}
+		for (const json &jb : *blds) {
+			Building b;
+			if (!jb.is_object() || !id(jb, "id", b.id) || b.id == 0 || !str(jb, "type", b.type) || !vec(jb, "pos", b.pos) ||
+					!vec(jb, "dir", b.dir)) {
+				err = "invalid building";
+				return false;
+			}
+			const double len = b.dir.length();
+			if (!(len > 0.5 && len < 1.5) || map.building(b.id)) {
+				err = "building " + std::to_string(b.id) + ": invalid direction or duplicate id";
+				return false;
+			}
+			integer(jb, "level", b.level);
+			str(jb, "name", b.name);
+			map.put_building(b);
+		}
+	}
 	// Lane IDs must be unique across the map.
 	std::set<LaneId> lanes;
 	for (const auto &kv : map.segments()) {
@@ -828,6 +852,21 @@ std::string road_map_to_json(const RoadMap &map) {
 		segments.push_back(std::move(js));
 	}
 	root["segments"] = std::move(segments);
+	if (!map.buildings().empty()) {
+		ojson bs = ojson::array();
+		for (const auto &kv : map.buildings()) {
+			const Building &b = kv.second;
+			ojson jb;
+			jb["id"] = b.id;
+			jb["type"] = b.type;
+			jb["pos"] = vec_json(b.pos);
+			jb["dir"] = vec_json(b.dir);
+			if (b.level != 0) jb["level"] = b.level;
+			if (!b.name.empty()) jb["name"] = b.name;
+			bs.push_back(std::move(jb));
+		}
+		root["buildings"] = std::move(bs);
+	}
 	return root.dump(1) + "\n";
 }
 

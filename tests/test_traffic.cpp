@@ -779,7 +779,7 @@ TEST_CASE("map v3: junction control and spawn points save, load, undo and surviv
 	Document doc;
 	build_t_junction(doc);
 	const std::string a = road_map_to_json(doc.map());
-	CHECK(a.find("\"version\": 5") != std::string::npos);
+	CHECK(a.find("\"version\": 6") != std::string::npos);
 	CHECK(a.find("priority_road") != std::string::npos);
 	CHECK(a.find("\"spawner\"") != std::string::npos);
 	RoadMap loaded;

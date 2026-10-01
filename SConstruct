@@ -17,6 +17,8 @@ import os
 env = SConscript("godot-cpp/SConstruct", {"api_version": "4.7"})
 
 CORE_SOURCES = [
+    "core/src/buildings.cpp",
+    "core/src/city_data.cpp",
     "core/src/curve.cpp",
     "core/src/demo_maps.cpp",
     "core/src/document.cpp",
@@ -27,6 +29,7 @@ CORE_SOURCES = [
     "core/src/road_map.cpp",
     "core/src/road_map_json.cpp",
     "core/src/traffic.cpp",
+    "core/src/traffic_city.cpp",
     "core/src/traffic_peds.cpp",
     "core/src/traffic_run.cpp",
     "core/src/sim.cpp",
@@ -35,9 +38,25 @@ CORE_SOURCES = [
     "third_party/clipper2/src/clipper.offset.cpp",
     "third_party/clipper2/src/clipper.rectclip.cpp",
 ]
-CORE_INCLUDES = ["#core/include", "#third_party", "#third_party/clipper2/include"]
+CORE_INCLUDES = ["#core/include", "#third_party", "#third_party/clipper2/include", "#build/gen"]
 # nlohmann::json is used in its no-throw mode (the core builds without exceptions).
 CORE_DEFINES = ["JSON_NOEXCEPTION"]
+
+
+# The city data table (M5) is compiled into the core as its default, as C string
+# pieces short enough for every compiler.
+def embed_city_data(target, source, env):
+    text = open(str(source[0]), encoding="utf-8").read()
+    with open(str(target[0]), "w", encoding="utf-8") as out:
+        out.write("// Generated from game/data/city_data.json by SConstruct. Do not edit.\n")
+        for i in range(0, len(text), 2000):
+            piece = text[i:i + 2000]
+            esc = piece.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+            out.write('"' + esc + '",\n')
+    return None
+
+
+city_data_inc = env.Command("build/gen/city_data_json.inc", "game/data/city_data.json", embed_city_data)
 
 
 def add_determinism_flags(e, msvc):
