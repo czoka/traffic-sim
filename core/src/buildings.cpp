@@ -45,11 +45,12 @@ LotSnap snap_lot(const RoadGeometry &geom, Vec2 at, int level, double max_distan
 			const double off = (at - c).dot(n);
 			const bool right = off >= 0.5 * (lo + hi);
 			const double edge = right ? hi : lo;
-			const double d = std::fabs(off - edge);
+			const Vec2 ep = c + n * edge;
+			const double d = (at - ep).length();
 			if (d < best_d) {
 				best_d = d;
 				best.ok = true;
-				best.pos = c + n * edge;
+				best.pos = ep;
 				best.dir = right ? n : n * -1.0;
 				best.segment = sg.id;
 				best.distance = d;

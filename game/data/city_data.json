@@ -8,7 +8,7 @@
   "needs": {
     "hunger_empty_hours": 6,
     "energy_empty_hours": 16,
-    "asleep_hunger_factor": 0.3,
+    "asleep_hunger_factor": 0.2,
     "pantry_full": 14
   },
   "scoring": {

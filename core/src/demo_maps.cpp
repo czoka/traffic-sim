@@ -1,5 +1,7 @@
 #include "tsim/demo_maps.h"
 
+#include "tsim/buildings.h"
+
 #include <cmath>
 #include <cstring>
 
@@ -662,6 +664,182 @@ void build_people_city(Document &doc, int cols, int rows) {
 		}
 	}
 	for (SegmentId s : streets) doc.add_crossing(s, 0.5, CrossingKind::Zebra, false, false);
+	doc.commit();
+}
+
+// --- M5: city life ------------------------------------------------------------------
+
+uint32_t place_building(Document &doc, const RoadGeometry &geom, const char *type, Vec2 near) {
+	const LotSnap snap = snap_lot(geom, near, 0);
+	if (!snap.ok) return 0;
+	return doc.add_building(type, snap.pos + snap.dir * 0.5, snap.dir, 0);
+}
+
+namespace {
+
+struct CityBase {
+	SegmentId main = kNoId;
+	NodeId west = kNoId, east = kNoId;
+	uint32_t station = 0;
+};
+
+// The street, the main station on its south side and the coach line.
+CityBase city_base(Document &doc, double half_length, double station_x, double coaches_per_hour) {
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	CityBase b;
+	PointRef w, e;
+	w.pos = Vec2{ -half_length, 0.0 };
+	e.pos = Vec2{ half_length, 0.0 };
+	b.main = doc.add_road({ w, e }, street, 0, 50.0 / 3.6).front();
+	doc.set_name(b.main, "High Street");
+	b.west = doc.map().segment(b.main)->from;
+	b.east = doc.map().segment(b.main)->to;
+	b.station = doc.add_stop(b.main, (station_x + half_length) / (2.0 * half_length), LaneDir::Forward, StopKind::MainStation,
+			"Main Station");
+	Spawner west;
+	west.enabled = true;
+	west.rate = 0.0;
+	west.sink = true;
+	CoachLine coach;
+	coach.exit = b.east;
+	coach.per_hour = coaches_per_hour;
+	coach.dwell = 240.0;
+	west.coaches = { coach };
+	doc.set_spawner(b.west, west);
+	Spawner east;
+	east.enabled = true;
+	east.rate = 0.0;
+	east.sink = true;
+	doc.set_spawner(b.east, east);
+	return b;
+}
+
+} // namespace
+
+void build_new_city(Document &doc) {
+	doc.begin("New city");
+	city_base(doc, 450.0, -150.0, 4.0);
+	RoadGeometry geom;
+	geom.build(doc.map());
+	place_building(doc, geom, "city_offices", Vec2{ 150.0, -20.0 });
+	doc.commit();
+}
+
+void build_city_town(Document &doc) {
+	doc.begin("City town");
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	const CityBase base = city_base(doc, 450.0, -150.0, 6.0);
+	// A cross street through the middle of town.
+	PointRef n, mid, s;
+	n.pos = Vec2{ 150.0, -280.0 };
+	mid.pos = Vec2{ 150.0, 0.0 };
+	mid.segment = base.main;
+	s.pos = Vec2{ 150.0, 280.0 };
+	doc.add_road({ n, mid }, street, 0, 50.0 / 3.6);
+	PointRef mid2;
+	mid2.node = doc.map().segment(doc.map().segments().rbegin()->first)->to;
+	mid2.pos = doc.map().node(mid2.node)->pos;
+	doc.add_road({ mid2, s }, street, 0, 50.0 / 3.6);
+	Spawner edge;
+	edge.enabled = true;
+	edge.rate = 0.0;
+	edge.sink = true;
+	for (const auto &kv : doc.map().nodes()) {
+		if (std::fabs(kv.second.pos.x - 150.0) < 1e-6 && std::fabs(std::fabs(kv.second.pos.y) - 280.0) < 1e-6) {
+			doc.set_spawner(kv.first, edge);
+		}
+	}
+	RoadGeometry geom;
+	geom.build(doc.map());
+	// High Street, north side: city offices, grocery, fast food, restaurant.
+	place_building(doc, geom, "city_offices", Vec2{ -260.0, -20.0 });
+	place_building(doc, geom, "grocery", Vec2{ -40.0, -20.0 });
+	place_building(doc, geom, "fast_food", Vec2{ 60.0, -20.0 });
+	place_building(doc, geom, "restaurant", Vec2{ 280.0, -20.0 });
+	// High Street, south side (east of the station): a small office.
+	place_building(doc, geom, "office_small", Vec2{ 40.0, 20.0 });
+	// The cross street: townhouses and houses on the west side, apartment blocks on the east.
+	for (int k = 0; k < 6; ++k) place_building(doc, geom, "townhouse", Vec2{ 135.0, -40.0 - 8.0 * k });
+	for (int k = 0; k < 4; ++k) place_building(doc, geom, "detached_house", Vec2{ 135.0, 40.0 + 14.0 * k });
+	place_building(doc, geom, "apartment_block", Vec2{ 165.0, -60.0 });
+	place_building(doc, geom, "apartment_block", Vec2{ 165.0, 60.0 });
+	doc.commit();
+}
+
+void build_city_week(Document &doc) {
+	doc.begin("City week");
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	const int cols = 7, rows = 7;
+	const double sp = 140.0;
+	const double x0 = -3.0 * sp, y0 = -6.0 * sp - 60.0; // the grid lies north of High Street
+	// High Street along the south edge, with the main station and coaches.
+	const CityBase base = city_base(doc, 4.0 * sp, -2.5 * sp, 14.0);
+	std::vector<NodeId> ids(static_cast<size_t>(cols * rows));
+	auto id = [&](int i, int j) -> NodeId & { return ids[static_cast<size_t>(j * cols + i)]; };
+	for (int j = 0; j < rows; ++j) {
+		for (int i = 0; i < cols; ++i) id(i, j) = doc.add_node(Vec2{ x0 + i * sp, y0 + j * sp }, 0);
+	}
+	for (int j = 0; j < rows; ++j) {
+		for (int i = 0; i + 1 < cols; ++i) road(doc, id(i, j), id(i + 1, j), street, 40.0);
+	}
+	for (int i = 0; i < cols; ++i) {
+		for (int j = 0; j + 1 < rows; ++j) road(doc, id(i, j), id(i, j + 1), street, 40.0);
+	}
+	// Two streets down to High Street.
+	for (int i : { 1, 5 }) {
+		PointRef a, b;
+		a.node = id(i, rows - 1);
+		a.pos = doc.map().node(a.node)->pos;
+		b.pos = Vec2{ a.pos.x, 0.0 };
+		b.segment = base.main;
+		doc.add_road({ a, b }, street, 0, 40.0 / 3.6);
+	}
+	RoadGeometry geom;
+	geom.build(doc.map());
+	// Lots along every block side: offices and shops in the middle of town,
+	// homes everywhere else.
+	int k = 0;
+	auto pick = [&](int i, int j, bool horizontal) -> const char * {
+		const bool centre = i >= 2 && i <= 4 && j >= 2 && j <= 4;
+		const int r = k++;
+		if (centre) {
+			const char *mix[] = { "office_tower", "grocery", "office_medium", "fast_food", "office_medium", "restaurant" };
+			return mix[r % 6];
+		}
+		const char *homes[] = { "apartment_block", "apartment_block", "apartment_block", "grocery", "apartment_block",
+			"apartment_block", "fast_food", "apartment_block" };
+		(void)horizontal;
+		return homes[r % 8];
+	};
+	for (int j = 0; j < rows; ++j) {
+		for (int i = 0; i + 1 < cols; ++i) {
+			for (double side : { -1.0, 1.0 }) {
+				if ((j == 0 && side < 0) || (j == rows - 1 && side > 0)) continue;
+				for (double f : { 0.3, 0.7 }) {
+					const Vec2 p{ x0 + (i + f) * sp, y0 + j * sp + side * 16.0 };
+					place_building(doc, geom, pick(i, j, true), p);
+				}
+			}
+		}
+	}
+	for (int i = 0; i < cols; ++i) {
+		for (int j = 0; j + 1 < rows; ++j) {
+			for (double side : { -1.0, 1.0 }) {
+				if ((i == 0 && side < 0) || (i == cols - 1 && side > 0)) continue;
+				const Vec2 p{ x0 + i * sp + side * 16.0, y0 + (j + 0.5) * sp };
+				place_building(doc, geom, i % 2 == 0 ? "townhouse" : pick(i, j, false), p);
+			}
+		}
+	}
+	// A bus loop round the middle of town, from a depot at the east end of High Street.
+	Depot depot;
+	depot.enabled = true;
+	depot.name = "Town Depot";
+	depot.capacity = 12;
+	(void)depot;
 	doc.commit();
 }
 

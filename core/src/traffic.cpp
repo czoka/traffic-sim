@@ -263,6 +263,7 @@ void Traffic::set_network(const Network *net) {
 		coaches_.clear();
 		peds_.clear();
 		peds_reset_network();
+		city_reset_network();
 		return;
 	}
 	const Network &nw = *net_;
@@ -340,6 +341,7 @@ void Traffic::set_network(const Network *net) {
 	estimate_routes();
 	peds_reset_network();
 	peds_restore(people);
+	city_reset_network();
 }
 
 void Traffic::recount_use() {
@@ -463,6 +465,11 @@ void Traffic::reset(uint64_t seed) {
 	crossing_wait_sum_ = 0.0;
 	wait_sum_ = 0.0;
 	peds_reset_network();
+	city_on_ = false; // a fresh start: nobody is carried over
+	res_.clear();
+	hh_.clear();
+	city_reset_network();
+	city_init();
 }
 
 // --- Routing ---------------------------------------------------------------------------
@@ -2324,6 +2331,7 @@ void Traffic::tick() {
 	peds_tick();
 	dispatch();
 	people_demand();
+	city_tick();
 	spawn(); // new vehicles join at the back of their lane
 	++tick_;
 }
@@ -2446,6 +2454,7 @@ TrafficStats Traffic::stats() const {
 		else ++st.pedestrians;
 	}
 	st.mean_wait = stats_.boarded ? wait_sum_ / static_cast<double>(stats_.boarded) : 0.0;
+	for (const Resident &r : res_) st.residents += r.visitor ? 0 : 1;
 	st.mean_crossing_wait = stats_.crossings ? crossing_wait_sum_ / static_cast<double>(stats_.crossings) : 0.0;
 	for (uint32_t p : pending_) st.waiting_to_enter += p;
 	for (size_t j = 0; j < junction_waiting_.size(); ++j) {
@@ -2505,6 +2514,20 @@ uint64_t Traffic::state_hash() const {
 			h.add_u32(p.vehicle);
 		}
 		for (const MidSignal &m : mid_signal_) h.add_u32(m.state);
+	}
+	if (city_on_) {
+		h.add_u64(res_.size());
+		for (const Resident &r : res_) {
+			h.add_u32(r.id);
+			h.add_u32(static_cast<uint32_t>(r.state) | static_cast<uint32_t>(r.doing) << 8);
+			h.add_u32(r.at);
+			h.add_u32(r.employer);
+			h.add_u64(r.until);
+			h.add_double(r.hunger);
+			h.add_double(r.energy);
+			h.add_double(r.money);
+		}
+		for (const Household &hh : hh_) h.add_double(hh.pantry);
 	}
 	return h.value();
 }
