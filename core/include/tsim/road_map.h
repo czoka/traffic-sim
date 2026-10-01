@@ -234,7 +234,7 @@ struct Roundabout {
 	bool enabled = false;
 	double radius = 20.0; // outer edge of the circulating carriageway (m)
 	int lanes = 1; // circulating lanes, 1..3
-	bool turbo = false; // raised lane dividers: lane chosen at entry, no changes inside
+	bool turbo = false; // spiral lanes with raised dividers: the entry lane decides the exit, no changes inside
 	std::vector<SegmentId> slip; // legs with a right-turn bypass to the next exit
 
 	bool operator==(const Roundabout &o) const {

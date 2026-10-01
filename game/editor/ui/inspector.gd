@@ -978,7 +978,7 @@ func _build_roundabout(outer: VBoxContainer) -> void:
 	_ring_radius = _spin(_row(_ring_box, "Radius"), 12, 40, 1, "m", func(_v: float) -> void: _set_roundabout())
 	_ring_lanes = _spin(_row(_ring_box, "Ring lanes"), 1, 3, 1, "", func(_v: float) -> void: _set_roundabout())
 	_ring_turbo = CheckBox.new()
-	_ring_turbo.text = "Turbo (lane chosen at entry, no changes inside)"
+	_ring_turbo.text = "Turbo (spiral lanes: the entry lane decides the exit)"
 	_ring_turbo.focus_mode = Control.FOCUS_NONE
 	_ring_turbo.toggled.connect(func(_on: bool) -> void:
 		if not _updating:

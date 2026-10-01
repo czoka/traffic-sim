@@ -697,8 +697,12 @@ int32_t Traffic::next_connector(const Vehicle &v, int32_t lane, size_t ri) const
 	const int32_t want = v.route[ri];
 	const NetLane &w = n.lanes[static_cast<size_t>(want)];
 	if (w.from == lane) return want;
-	// Any connector from this lane into the same road and direction.
+	// Any connector from this lane into the same road and direction, unless the
+	// target can't be left once taken (a turbo roundabout's spiral lanes: the ring
+	// lane decides the exit, and there are no lane changes inside).
 	const NetLane &target = n.lanes[static_cast<size_t>(w.to)];
+	const bool exact = target.ring && (target.left >= 0 || target.right >= 0) && target.change_left.empty() &&
+			target.change_right.empty();
 	int32_t best = -1, bus = -1;
 	for (int32_t c : l.next) {
 		const NetLane &cn = n.lanes[static_cast<size_t>(c)];
@@ -706,6 +710,7 @@ int32_t Traffic::next_connector(const Vehicle &v, int32_t lane, size_t ri) const
 		if (!allowed(v.kind, cn) || !allowed(v.kind, to)) continue;
 		if (to.segment != target.segment || to.dir != target.dir) continue;
 		if (cn.to == w.to) return c;
+		if (exact) continue;
 		if (v.kind == VehicleKind::Car && to.type == LaneType::Bus) {
 			if (bus < 0) bus = c;
 			continue;

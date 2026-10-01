@@ -1425,21 +1425,29 @@ void RoadGeometry::build(const RoadMap &map) {
 				edge.push_back(edge.front());
 				MeshSet::path(paint, edge, 0.2, kWhite);
 			}
-			// Lane dividers: dashed, or raised (double solid) for a turbo layout.
-			for (int k = 1; k < nr; ++k) {
+			// Lane dividers of a normal roundabout: dashed circles (lane changes allowed).
+			// A turbo roundabout's raised dividers spiral; they are drawn per leg below.
+			for (int k = 1; k < nr && (!turbo || deg == 0); ++k) {
 				const double r = R - lane_w * k;
 				const int n = std::max(24, static_cast<int>(2.0 * kPi * r / 1.5));
-				for (int m = 0; m < n; ++m) {
-					if (!turbo && m % 3 != 0) continue;
+				for (int m = 0; m < n; m += 3) {
 					const double t0 = 2.0 * kPi * m / n, t1 = 2.0 * kPi * (m + 1) / n;
-					if (turbo) {
-						MeshSet::path(paint, { on_circle(r - 0.15, t0), on_circle(r - 0.15, t1) }, 0.15, kWhite);
-						MeshSet::path(paint, { on_circle(r + 0.15, t0), on_circle(r + 0.15, t1) }, 0.15, kWhite);
-					} else {
-						MeshSet::path(paint, { on_circle(r, t0), on_circle(r, t1) }, 0.15, kWhite);
-					}
+					MeshSet::path(paint, { on_circle(r, t0), on_circle(r, t1) }, 0.15, kWhite);
 				}
 			}
+			// A raised turbo divider: two solid lines along a path given as (angle, radius).
+			auto turbo_divider = [&](double ta, double ra, double tb, double rb) {
+				const int n = std::max(4, static_cast<int>(std::fabs(ta - tb) * R / 1.0));
+				std::vector<Vec2> in, out;
+				for (int m = 0; m <= n; ++m) {
+					const double u = static_cast<double>(m) / n;
+					const double th = ta + (tb - ta) * u, r = ra + (rb - ra) * u;
+					in.push_back(on_circle(r - 0.15, th));
+					out.push_back(on_circle(r + 0.15, th));
+				}
+				MeshSet::path(paint, in, 0.15, kWhite);
+				MeshSet::path(paint, out, 0.15, kWhite);
+			};
 			if (deg > 0) {
 				g.polygon = circle(R + 2.5, 48);
 				// Leg angles (legs are sorted by angle) and the half-angle each takes.
@@ -1482,6 +1490,7 @@ void RoadGeometry::build(const RoadMap &map) {
 						for (int m = 0; m <= n; ++m) rl.pts.push_back(on_circle(rl.radius, t0 + (t1 - t0) * m / n));
 						g.ring.push_back(std::move(rl));
 					}
+					for (int d = 1; turbo && d < nr; ++d) turbo_divider(t0, R - lane_w * d, t1, R - lane_w * d);
 				}
 				auto bezier = [](Vec2 a, Vec2 da, Vec2 b, Vec2 db) {
 					const double k = std::max(1.0, (b - a).length() / 3.0);
@@ -1515,12 +1524,41 @@ void RoadGeometry::build(const RoadMap &map) {
 					const double th_entry = phi[i] - half[i];
 					auto ring_id = [&](const Leg &l, int k) { return ring_lane_id(l.seg, l.at_start, k); };
 					// Continue round the ring.
-					for (int k = 0; k < nr; ++k) {
-						if (turbo && k == 0) continue; // the outer turbo lane serves the next exit only
+					auto ring_arc = [&](int ka, int kb) {
 						std::vector<Vec2> arc;
-						for (int m = 0; m <= 8; ++m) arc.push_back(on_circle(ring_r(k), th_exit + (th_entry - th_exit) * m / 8));
-						add(kNoId, ring_id(pleg, k), kNoId, ring_id(leg, k), TurnKind::Straight, arc,
-								!turbo && nr >= 2 && k == 0 ? 3.0 : 0.0);
+						for (int m = 0; m <= 8; ++m) {
+							const double u = m / 8.0;
+							// Smoothstep from one lane's radius to the other's: a spiral that
+							// leaves and joins the circles tangentially.
+							const double v = u * u * (3.0 - 2.0 * u);
+							arc.push_back(on_circle(ring_r(ka) + (ring_r(kb) - ring_r(ka)) * v, th_exit + (th_entry - th_exit) * u));
+						}
+						return arc;
+					};
+					if (turbo) {
+						// Spiral: the outer lane always leaves at this exit; every other lane
+						// moves one lane out as it passes the leg, so the lane taken at the
+						// entry decides the exit (no lane changes in the ring). The innermost
+						// lane may also stay inside for the later exits and U-turns.
+						for (int k = 1; k < nr; ++k) {
+							add(kNoId, ring_id(pleg, k), kNoId, ring_id(leg, k - 1), TurnKind::Straight, ring_arc(k, k - 1), 0.0);
+						}
+						add(kNoId, ring_id(pleg, nr - 1), kNoId, ring_id(leg, nr - 1), TurnKind::Straight, ring_arc(nr - 1, nr - 1), 0.0);
+						// Raised dividers: each spirals out by one lane over the leg; the outer one
+						// peels off into the exit, and a new inner one starts at the entry.
+						for (int d = 1; d < nr; ++d) {
+							if (d == 1) {
+								turbo_divider(th_exit, R - lane_w, phi[i], R);
+							} else {
+								turbo_divider(th_exit, R - lane_w * d, th_entry, R - lane_w * (d - 1));
+							}
+						}
+						turbo_divider(phi[i], R - lane_w * (nr - 1) - 0.5 * lane_w, th_entry, R - lane_w * (nr - 1));
+					} else {
+						for (int k = 0; k < nr; ++k) {
+							add(kNoId, ring_id(pleg, k), kNoId, ring_id(leg, k), TurnKind::Straight, ring_arc(k, k),
+									nr >= 2 && k == 0 ? 3.0 : 0.0);
+						}
 					}
 					// Exits.
 					std::vector<LegLane> out = leg_lanes(leg, false);
@@ -1539,13 +1577,6 @@ void RoadGeometry::build(const RoadMap &map) {
 						}
 						add(kNoId, ring_id(pleg, from_k), leg.seg, l.id, TurnKind::Right,
 								bezier(on_circle(ring_r(from_k), th_exit), travel_dir(th_exit), l.point, l.dir), 0.0);
-						if (turbo && is_travel(l.type) && travel_out.size() == 1) {
-							// One exit lane: every turbo lane can leave into it.
-							for (int k = 1; k < nr; ++k) {
-								add(kNoId, ring_id(pleg, k), leg.seg, l.id, TurnKind::Right,
-										bezier(on_circle(ring_r(k), th_exit), travel_dir(th_exit), l.point, l.dir), 0.0);
-							}
-						}
 					}
 					// Entries: the right entry lane to the outer ring lane, lanes to the
 					// left to the inner ones; bikes join the outer lane.
