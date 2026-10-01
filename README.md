@@ -140,6 +140,8 @@ How it works:
 | `J` | Show only the level being edited (also *Only this level* in the bottom bar) |
 | Esc | Cancel the current drawing, then clear the selection |
 
+The bottom bar has a map-style scale bar (its tooltip gives the exact zoom in screen pixels per metre). In the browser, the page's query string works like the desktop command-line options, so a view can be shared or reopened exactly: `index.html?example=showcase&view=-222,-25,20` opens the showcase centred on (−222, −25) m at 20 px/m (`&play` starts the sim, `&sim-seconds=90` runs it 90 s first).
+
 ## Map files
 
 Format `"traffic-sim-map"`, version **6**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences, and buildings (id, type, position, facing, level and name). Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–5 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v6.json` are written by `tsim_bench --write-maps game/maps`).

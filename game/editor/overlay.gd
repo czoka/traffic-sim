@@ -49,6 +49,15 @@ func _ready() -> void:
 	z_index = 4000
 
 
+## Text `size` screen pixels high at `pos` (world units), the same size at any
+## zoom. (A font size of px(size) would round to 0 when zoomed in past size px/m.)
+func text(font: Font, pos: Vector2, s: String, size: float, col: Color) -> void:
+	var z: float = editor.camera.zoom.x
+	draw_set_transform(pos, 0.0, Vector2.ONE / z)
+	draw_string(font, Vector2.ZERO, s, HORIZONTAL_ALIGNMENT_LEFT, -1, int(size), col)
+	draw_set_transform(Vector2.ZERO)
+
+
 ## Converts a width in screen pixels to world units at the current zoom.
 func px(pixels: float) -> float:
 	return pixels / editor.camera.zoom.x
@@ -115,7 +124,7 @@ func _draw() -> void:
 		var col := ERROR if p.severity == "error" else WARNING
 		draw_circle(p.pos, px(9), col)
 		draw_circle(p.pos, px(9), Color.BLACK, false, px(1.5))
-		draw_string(font, p.pos + Vector2(-px(2.5), px(5)), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(15)), Color.BLACK)
+		text(font, p.pos + Vector2(-px(2.5), px(5)), "!", 15, Color.BLACK)
 	if editor.tool:
 		editor.tool.draw(self)
 
@@ -138,7 +147,7 @@ func _spawn_marker(sp: Dictionary, font: Font) -> void:
 		_arrow_head(b - d * px(6), -d, col)
 		draw_line(b + d * px(5), b - d * px(2), col, px(1.5))
 	var label := "%d/h" % int(sp.rate) if float(sp.rate) > 0.0 else "out"
-	draw_string(font, p + Vector2(px(13), px(5)), label, HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(13)), col)
+	text(font, p + Vector2(px(13), px(5)), label, 13, col)
 
 
 ## Bus stops (a sign beside the road), depots and route lines.
@@ -158,8 +167,8 @@ func _draw_transit(font: Font) -> void:
 		var s := px(9)
 		draw_rect(Rect2(p - Vector2(s, s), Vector2(s, s) * 2.0), Color(0.1, 0.12, 0.16, 0.9))
 		draw_rect(Rect2(p - Vector2(s, s), Vector2(s, s) * 2.0), DEPOT if d.active else ERROR, false, px(2))
-		draw_string(font, p + Vector2(-px(4), px(5)), "D", HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(14)), DEPOT)
-		draw_string(font, p + Vector2(px(12), px(5)), String(d.name), HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(12)), DEPOT)
+		text(font, p + Vector2(-px(4), px(5)), "D", 14, DEPOT)
+		text(font, p + Vector2(px(12), px(5)), String(d.name), 12, DEPOT)
 	for st in _stops:
 		if int(st.level) != editor.level:
 			continue
@@ -172,9 +181,9 @@ func _draw_transit(font: Font) -> void:
 		draw_circle(sign_at, r, Color(0.1, 0.1, 0.12, 0.9))
 		draw_circle(sign_at, r, col, false, px(2))
 		var letter := "H" if st.kind == "main_station" else "B"
-		draw_string(font, sign_at + Vector2(-px(3.5), px(4.5)), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(12)), col)
+		text(font, sign_at + Vector2(-px(3.5), px(4.5)), letter, 12, col)
 		if editor.camera.zoom.x > 1.2:
-			draw_string(font, sign_at + Vector2(r + px(3), px(4)), String(st.name), HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(11)), col)
+			text(font, sign_at + Vector2(r + px(3), px(4)), String(st.name), 11, col)
 
 
 ## Walk lights at signal crossings, people waiting at stops, the selected person.
@@ -200,8 +209,8 @@ func _draw_people(font: Font) -> void:
 	if editor.sim and editor.sim.has_people() and editor.camera.zoom.x > 0.6:
 		for st in editor.sim.stop_stats:
 			if int(st.waiting) > 0:
-				draw_string(font, (st.pos as Vector2) + Vector2(px(14), -px(10)), "%d waiting" % int(st.waiting),
-					HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(11)), STOP)
+				text(font, (st.pos as Vector2) + Vector2(px(14), -px(10)), "%d waiting" % int(st.waiting),
+					11, STOP)
 	var ped: Dictionary = editor.sim.ped_info if editor.sim and editor.sim.selected_ped != 0 else {}
 	if not ped.is_empty():
 		var route: PackedVector2Array = ped.route
@@ -221,17 +230,16 @@ func _draw_buildings(font: Font) -> void:
 		var c: Vector2 = b.centre
 		if b.kind == "home":
 			if zoom > 1.2:
-				draw_string(font, c + Vector2(-px(10), px(4)), "%d/%d" % [b.households, b.units], HORIZONTAL_ALIGNMENT_LEFT, -1,
-					int(px(11)), Color(1, 1, 1, 0.85))
+				text(font, c + Vector2(-px(10), px(4)), "%d/%d" % [b.households, b.units], 11, Color(1, 1, 1, 0.85))
 			continue
 		var r := maxf(px(6), 1.2)
 		var col := Color(0.25, 0.85, 0.35) if b.open else (ERROR if b.closed_unexpectedly else Color(0.55, 0.57, 0.6))
 		draw_circle(c, r, Color(0.05, 0.05, 0.06, 0.9))
 		draw_circle(c, r * 0.75, col)
 		if b.closed_unexpectedly:
-			draw_string(font, c + Vector2(-px(2.5), px(4.5)), "!", HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(13)), Color.WHITE)
+			text(font, c + Vector2(-px(2.5), px(4.5)), "!", 13, Color.WHITE)
 		elif zoom > 1.2:
-			draw_string(font, c + Vector2(r + px(3), px(4)), "%d in" % b.inside, HORIZONTAL_ALIGNMENT_LEFT, -1, int(px(11)),
+			text(font, c + Vector2(r + px(3), px(4)), "%d in" % b.inside, 11,
 				Color(1, 1, 1, 0.85))
 
 

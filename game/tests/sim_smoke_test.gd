@@ -42,6 +42,12 @@ func _run() -> void:
 	await _frames(3)
 	var road = ed.road
 	ed.camera.zoom = Vector2.ONE * 2.0
+	# Cars and people must never be culled by stale MultiMesh bounds (zoomed in, they vanished).
+	var fixed_bounds := true
+	for layers in [ed.sim._layers, ed.sim._ped_layers]:
+		for level in layers:
+			fixed_bounds = fixed_bounds and (layers[level] as MultiMeshInstance2D).multimesh.custom_aabb.size.x >= 1e5
+	_check(fixed_bounds, "car and people layers have fixed bounds, so zooming in never culls them")
 
 	# Determinism: the M2 golden scenario inside Godot.
 	var golden: Dictionary = road.sim_golden_check()
