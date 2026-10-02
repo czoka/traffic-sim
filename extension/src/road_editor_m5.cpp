@@ -97,7 +97,7 @@ Array RoadEditor::building_types() const {
 	return out;
 }
 
-Dictionary RoadEditor::snap_building(const String &type, Vector2 near, int level) {
+Dictionary RoadEditor::snap_building(const String &type, Vector2 near, int level, int64_t ignore) {
 	ensure_geometry();
 	Dictionary d;
 	const LotSnap snap = snap_lot(geom_, tv(near), level);
@@ -114,6 +114,7 @@ Dictionary RoadEditor::snap_building(const String &type, Vector2 near, int level
 	d["corners"] = quad(lot);
 	bool blocked = false;
 	for (const auto &kv : doc_.map().buildings()) {
+		if (static_cast<int64_t>(kv.first) == ignore) continue;
 		if (kv.second.level == level && quads_overlap(lot, lot_corners(kv.second, default_city_data()))) blocked = true;
 	}
 	for (const auto &kv : geom_.segments()) {
@@ -125,6 +126,16 @@ Dictionary RoadEditor::snap_building(const String &type, Vector2 near, int level
 
 int64_t RoadEditor::add_building(const String &type, Vector2 pos, Vector2 dir, int level) {
 	return doc_.add_building(str(type), tv(pos), tv(dir), level);
+}
+
+void RoadEditor::move_building(int64_t id, Vector2 pos, Vector2 dir) {
+	const Building *b = doc_.map().building(static_cast<uint32_t>(id));
+	if (!b) return;
+	Building nb = *b;
+	nb.pos = tv(pos);
+	nb.dir = tv(dir);
+	if (nb == *b) return;
+	doc_.set_building(nb);
 }
 
 void RoadEditor::set_building_name(int64_t id, const String &name) {
@@ -412,7 +423,8 @@ void RoadEditor::sim_set_city(const Dictionary &cfg) {
 void RoadEditor::bind_m5_methods() {
 	ClassDB::bind_method(D_METHOD("new_city"), &RoadEditor::new_city);
 	ClassDB::bind_method(D_METHOD("building_types"), &RoadEditor::building_types);
-	ClassDB::bind_method(D_METHOD("snap_building", "type", "near", "level"), &RoadEditor::snap_building);
+	ClassDB::bind_method(D_METHOD("snap_building", "type", "near", "level", "ignore"), &RoadEditor::snap_building, DEFVAL(0));
+	ClassDB::bind_method(D_METHOD("move_building", "id", "pos", "dir"), &RoadEditor::move_building);
 	ClassDB::bind_method(D_METHOD("add_building", "type", "pos", "dir", "level"), &RoadEditor::add_building);
 	ClassDB::bind_method(D_METHOD("set_building_name", "id", "name"), &RoadEditor::set_building_name);
 	ClassDB::bind_method(D_METHOD("remove_building", "id"), &RoadEditor::remove_building);

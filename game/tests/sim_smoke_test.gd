@@ -439,6 +439,39 @@ func _m5(ed: MapEditor, road) -> void:
 	_check(blocked.ok and blocked.blocked, "a lot on another building is blocked")
 	ed.undo()
 	_check(road.get_buildings(0).size() == before, "undo takes it away")
+	# The select tool drags a building to another lot along the street (#15).
+	var st: SelectTool = ed.tools["select"]
+	ed.set_tool("select")
+	var moved_id := 0
+	for b in road.get_buildings(0):
+		if b.type == "townhouse":
+			moved_id = b.id
+			break
+	var start: Vector2 = road.get_building(moved_id).centre
+	var free_spot: Dictionary = road.snap_building("townhouse", Vector2(135, 160), 0, moved_id)
+	_check(free_spot.ok and not free_spot.blocked, "a free lot for the townhouse")
+	st._start_building_move(moved_id, start)
+	st._moved = true
+	st._drag_update(Vector2(135, 160) - st._bld_offset)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.pressed = false
+	st.input(release)
+	var after: Vector2 = road.get_building(moved_id).centre
+	_check(after.distance_to(start) > 20.0 and int(road.get_stats().errors) == 0, "the townhouse moved %.0f m along the street, no errors" % after.distance_to(start))
+	_check(road.undo_label() == "Move building", "the move is one undo step (%s)" % road.undo_label())
+	ed.undo()
+	_check(road.get_building(moved_id).centre.distance_to(start) < 0.01, "undo puts it back")
+	# Onto another building: it stays where it last fitted.
+	var other := 0
+	for b in road.get_buildings(0):
+		if b.type == "grocery":
+			other = b.id
+	st._start_building_move(moved_id, start)
+	st._moved = true
+	st._drag_update(road.get_building(other).centre)
+	st.input(release)
+	_check(road.get_building(moved_id).centre.distance_to(start) < 0.01 or int(road.get_stats().errors) == 0, "a building never lands on another one")
 	ed.set_tool("select")
 	void_ok(bt)
 	# Night: the map gets darker.
