@@ -66,7 +66,11 @@ const ICON_PLAY := preload("res://editor/icons/play.svg")
 const ICON_PAUSE := preload("res://editor/icons/pause.svg")
 const ICON_STEP := preload("res://editor/icons/step.svg")
 const ICON_RESTART := preload("res://editor/icons/restart.svg")
-var _speed_opt: OptionButton
+const ICON_SLOWER := preload("res://editor/icons/slower.svg")
+const ICON_FASTER := preload("res://editor/icons/faster.svg")
+var _speed_label: Label # current sim speed between the slower / faster buttons (#22)
+var _slower: Button
+var _faster: Button
 var _seed: SpinBox
 var _demand: HSlider
 var _demand_label: Label
@@ -424,16 +428,6 @@ func _build_sim_bar(root: Control) -> void:
 	bar.add_theme_constant_override("separation", 8)
 	panel.add_child(bar)
 	_build_transport(root)
-	var sl := Label.new()
-	sl.text = "Speed"
-	bar.add_child(sl)
-	_speed_opt = OptionButton.new()
-	_speed_opt.focus_mode = Control.FOCUS_NONE
-	for i in SimController.MULTIPLIERS.size():
-		_speed_opt.add_item(sim.speed_label(i))
-	_speed_opt.select(sim.speed_index)
-	_speed_opt.item_selected.connect(sim.set_speed_index)
-	bar.add_child(_speed_opt)
 	var seed_label := Label.new()
 	seed_label.text = "Seed"
 	bar.add_child(seed_label)
@@ -522,8 +516,8 @@ func cycle_heatmap() -> void:
 	set_heatmap(HeatLayer.MODES[(HeatLayer.MODES.find(editor.heat.mode) + 1) % HeatLayer.MODES.size()])
 
 
-## Play / pause, step and restart: icon buttons at the top centre; the text
-## shows on hover (#16).
+## Slower, the current speed, faster, then play / pause, step and restart:
+## icon buttons at the top centre; the text shows on hover (#16, #22).
 func _build_transport(root: Control) -> void:
 	var sim := editor.sim
 	_transport = PanelContainer.new()
@@ -534,6 +528,14 @@ func _build_transport(root: Control) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	_transport.add_child(row)
+	_slower = _icon_button(ICON_SLOWER, "Slower", func() -> void: sim.set_speed_index(sim.speed_index - 1), row)
+	_speed_label = Label.new()
+	_speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_speed_label.custom_minimum_size = Vector2(48, 0)
+	_speed_label.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.add_child(_speed_label)
+	_faster = _icon_button(ICON_FASTER, "Faster", func() -> void: sim.set_speed_index(sim.speed_index + 1), row)
+	row.add_child(VSeparator.new())
 	_play = _icon_button(ICON_PLAY, "Play (Space)", sim.toggle, row)
 	_icon_button(ICON_STEP, "Step: one sim second (.)", sim.step, row)
 	_icon_button(ICON_RESTART, "Restart: remove every car and start again with the seed", sim.reset, row)
@@ -556,7 +558,11 @@ func _refresh_sim_buttons() -> void:
 		return
 	_play.icon = ICON_PAUSE if editor.sim.playing else ICON_PLAY
 	_play.tooltip_text = ("Pause" if editor.sim.playing else "Play") + " (Space). Editing pauses; Play resumes with the changes."
-	_speed_opt.select(editor.sim.speed_index)
+	var sim := editor.sim
+	_speed_label.text = sim.speed_label(sim.speed_index)
+	_speed_label.tooltip_text = "Sim speed: %dx real time" % int(SimController.BASE_SPEED * SimController.MULTIPLIERS[sim.speed_index])
+	_slower.disabled = sim.speed_index == 0
+	_faster.disabled = sim.speed_index == SimController.MULTIPLIERS.size() - 1
 
 
 static func clock(seconds: float) -> String:
