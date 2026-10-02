@@ -8,6 +8,8 @@ const MAX_ZOOM := 40.0
 const KEY_PAN_SPEED := 900.0 # screen pixels per second
 
 var _dragging := false
+## Optional: (screen position) -> true where the UI covers the map (set by the editor).
+var ui_hit: Callable
 
 
 func _ready() -> void:
@@ -35,7 +37,22 @@ func _screen_to_world(p: Vector2) -> Vector2:
 	return position + (p - get_viewport_rect().size * 0.5) / zoom.x
 
 
+## True while the mouse is over a panel or other UI: wheel and gestures there
+## belong to it (a list that has scrolled to its end lets the wheel through,
+## and the map must not zoom then).
+func _over_ui(pos: Vector2) -> bool:
+	if ui_hit.is_valid():
+		return ui_hit.call(pos)
+	return get_viewport().gui_get_hovered_control() != null
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventGesture and _over_ui((event as InputEventGesture).position):
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if (mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN) and _over_ui(mb.position):
+			return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		match mb.button_index:
