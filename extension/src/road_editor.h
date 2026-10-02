@@ -125,7 +125,11 @@ public:
 	void new_city(); // a new map: High Street, the main station with coaches, the city offices
 	Array building_types() const; // [{id, label, kind, width, depth, color, households, slots, desks, ...}]
 	// Where a lot of `type` would go near a point: {ok, pos, dir, corners, blocked}.
-	Dictionary snap_building(const String &type, Vector2 near, int level);
+	// The lot `type` would get near `near`: {ok, pos, dir, corners, blocked}. A building
+	// being moved (`ignore`) doesn't block its own new lot.
+	Dictionary snap_building(const String &type, Vector2 near, int level, int64_t ignore = 0);
+	// Moves a building to a lot from snap_building (undoable; inside begin/commit while dragging).
+	void move_building(int64_t id, Vector2 pos, Vector2 dir);
 	int64_t add_building(const String &type, Vector2 pos, Vector2 dir, int level);
 	void set_building_name(int64_t id, const String &name);
 	void remove_building(int64_t id);
