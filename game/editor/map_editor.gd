@@ -99,6 +99,7 @@ func _ready() -> void:
 	ui.name = "UI"
 	ui.editor = self
 	add_child(ui)
+	camera.ui_hit = ui.over_ui
 
 	_load_startup_map()
 	set_template({"preset": "Street 1+1"}, "Street 1+1")

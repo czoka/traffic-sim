@@ -53,6 +53,7 @@ var _market_list: ItemList
 var _market: Array = []
 var _market_time := 0.0
 var _toast: Label
+var _root: Control
 var _palette: PanelContainer
 var _palette_scroll: ScrollContainer
 var _palette_box: VBoxContainer
@@ -70,6 +71,7 @@ var _sim_label: Label
 
 func _ready() -> void:
 	var root := Control.new()
+	_root = root
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
@@ -117,6 +119,18 @@ func _process(delta: float) -> void:
 		guide.position = Vector2(_palette.position.x + _palette.size.x + 12, 12)
 	# The toast stays clear of the tutorial checklist.
 	_toast.position = Vector2(maxf(vp.x * 0.5 - 240.0, guide.position.x + guide.size.x + 12.0) if guide.visible else vp.x * 0.5 - 240.0, 14)
+
+
+## True where a panel or bar covers the screen at `pos`: the wheel there
+## scrolls the panel and never zooms the map (#12).
+func over_ui(pos: Vector2) -> bool:
+	if _root == null:
+		return false
+	for c in _root.get_children():
+		var ctl := c as Control
+		if ctl and ctl.visible and ctl.mouse_filter != Control.MOUSE_FILTER_IGNORE and ctl.get_global_rect().has_point(pos):
+			return true
+	return false
 
 
 static func _panel_style(bg: Color) -> StyleBoxFlat:

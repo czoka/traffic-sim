@@ -16,6 +16,22 @@ func _check(ok: bool, what: String) -> void:
 		_failures += 1
 
 
+func _wheel(vp: Viewport, at: Vector2, up: bool) -> void:
+	var m := InputEventMouseMotion.new()
+	m.position = at
+	m.global_position = at
+	vp.push_input(m)
+	await _frames(1)
+	for pressed in [true, false]:
+		var w := InputEventMouseButton.new()
+		w.button_index = MOUSE_BUTTON_WHEEL_UP if up else MOUSE_BUTTON_WHEEL_DOWN
+		w.pressed = pressed
+		w.position = at
+		w.global_position = at
+		vp.push_input(w)
+	await _frames(1)
+
+
 func _frames(n: int) -> void:
 	for i in n:
 		await process_frame
@@ -65,6 +81,18 @@ func _run() -> void:
 	ed.select("segments", ids[0], false)
 	await _frames(1)
 	_check(ed.ui.inspector._segment_box.visible, "inspector shows the selected road")
+	# The wheel over a panel never zooms the map, even once the panel has scrolled to its end (#12).
+	var vp := ed.get_viewport()
+	var over: Vector2 = ed.ui.inspector.get_global_rect().get_center()
+	var z0: float = ed.camera.zoom.x
+	for i in 3:
+		await _wheel(vp, over, i % 2 == 0)
+	_check(is_equal_approx(ed.camera.zoom.x, z0), "wheel over the inspector leaves the zoom alone (%.2f -> %.2f)" % [z0, ed.camera.zoom.x])
+	var free := Vector2(ed.ui.inspector.get_global_rect().position.x - 20.0, vp.get_visible_rect().size.y * 0.5)
+	await _wheel(vp, free, true)
+	_check(not ed.ui.over_ui(free) and ed.camera.zoom.x > z0, "wheel over the map zooms (%.2f -> %.2f)" % [z0, ed.camera.zoom.x])
+	ed.camera.zoom = Vector2.ONE * z0
+
 	# A road's inspector is taller than a small window: it scrolls instead of running off the bottom.
 	var insp: Inspector = ed.ui.inspector
 	insp.fit_height(300.0)
