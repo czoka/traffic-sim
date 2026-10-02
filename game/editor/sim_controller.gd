@@ -11,6 +11,10 @@ signal state_changed
 const BASE_SPEED := 16.0
 const MULTIPLIERS := [0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
 const BUDGET_MS := 8.0
+## M7: when frames are slow (a big map, a slow GPU), the sim may use up to half
+## of each frame, so a low frame rate doesn't also hold the sim back.
+const BUDGET_SHARE := 0.5
+const MAX_BUDGET_MS := 30.0
 const CAR_LENGTH := 4.5
 const CAR_WIDTH := 1.8
 ## Cars are drawn at least this many pixels long, however far you zoom out.
@@ -227,7 +231,7 @@ func _process(delta: float) -> void:
 			pause()
 			editor.notify("Paused for editing. Press Play to carry on with the changes.")
 		else:
-			editor.road.sim_advance(delta, speed(), BUDGET_MS)
+			editor.road.sim_advance(delta, speed(), clampf(delta * 1000.0 * BUDGET_SHARE, BUDGET_MS, MAX_BUDGET_MS))
 	_update_cars()
 	_stats_timer += delta
 	if _stats_timer >= STATS_INTERVAL:

@@ -3,6 +3,7 @@
 //   tsim_bench [--cars N] [--ticks T] [--seed S] [--radius R] [--lanes L] [--report-every K]
 //   tsim_bench --traffic [--cars CAP] [--minutes M] [--seed S] [--demand D]
 //   tsim_bench --write-maps DIR
+//   tsim_bench --example NAME [--warmup M] [--minutes M]   (M7: an example map as the editor runs it)
 //
 // Ring mode prints the mean tick time and periodic traffic stats (to see
 // stop-and-go waves form), then the final state hash. --traffic runs the M2
@@ -17,6 +18,7 @@
 #include "tsim/sim.h"
 #include "tsim/traffic_run.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -52,6 +54,7 @@ int write_maps(const std::string &dir) {
 		{ "city_town_v7.json", [](Document &d) { build_city_town(d); } },
 		{ "city_week_v7.json", [](Document &d) { build_city_week(d); } },
 		{ "city_market_v7.json", [](Document &d) { build_city_market(d); } },
+		{ "tutorial_v7.json", [](Document &d) { build_tutorial(d); } },
 	};
 	for (const Entry &e : maps) {
 		Document doc;
@@ -101,10 +104,65 @@ int run_traffic(uint32_t cap, double minutes, uint64_t seed, double demand) {
 	return 0;
 }
 
+// The editor's examples, with the editor's caps (2,000 cars, 1,000 people) and
+// city prefill. Prints the mean tick and what 128x (1,280 ticks a second) costs.
+int run_example(const std::string &name, double warmup, double minutes) {
+	Document doc;
+	double prefill = 0.0;
+	if (name == "town") build_demo_town(doc);
+	else if (name == "grid") build_test_grid(doc, 7, 8, 120.0);
+	else if (name == "showcase") build_showcase(doc);
+	else if (name == "people") build_people_town(doc);
+	else if (name == "people_city") build_people_city(doc, 12, 12);
+	else if (name == "city_town") build_city_town(doc), prefill = 1.0;
+	else if (name == "city_week") build_city_week(doc), prefill = 0.95;
+	else if (name == "city_market") build_city_market(doc), prefill = 0.95;
+	else if (name == "tutorial") build_tutorial(doc);
+	else {
+		std::fprintf(stderr, "unknown example %s\n", name.c_str());
+		return 2;
+	}
+	RoadGeometry geom;
+	geom.build(doc.map());
+	TrafficRun run;
+	run.sync(doc.map(), geom, doc.revision());
+	Traffic &t = run.traffic();
+	t.config().max_vehicles = 2000;
+	t.config().max_pedestrians = 1000;
+	t.config().city_prefill = prefill;
+	t.reset(42);
+	using clock = std::chrono::steady_clock;
+	const uint64_t per_min = static_cast<uint64_t>(60.0 / t.config().dt + 0.5);
+	for (uint64_t k = 0; k < static_cast<uint64_t>(warmup * per_min); ++k) t.tick();
+	const uint64_t n = static_cast<uint64_t>(minutes * per_min);
+	double worst_ms = 0.0;
+	const auto t0 = clock::now();
+	for (uint64_t k = 0; k < n; k += 128) {
+		const auto a = clock::now();
+		for (uint64_t j = 0; j < 128 && k + j < n; ++j) t.tick();
+		worst_ms = std::max(worst_ms, std::chrono::duration<double, std::milli>(clock::now() - a).count());
+	}
+	const double us = std::chrono::duration<double, std::micro>(clock::now() - t0).count() / static_cast<double>(n);
+	const TrafficStats st = t.stats();
+	std::printf("%-12s %5u vehicles %5u people %5u residents: %7.1f us/tick, 128x needs %5.0f ms of sim a second "
+				"(%s), worst 128 ticks %.0f ms\n",
+			name.c_str(), st.vehicles, st.pedestrians + st.riding, t.city_stats().residents, us, us * 1280.0 / 1000.0,
+			us * 1280.0 / 1000.0 <= 480.0 ? "fits the 8 ms a frame at 60 fps" : "CPU-limited", worst_ms);
+	return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
 	if (argc >= 3 && !std::strcmp(argv[1], "--write-maps")) return write_maps(argv[2]);
+	if (argc >= 3 && !std::strcmp(argv[1], "--example")) {
+		double warmup = 10.0, minutes = 2.0;
+		for (int i = 3; i + 1 < argc; i += 2) {
+			if (!std::strcmp(argv[i], "--warmup")) warmup = std::strtod(argv[i + 1], nullptr);
+			else if (!std::strcmp(argv[i], "--minutes")) minutes = std::strtod(argv[i + 1], nullptr);
+		}
+		return run_example(argv[2], warmup, minutes);
+	}
 	if (argc >= 2 && !std::strcmp(argv[1], "--traffic")) {
 		uint32_t cap = TrafficGolden::kMaxVehicles;
 		double minutes = 60.0, demand = TrafficGolden::kDemand;

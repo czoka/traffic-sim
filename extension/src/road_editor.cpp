@@ -178,6 +178,7 @@ bool RoadEditor::load_example(const String &name) {
 	else if (name == "city_town") build_city_town(d);
 	else if (name == "city_week") build_city_week(d);
 	else if (name == "city_market") build_city_market(d);
+	else if (name == "tutorial") build_tutorial(d);
 	else return false;
 	doc_.reset(d.map());
 	return true;
@@ -808,6 +809,7 @@ void RoadEditor::_bind_methods() {
 	bind_m4_methods();
 	bind_m5_methods();
 	bind_m6_methods();
+	bind_m7_methods();
 	ClassDB::bind_method(D_METHOD("new_map"), &RoadEditor::new_map);
 	ClassDB::bind_method(D_METHOD("load_demo_town"), &RoadEditor::load_demo_town);
 	ClassDB::bind_method(D_METHOD("load_test_grid", "cols", "rows", "spacing"), &RoadEditor::load_test_grid);

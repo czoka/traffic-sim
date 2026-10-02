@@ -1,6 +1,6 @@
 class_name FileIO
 extends Node
-## Map export/import as JSON files: native file dialogs on desktop, a download
+## Map export/import as JSON files (and PNG screenshots): native file dialogs on desktop, a download
 ## and a file picker in the browser.
 
 var _pending: Callable
@@ -17,6 +17,23 @@ func save_text(text: String, filename: String) -> void:
 		var f := FileAccess.open(path, FileAccess.WRITE)
 		if f:
 			f.store_string(text)
+			f.close()
+		dlg.queue_free())
+	dlg.popup_centered_ratio(0.6)
+
+
+## A binary file (e.g. a PNG screenshot): a download in the browser, a save
+## dialog on desktop.
+func save_bytes(data: PackedByteArray, filename: String, mime: String, filter: String) -> void:
+	if OS.has_feature("web"):
+		JavaScriptBridge.download_buffer(data, filename, mime)
+		return
+	var dlg := _dialog(FileDialog.FILE_MODE_SAVE_FILE, filter)
+	dlg.current_file = filename
+	dlg.file_selected.connect(func(path: String) -> void:
+		var f := FileAccess.open(path, FileAccess.WRITE)
+		if f:
+			f.store_buffer(data)
 			f.close()
 		dlg.queue_free())
 	dlg.popup_centered_ratio(0.6)
@@ -58,11 +75,11 @@ func _on_web_file(args: Array) -> void:
 		_pending.call(str(args[0]))
 
 
-func _dialog(mode: FileDialog.FileMode) -> FileDialog:
+func _dialog(mode: FileDialog.FileMode, filter := "*.json ; Traffic Sim maps") -> FileDialog:
 	var dlg := FileDialog.new()
 	dlg.file_mode = mode
 	dlg.access = FileDialog.ACCESS_FILESYSTEM
-	dlg.filters = PackedStringArray(["*.json ; Traffic Sim maps"])
+	dlg.filters = PackedStringArray([filter])
 	dlg.use_native_dialog = true
 	dlg.canceled.connect(dlg.queue_free)
 	add_child(dlg)

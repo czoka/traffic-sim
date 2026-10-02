@@ -41,6 +41,9 @@ void build_people_city(Document &doc, int cols, int rows);
 // M5: what a new map starts with: a street from the west edge to the east
 // edge with the main station, a coach line through it, and the city offices.
 void build_new_city(Document &doc);
+// M7 tutorial: the new city plus Loop Road (south of High Street and back, so
+// a bus can go round) and Depot Lane, a dead end for a bus depot.
+void build_tutorial(Document &doc);
 // M5 test town: the new city plus a cross street with homes (townhouses,
 // houses, apartment blocks), a grocery, fast food, a restaurant and an office.
 void build_city_town(Document &doc);

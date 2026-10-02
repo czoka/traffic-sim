@@ -24,6 +24,7 @@ const PANEL_BG := Color(0.08, 0.09, 0.1, 0.92)
 
 var editor: MapEditor
 var inspector: Inspector
+var guide: Guide
 
 var _tool_buttons := {}
 var _preset: OptionButton
@@ -44,12 +45,17 @@ var _autosave: Label
 var _problems_panel: PanelContainer
 var _problems_list: ItemList
 var _problems: Array = []
+var _heat_opt: OptionButton
+var _heat_legend: Label
 var _market_button: Button
 var _market_panel: PanelContainer
 var _market_list: ItemList
 var _market: Array = []
 var _market_time := 0.0
 var _toast: Label
+var _palette: PanelContainer
+var _palette_scroll: ScrollContainer
+var _palette_box: VBoxContainer
 var _toast_time := 0.0
 
 # Simulation bar
@@ -77,6 +83,10 @@ func _ready() -> void:
 	_build_sim_bar(root)
 	_build_problems(root)
 	_build_market(root)
+	guide = Guide.new()
+	guide.editor = editor
+	guide.position = Vector2(12, 12) # beside the palette (placed in _process)
+	root.add_child(guide)
 	_toast = Label.new()
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_toast.position = Vector2(-240, 14)
@@ -98,7 +108,14 @@ func _process(delta: float) -> void:
 	if editor and editor.camera:
 		_scale.zoom = editor.camera.zoom.x
 	# Keep the inspector pinned to the right edge as the window resizes.
-	inspector.position = Vector2(get_viewport().get_visible_rect().size.x - inspector.size.x - 12, 12)
+	var vp := get_viewport().get_visible_rect().size
+	inspector.position = Vector2(vp.x - inspector.size.x - 12, 12)
+	# The palette scrolls when the window is too short for it (above the bottom bars).
+	if _palette_scroll:
+		_palette_scroll.custom_minimum_size.y = minf(_palette_box.size.y, maxf(200.0, vp.y - 140.0))
+		guide.position = Vector2(_palette.position.x + _palette.size.x + 12, 12)
+	# The toast stays clear of the tutorial checklist.
+	_toast.position = Vector2(maxf(vp.x * 0.5 - 240.0, guide.position.x + guide.size.x + 12.0) if guide.visible else vp.x * 0.5 - 240.0, 14)
 
 
 static func _panel_style(bg: Color) -> StyleBoxFlat:
@@ -133,10 +150,15 @@ func _build_palette(root: Control) -> void:
 	panel.position = Vector2(12, 12)
 	panel.add_theme_stylebox_override("panel", _panel_style(PANEL_BG))
 	root.add_child(panel)
+	_palette = panel
+	_palette_scroll = ScrollContainer.new()
+	_palette_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(_palette_scroll)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 6)
 	box.custom_minimum_size = Vector2(190, 0)
-	panel.add_child(box)
+	_palette_scroll.add_child(box)
+	_palette_box = box
 	var title := Label.new()
 	title.text = "Traffic Sim"
 	title.add_theme_font_size_override("font_size", 17)
@@ -193,11 +215,18 @@ func _build_palette(root: Control) -> void:
 	demos.get_popup().add_item("City town (M5: homes, shops, offices, residents)", 9)
 	demos.get_popup().add_item("City week (M5 gate: 5,000 residents)", 10)
 	demos.get_popup().add_item("City market (M6: money, rent, owners, cars and bikes)", 12)
+	demos.get_popup().add_item("Tutorial (a new city and a checklist)", 13)
 	demos.get_popup().add_item("Empty map", 11)
 	demos.get_popup().add_separator()
 	demos.get_popup().add_item("POC ring benchmark", 2)
 	demos.get_popup().id_pressed.connect(_on_example)
 	box.add_child(demos)
+	var learn := HBoxContainer.new()
+	var tut := _button("Tutorial", editor.start_tutorial, learn)
+	tut.tooltip_text = "A new city and a checklist: build a street, homes, a shop and a bus route, then press Play"
+	box.add_child(learn)
+	var shot := _button("Screenshot (PNG)", editor.export_screenshot, learn)
+	shot.tooltip_text = "Save the map as it is on screen as a PNG, without the panels (Ctrl+Shift+P)"
 
 	var help := Label.new()
 	help.text = "Wheel zoom · right-drag pan · F fit\nCtrl+Z undo · Ctrl+Shift+Z redo\nG grid · A angles · PgUp/PgDn level\nSpace play/pause · . step 1 s"
@@ -234,6 +263,8 @@ func _on_example(id: int) -> void:
 			editor.load_demo("empty")
 		12:
 			editor.load_demo("city_market")
+		13:
+			editor.start_tutorial()
 
 
 func _confirm_new() -> void:
@@ -313,6 +344,13 @@ func _build_bottom_bar(root: Control) -> void:
 	bar.add_child(_cursor)
 	_scale = ScaleBar.new()
 	bar.add_child(_scale)
+	_heat_opt = OptionButton.new()
+	_heat_opt.focus_mode = Control.FOCUS_NONE
+	for l in HeatLayer.MODE_LABELS:
+		_heat_opt.add_item(l)
+	_heat_opt.tooltip_text = "Colour the roads by what the sim has seen in the last few minutes (M)"
+	_heat_opt.item_selected.connect(func(i: int) -> void: set_heatmap(HeatLayer.MODES[i]))
+	bar.add_child(_heat_opt)
 	_problems_button = _button("No problems", _toggle_problems, bar)
 	_market_button = _button("Market", func() -> void:
 		_market_panel.visible = not _market_panel.visible
@@ -430,13 +468,40 @@ func _build_sim_bar(root: Control) -> void:
 	bar.add_child(max_people)
 	bar.add_child(VSeparator.new())
 	_sim_label = Label.new()
-	_sim_label.custom_minimum_size = Vector2(330, 0)
+	_sim_label.custom_minimum_size = Vector2(200, 0)
 	_sim_label.clip_text = true
 	_sim_label.mouse_filter = Control.MOUSE_FILTER_PASS # for the tooltip
 	_sim_label.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
 	bar.add_child(_sim_label)
+	_heat_legend = Label.new()
+	_heat_legend.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_heat_legend.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_heat_legend.offset_top = -124
+	_heat_legend.offset_bottom = -100
+	_heat_legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_heat_legend.add_theme_font_size_override("font_size", 13)
+	_heat_legend.add_theme_color_override("font_color", Color(0.92, 0.94, 0.97))
+	_heat_legend.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	_heat_legend.add_theme_constant_override("outline_size", 4)
+	_heat_legend.visible = false
+	root.add_child(_heat_legend)
 	sim.state_changed.connect(_refresh_sim_buttons)
 	_refresh_sim_buttons()
+
+
+## "off", "speed", "wait" or "flow".
+func set_heatmap(mode: String) -> void:
+	editor.heat.set_mode(mode)
+	var i := HeatLayer.MODES.find(editor.heat.mode)
+	if _heat_opt and _heat_opt.selected != i:
+		_heat_opt.select(i)
+	_heat_legend.visible = editor.heat.mode != "off"
+	_heat_legend.text = "%s heatmap · %s%s" % [HeatLayer.MODE_LABELS[i], HeatLayer.legend(editor.heat.mode),
+		"" if editor.sim.has_cars() or editor.sim.playing else " · press Play to collect data"]
+
+
+func cycle_heatmap() -> void:
+	set_heatmap(HeatLayer.MODES[(HeatLayer.MODES.find(editor.heat.mode) + 1) % HeatLayer.MODES.size()])
 
 
 func _refresh_sim_buttons() -> void:
@@ -639,6 +704,29 @@ func set_cursor(pos: Vector2) -> void:
 
 func set_autosave_time(t: String) -> void:
 	_autosave.text = "Autosaved " + t
+
+
+## First run (no autosave yet): how to start.
+func show_welcome() -> void:
+	var d := ConfirmationDialog.new()
+	d.title = "Welcome to Traffic Sim"
+	d.dialog_text = "Build a town: roads, homes, shops and offices, buses and bike lanes, then press Play and watch people live in it.\n\nThe tutorial starts a new city and shows you each step. You can open it again from the left panel (Tutorial) at any time."
+	d.dialog_autowrap = true
+	d.min_size = Vector2i(460, 0)
+	d.ok_button_text = "Start the tutorial"
+	d.cancel_button_text = "Explore on my own"
+	d.add_button("Open an example town", true, "example")
+	d.confirmed.connect(func() -> void:
+		editor.start_tutorial()
+		d.queue_free())
+	d.canceled.connect(d.queue_free)
+	d.custom_action.connect(func(action: StringName) -> void:
+		if action == &"example":
+			editor.load_demo("city_town")
+			editor.notify("City town: press Space to play, then click a home, a shop or a person.")
+		d.queue_free())
+	add_child(d)
+	d.popup_centered()
 
 
 func toast(text: String) -> void:

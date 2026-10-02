@@ -186,6 +186,7 @@ void Traffic::set_network(const Network *net) {
 	std::vector<Saved> saved(veh_.size());
 	const std::vector<PedSaved> people = peds_save();
 	std::map<LaneKey, double> times;
+	std::map<LaneKey, std::pair<LaneHeat, HeatAcc>> heat;
 	std::map<NodeId, uint32_t> pending;
 	if (net_) {
 		for (size_t i = 0; i < veh_.size(); ++i) {
@@ -219,6 +220,9 @@ void Traffic::set_network(const Network *net) {
 			}
 		}
 		for (size_t l = 0; l < lane_time_.size() && l < net_->lanes.size(); ++l) times[net_->lanes[l].key] = lane_time_[l];
+		for (size_t l = 0; l < heat_.size() && l < net_->lanes.size(); ++l) {
+			if (net_->lanes[l].kind == NetLaneKind::Road) heat[net_->lanes[l].key] = { heat_[l], heat_acc_[l] };
+		}
 		for (size_t k = 0; k < pending_.size() && k < net_->spawners.size(); ++k) {
 			pending[net_->spawners[k].node] = pending_[k];
 		}
@@ -228,6 +232,15 @@ void Traffic::set_network(const Network *net) {
 	cars_.assign(n, {});
 	used_lanes_.clear();
 	lane_time_.assign(n, 0.0);
+	heat_.assign(n, LaneHeat{});
+	heat_acc_.assign(n, HeatAcc{});
+	for (size_t l = 0; l < n; ++l) {
+		if (net_->lanes[l].kind != NetLaneKind::Road) continue;
+		auto it = heat.find(net_->lanes[l].key);
+		if (it == heat.end()) continue;
+		heat_[l] = it->second.first;
+		heat_acc_[l] = it->second.second;
+	}
 	for (size_t l = 0; l < n; ++l) {
 		const NetLane &lane = net_->lanes[l];
 		const double free = lane.length / std::max(1.0, lane.speed_limit);
@@ -468,6 +481,8 @@ void Traffic::reset(uint64_t seed) {
 	std::fill(junction_waiting_.begin(), junction_waiting_.end(), 0);
 	std::fill(bay_use_.begin(), bay_use_.end(), kNoId);
 	std::fill(stop_use_.begin(), stop_use_.end(), 0u);
+	std::fill(heat_.begin(), heat_.end(), LaneHeat{});
+	std::fill(heat_acc_.begin(), heat_acc_.end(), HeatAcc{});
 	if (net_) {
 		for (size_t l = 0; l < lane_time_.size(); ++l) {
 			const NetLane &lane = net_->lanes[l];
@@ -1735,6 +1750,7 @@ void Traffic::move() {
 				if (at_route_end(v, lane, v.ri)) {
 					v.done = true;
 					v.res_end = 2;
+					++heat_acc_[static_cast<size_t>(lane)].passed;
 					break;
 				}
 				const int32_t c = next_connector(v, lane, v.ri);
@@ -1752,6 +1768,7 @@ void Traffic::move() {
 					v.held = c;
 					v.grant = -1;
 				}
+				++heat_acc_[static_cast<size_t>(lane)].passed;
 				s -= l.length;
 				lane = c;
 				++v.ri;
@@ -1764,6 +1781,12 @@ void Traffic::move() {
 		}
 		v.s = s;
 		v.lane = lane;
+		if (is_road(n.lanes[static_cast<size_t>(lane)])) {
+			HeatAcc &h = heat_acc_[static_cast<size_t>(lane)];
+			h.occ += dt;
+			h.speed += v.v * dt;
+			if (v.v < 1.0) h.stopped += dt;
+		}
 		if (v.lat != 0.0) {
 			const double step = 0.12;
 			v.lat = v.lat > 0.0 ? std::max(0.0, v.lat - step) : std::min(0.0, v.lat + step);
@@ -2476,6 +2499,7 @@ void Traffic::tick() {
 	city_tick();
 	spawn(); // new vehicles join at the back of their lane
 	++tick_;
+	if (tick_ % static_cast<uint64_t>(ticks_per_minute()) == 0) heat_fold();
 }
 
 // --- Queries ---------------------------------------------------------------------------------------

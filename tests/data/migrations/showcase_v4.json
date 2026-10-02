@@ -1,0 +1,891 @@
+{
+ "format": "traffic-sim-map",
+ "version": 4,
+ "next_ids": {
+  "node": 12,
+  "segment": 12,
+  "lane": 70,
+  "object": 10
+ },
+ "nodes": [
+  {
+   "id": 1,
+   "x": -560.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 350.0,
+    "sink": true,
+    "coaches": [
+     {
+      "id": 9,
+      "exit": 4,
+      "per_hour": 3.0,
+      "dwell": 300.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 2,
+   "x": -220.0,
+   "y": 0.0,
+   "level": 0,
+   "control": {
+    "type": "signal"
+   },
+   "signal": {
+    "amber": 3.0,
+    "all_red": 2.0,
+    "phases": [
+     {
+      "green": 25.0,
+      "moves": [
+       {
+        "from": 1,
+        "to": 2
+       },
+       {
+        "from": 1,
+        "to": 4,
+        "permissive": true
+       },
+       {
+        "from": 1,
+        "to": 5
+       },
+       {
+        "from": 2,
+        "to": 1
+       },
+       {
+        "from": 2,
+        "to": 4
+       },
+       {
+        "from": 2,
+        "to": 5,
+        "permissive": true
+       }
+      ]
+     },
+     {
+      "green": 25.0,
+      "moves": [
+       {
+        "from": 4,
+        "to": 1
+       },
+       {
+        "from": 4,
+        "to": 2,
+        "permissive": true
+       },
+       {
+        "from": 4,
+        "to": 5
+       },
+       {
+        "from": 5,
+        "to": 1,
+        "permissive": true
+       },
+       {
+        "from": 5,
+        "to": 2
+       },
+       {
+        "from": 5,
+        "to": 4
+       }
+      ]
+     }
+    ],
+    "right_on_red": [
+     5
+    ]
+   }
+  },
+  {
+   "id": 3,
+   "x": 180.0,
+   "y": 0.0,
+   "level": 0,
+   "roundabout": {
+    "radius": 24.0,
+    "lanes": 2,
+    "slip": [
+     8
+    ]
+   }
+  },
+  {
+   "id": 4,
+   "x": 520.0,
+   "y": 0.0,
+   "level": 0,
+   "spawner": {
+    "rate": 350.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 5,
+   "x": -220.0,
+   "y": -320.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true,
+    "bikes": 120.0
+   }
+  },
+  {
+   "id": 6,
+   "x": -220.0,
+   "y": 300.0,
+   "level": 0,
+   "control": {
+    "type": "all_way_stop"
+   }
+  },
+  {
+   "id": 7,
+   "x": -220.0,
+   "y": 480.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true,
+    "bikes": 120.0
+   }
+  },
+  {
+   "id": 8,
+   "x": 180.0,
+   "y": -330.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 9,
+   "x": 180.0,
+   "y": 300.0,
+   "level": 0,
+   "control": {
+    "type": "priority_road",
+    "priority": [
+     8,
+     9
+    ]
+   }
+  },
+  {
+   "id": 10,
+   "x": 180.0,
+   "y": 480.0,
+   "level": 0,
+   "spawner": {
+    "rate": 200.0,
+    "sink": true
+   }
+  },
+  {
+   "id": 11,
+   "x": -520.0,
+   "y": 300.0,
+   "level": 0,
+   "depot": {
+    "capacity": 12,
+    "name": "West Depot",
+    "routes": [
+     {
+      "id": 7,
+      "name": "1 Circle",
+      "color": 14171967,
+      "stops": [
+       1,
+       2,
+       4,
+       6
+      ],
+      "headway": 300.0,
+      "loop": true
+     },
+     {
+      "id": 8,
+      "name": "2 Market",
+      "color": 3112920,
+      "stops": [
+       5,
+       3
+      ],
+      "headway": 480.0
+     }
+    ]
+   }
+  }
+ ],
+ "segments": [
+  {
+   "id": 1,
+   "from": 1,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "painted",
+    "median_width": 1.0,
+    "lanes": [
+     {
+      "id": 1,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
+     },
+     {
+      "id": 2,
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 3,
+      "type": "bus",
+      "dir": "backward",
+      "width": 3.5
+     },
+     {
+      "id": 4,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 5,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 6,
+      "type": "bus",
+      "dir": "forward",
+      "width": 3.5
+     },
+     {
+      "id": 7,
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 8,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
+     }
+    ]
+   },
+   "ends": [
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 23
+    },
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 40.0,
+     "left_lane": 24
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "from": 2,
+   "to": 3,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "painted",
+    "median_width": 1.0,
+    "lanes": [
+     {
+      "id": 9,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
+     },
+     {
+      "id": 10,
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 11,
+      "type": "bus",
+      "dir": "backward",
+      "width": 3.5
+     },
+     {
+      "id": 12,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 13,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 14,
+      "type": "bus",
+      "dir": "forward",
+      "width": 3.5
+     },
+     {
+      "id": 15,
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 16,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
+     }
+    ]
+   },
+   "ends": [
+    {
+     "left": "turn_lane",
+     "right": "allowed",
+     "turn_lane_length": 45.0,
+     "left_lane": 25
+    },
+    {
+     "left": "allowed",
+     "right": "allowed",
+     "turn_lane_length": 40.0
+    }
+   ],
+   "stops": [
+    {
+     "id": 1,
+     "u": 0.5,
+     "side": "forward",
+     "kind": "main_station",
+     "name": "Central Station",
+     "bays": 3
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "from": 3,
+   "to": 4,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 16.666666666666668,
+   "profile": {
+    "median": "raised",
+    "median_width": 2.0,
+    "lanes": [
+     {
+      "id": 17,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
+     },
+     {
+      "id": 18,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 19,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 20,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 21,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 22,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 3.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 4,
+   "from": 5,
+   "to": 2,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 26,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 27,
+      "type": "bike",
+      "dir": "backward",
+      "width": 1.5
+     },
+     {
+      "id": 28,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 29,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 30,
+      "type": "bike",
+      "dir": "forward",
+      "width": 1.5
+     },
+     {
+      "id": 31,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 5,
+   "from": 2,
+   "to": 6,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 32,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 33,
+      "type": "bike",
+      "dir": "backward",
+      "width": 1.5
+     },
+     {
+      "id": 34,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 35,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 36,
+      "type": "bike",
+      "dir": "forward",
+      "width": 1.5
+     },
+     {
+      "id": 37,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   },
+   "stops": [
+    {
+     "id": 6,
+     "u": 0.5,
+     "side": "backward",
+     "kind": "kerbside",
+     "name": "School"
+    }
+   ]
+  },
+  {
+   "id": 6,
+   "from": 6,
+   "to": 7,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 38,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 39,
+      "type": "bike",
+      "dir": "backward",
+      "width": 1.5
+     },
+     {
+      "id": 40,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 41,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 42,
+      "type": "bike",
+      "dir": "forward",
+      "width": 1.5
+     },
+     {
+      "id": 43,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 7,
+   "from": 3,
+   "to": 8,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 44,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 45,
+      "type": "parking",
+      "dir": "none",
+      "width": 5.3,
+      "parking": "angle45"
+     },
+     {
+      "id": 46,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 47,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 48,
+      "type": "parking",
+      "dir": "none",
+      "width": 5.3,
+      "parking": "angle45"
+     },
+     {
+      "id": 49,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 8,
+   "from": 3,
+   "to": 9,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 50,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 51,
+      "type": "parking",
+      "dir": "none",
+      "width": 5.0,
+      "parking": "perpendicular"
+     },
+     {
+      "id": 52,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 53,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 54,
+      "type": "parking",
+      "dir": "none",
+      "width": 5.0,
+      "parking": "perpendicular"
+     },
+     {
+      "id": 55,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   },
+   "stops": [
+    {
+     "id": 2,
+     "u": 0.55,
+     "side": "forward",
+     "kind": "kerbside",
+     "name": "Roundabout South"
+    },
+    {
+     "id": 3,
+     "u": 0.45,
+     "side": "backward",
+     "kind": "kerbside",
+     "name": "Roundabout North"
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "from": 9,
+   "to": 10,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 13.88888888888889,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 56,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 57,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 58,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 59,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  },
+  {
+   "id": 10,
+   "from": 6,
+   "to": 9,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 60,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 61,
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 62,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 63,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 64,
+      "type": "parking",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 65,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   },
+   "stops": [
+    {
+     "id": 4,
+     "u": 0.5,
+     "side": "backward",
+     "kind": "bay",
+     "name": "Market"
+    },
+    {
+     "id": 5,
+     "u": 0.4,
+     "side": "forward",
+     "kind": "bay",
+     "name": "Market East"
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "from": 11,
+   "to": 6,
+   "kind": "road",
+   "level": 0,
+   "curve": {
+    "type": "straight"
+   },
+   "speed_limit": 11.11111111111111,
+   "profile": {
+    "median": "none",
+    "lanes": [
+     {
+      "id": 66,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     },
+     {
+      "id": 67,
+      "type": "general",
+      "dir": "backward",
+      "width": 3.25
+     },
+     {
+      "id": 68,
+      "type": "general",
+      "dir": "forward",
+      "width": 3.25
+     },
+     {
+      "id": 69,
+      "type": "sidewalk",
+      "dir": "none",
+      "width": 2.0
+     }
+    ]
+   }
+  }
+ ]
+}

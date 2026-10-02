@@ -461,6 +461,35 @@ struct StopStats {
 	uint32_t waiting = 0;
 	uint64_t boarded = 0, alighted = 0, left_behind = 0;
 	double mean_wait = 0.0; // s
+	double boarded_per_hour = 0.0; // M7: since the start
+	double left_behind_per_hour = 0.0;
+};
+
+// M7: what a road lane has seen lately, for the heatmaps. Smoothed over the
+// last few minutes (each sim minute counts 30 %). Not part of the state hash.
+struct LaneHeat {
+	bool seen = false; // traffic in the last 5 minutes
+	double speed = 0.0; // mean speed of the vehicles on it, m/s
+	double speed_ratio = 1.0; // of the speed limit (1 = free flow)
+	double wait = 0.0; // s stopped per vehicle that left it
+	double flow = 0.0; // vehicles leaving it, per hour
+	uint64_t passed = 0; // since the start
+	double stopped = 0.0; // vehicle-seconds below 1 m/s since the start
+};
+
+// M7: a junction's numbers, from the lanes that end at it.
+struct JunctionStats {
+	bool found = false;
+	NodeId node = kNoId;
+	int approaches = 0; // road lanes in
+	double flow = 0.0; // vehicles through per hour (smoothed)
+	double mean_wait = 0.0; // s stopped per vehicle on the way in (smoothed)
+	uint32_t queued = 0; // stopped on the approaches now
+	double longest_wait = 0.0; // s, of anyone stopped on an approach now
+	uint64_t passed = 0; // through since the start
+	double total_mean_wait = 0.0; // since the start
+	SegmentId worst_segment = kNoId; // approach with the longest smoothed wait
+	double worst_wait = 0.0;
 };
 
 // Mean load leaving each stop of a route (passengers on board), for the inspector.
@@ -544,6 +573,10 @@ public:
 	PedInfo ped_info(uint32_t id) const;
 	std::vector<StopStats> stop_stats() const;
 	std::vector<RouteLoad> route_loads() const;
+
+	// --- Insight (M7) -------------------------------------------------------------
+	const std::vector<LaneHeat> &lane_heat() const { return heat_; } // per Network::lanes (road lanes)
+	JunctionStats junction_stats(NodeId node) const;
 	// Light a mid-block push-button signal shows cars (crossing index), for drawing.
 	SignalLight crossing_car_light(int32_t crossing) const;
 	WalkLight crossing_walk_light(int32_t crossing) const;
@@ -675,6 +708,15 @@ private:
 	std::vector<std::vector<int32_t>> cars_;
 	std::vector<int32_t> used_lanes_; // lanes with cars at the last rebuild_lists() // per lane, front (largest s) first
 	std::vector<double> lane_time_; // observed travel time per road lane (s)
+	// M7 heatmaps: this minute's sums per lane, and the smoothed values.
+	struct HeatAcc {
+		double occ = 0.0, speed = 0.0, stopped = 0.0; // vehicle-seconds, metres, vehicle-seconds
+		uint32_t passed = 0;
+		int idle = 99; // minutes without traffic
+	};
+	std::vector<HeatAcc> heat_acc_;
+	std::vector<LaneHeat> heat_;
+	void heat_fold(); // once a sim minute
 	std::vector<uint32_t> pending_; // per spawner, cars waiting to enter
 	std::vector<std::vector<std::pair<size_t, double>>> reach_; // per spawner: (spawner, weight)
 	std::vector<uint64_t> junction_last_grant_;

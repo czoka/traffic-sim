@@ -2,7 +2,7 @@
 
 A traffic simulation map builder: a C++ simulation core running inside Godot 4, targeting desktop and the browser.
 
-**Status: M6 (economy and ownership) implemented.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals with walk phases) or turn it into a roundabout, place bus stops, depots and routes, footpaths and bike paths, crossings and fences, lift roads onto bridges or into tunnels, and place homes, shops and offices along the streets. Press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue, people walk, wait at the kerb, cross, and ride the bus, and residents live through the week: they sleep, eat, shop and go to work, and shops and offices open only when their staff have arrived. Money moves between residents and the owners of buildings: wages, prices, rent, fares and fuel; residents buy bikes and cars, households buy their homes, and NPC owners buy, tune and sell buildings on a market the player can trade on. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
+**Status: M7 (insight and polish) implemented: all seven milestones are done.** The main scene is a road editor with a traffic simulation. You draw straight and curved roads, which join into generated junctions; each road has a cross-section profile, turn rules per approach and painted no-change lines. You add spawn points at road ends, pick each junction's control (right-hand priority, priority road, all-way stop, fixed-time signals with walk phases) or turn it into a roundabout, place bus stops, depots and routes, footpaths and bike paths, crossings and fences, lift roads onto bridges or into tunnels, and place homes, shops and offices along the streets. Press Play: cars, taxis, buses, coaches and bikes route across the network, change lanes, give way, stop at red lights, park and queue, people walk, wait at the kerb, cross, and ride the bus, and residents live through the week: they sleep, eat, shop and go to work, and shops and offices open only when their staff have arrived. Money moves between residents and the owners of buildings: wages, prices, rent, fares and fuel; residents buy bikes and cars, households buy their homes, and NPC owners buy, tune and sell buildings on a market the player can trade on. Editing pauses the sim; Play resumes with the changes, recompiling only the junctions that changed. Undo/redo is unlimited, and maps save as versioned JSON. The POC's ring-road benchmark is still in the project for tracking sim performance and determinism.
 
 The design lives in the Game Design Document (claude.ai artifact "Traffic Sim Map Builder — Game Design Document"). Its *Implementation plan* tab has the checklists and gates.
 
@@ -17,7 +17,7 @@ python3 build.py                  # macOS extension (debug + release) + C++ test
 
 Python packages live only in the project's `.venv/` (pinned in `requirements.txt`); nothing is installed system-wide. You don't need to activate the venv: `build.py` switches to `.venv`'s Python by itself. To run SCons by hand, use `source .venv/bin/activate` first, or call `.venv/bin/scons`.
 
-Then open `game/project.godot` in **Godot 4.7.x** and press Play (F5). The editor opens your autosave, or the demo town the first time.
+Then open `game/project.godot` in **Godot 4.7.x** and press Play (F5). The editor opens your autosave; the first time, it starts a new city and offers the tutorial.
 
 For the web build you also need Emscripten **4.0.11**, the version Godot 4.7's web templates are built with, plus Godot's export templates (Editor → Manage Export Templates):
 
@@ -122,6 +122,22 @@ The inspector shows a building's state (open, closed or closed unexpectedly, sta
 
 **Ownership and the market.** In the building inspector the player sets, for a city-owned building, the rent (homes), a price factor (shops) and the wage (businesses), and can tick *For sale* with an asking price (0: the valuation). A listed building keeps working until it sells; buyers value a building at about 10 years of its net income (at least its base price), and a listing sells sooner the cheaper it is against that value. Rented homes sell with their tenants. On the 1st of each month NPC owners look at last month: shops that were full or losing money raise prices and quiet ones lower them, businesses with shifts nobody took raise wages (otherwise they drift down), landlords raise rents when full and lower them when units stood empty, all within set ranges; and now and then an owner lists its building. The *Market* panel in the bottom bar lists every building for sale; an NPC listing can be bought with *Buy* in its inspector. A building's use never changes. The sim bar's tooltip has the city's income and spending this month (rent, sales, passes, building sales; wages, stock, purchases), ownership counts, evictions and households in debt, and the vehicles and passes owned.
 
+## Insight and polish (M7)
+
+**Tutorial.** On the first run (no autosave yet) a welcome offers the tutorial, an example town or a city of your own; *Tutorial* in the left panel (and *Examples → Tutorial*) starts it again. The tutorial map is a new city with Loop Road (south of High Street and back, so buses can go round) and Depot Lane, a dead end for the depot. A checklist at the top of the screen walks through drawing a street, three homes, a shop, two bus stops, the depot, a route, Play, people moving in and a bus serving the stops; each step ticks itself off from the map and the sim, the current one says which keys to press, and errors that would block Play are pointed out. The status bar keeps each tool's hint as before.
+
+**Heatmaps.** The *Heatmap* menu in the bottom bar (or `M`, which cycles) colours the lanes of the level being edited by what the sim has seen over the last few minutes (each sim minute weighs 30 %): **speed** (of the limit: red stopped, amber half, green free flow), **wait time** (seconds stopped per vehicle that left the lane: green none, red 30 s or more) and **throughput** (vehicles an hour, pale to violet at 1,200). Lanes with no traffic lately are left out, and a legend above the sim bar explains the colours.
+
+**Stats panels.** A selected junction shows its traffic while the sim runs: vehicles an hour and mean wait over the last few minutes, cars queued now and the longest wait, totals since the start, and the approach with the longest waits. Stops now show boardings and people left behind per hour (*by a full coach* at the main station, its demand); buildings and residents keep their M5/M6 panels.
+
+**Validation.** Besides the earlier checks, the problems panel warns about a roundabout too small for its legs (about 22 m of ring per leg) and parking next to a mid-block crossing (no bays within 10 m of it). Errors (roads crossing without a junction, lanes with no way out, ramps too steep or with junctions, ...) block Play; warnings don't.
+
+**Profiles.** The built-in library has 15 cross-sections, from a residential one-way street with parking to a boulevard with a wide median, parking and bike lanes and 2+2 and 3+3 highways. *Save as…* keeps a road's profile; the *…* button next to it lists your saved profiles, deletes them, and exports or imports them as a JSON file to move them to another browser or computer.
+
+**Screenshots.** *Screenshot (PNG)* in the left panel (Ctrl/Cmd+Shift+P) saves the map as it is on screen without the editor panels: a save dialog on desktop, a download in the browser.
+
+**Performance at 128x.** The sim may now use up to half of each frame (8–30 ms) instead of a fixed 8 ms, so a slow frame rate doesn't also hold the sim back. Measured in the web build (headless Chromium with software rendering, which caps it at about 22 fps on any map): every example reaches 128x except the people city stress map (2,000 vehicles and 1,000 people at once), which runs at about 45x and shows *CPU-limited*; before the change the test grid reached 63–92x and the people city about 20x. `tsim_bench --example NAME` prints what 128x costs for an example natively. The query options `&speed=5` (the multiplier index; 5 is 128x) and `&perf-log` (frame rate and sim speed every 5 s in the console) help measure it.
+
 ## The simulation (M2)
 
 The bar above the bottom bar runs the sim: **Play/Pause** (`Space`), **Step** one sim second (`.`), **Restart** (remove all cars and start again with the seed), **Speed** (16x real time by default, multipliers 0.25–8 for 4x–128x), **Seed**, **Density** (multiplies every spawn rate) **Max cars** (spawning pauses at that many cars) and **Max people** (new trips on foot pause at that many people, 1,000 by default). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
@@ -135,7 +151,7 @@ How it works:
 * **Demand.** Spawn points release cars as a Poisson process at their rate × density, towards destinations drawn from the origin-destination weights (only reachable ones). Cars queue at the map edge when the entry lane is full, and leave the map at their destination's road end.
 * **Editing while paused.** Vehicles, routes and grants are carried over to the recompiled network by stable lane IDs; cars on lanes that no longer exist are removed and every other car re-routes.
 
-**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, the M4 people town and people city, the M5 new city, city town and city week, the M6 city market, or the POC ring benchmark.
+**Files:** the editor autosaves every 10 s to `user://autosave.json`, which is browser storage on the web. *Export…* and *Open…* use native file dialogs on desktop, and a download or file picker in the browser. *Examples* loads the demo town, the 56-junction test grid, the small M2 maps, the M3 showcase, the M4 people town and people city, the M5 new city, city town and city week, the M6 city market, the M7 tutorial, or the POC ring benchmark.
 
 ### Other controls
 
@@ -148,13 +164,15 @@ How it works:
 | Ctrl/Cmd+S, Ctrl/Cmd+O | Export, open a map file |
 | PgUp / PgDn | Edit the level above / below |
 | `J` | Show only the level being edited (also *Only this level* in the bottom bar) |
+| `M` | Cycle the heatmaps: off, speed, wait time, throughput |
+| Ctrl/Cmd+Shift+P | Screenshot (PNG) |
 | Esc | Cancel the current drawing, then clear the selection |
 
 Map labels and markers (spawn points, stops, depots, problems, building markers) are drawn with a signed-distance-field font, so text stays sharp at any zoom and screen density, and they are sized relative to the window (designed for 900 px high, twice as big at 1800 px), so they take the same share of the view on every resolution. The bottom bar has a map-style scale bar (its tooltip gives the exact zoom in screen pixels per metre). In the browser, the page's query string works like the desktop command-line options, so a view can be shared or reopened exactly: `index.html?example=showcase&view=-222,-25,20` opens the showcase centred on (−222, −25) m at 20 px/m (`&play` starts the sim, `&sim-seconds=90` runs it 90 s first).
 
 ## Map files
 
-Format `"traffic-sim-map"`, version **7**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences, buildings (id, type, position, facing, level and name, and the player's rent, price factor, wage, for-sale flag and asking price), and the city centre marker. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–6 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. Examples are in `game/maps/` (`*_v7.json` are written by `tsim_bench --write-maps game/maps`).
+Format `"traffic-sim-map"`, version **7**. The file stores nodes (position, level, junction control with main-road segments, signal plan with walk legs per phase, roundabout, depot with its routes, spawn point with rate, sink flag, origin-destination weights, bike rate, people rate and coach lines) and segments: kind (road, footpath, bike path, shared path), curve (straight, arc or Bézier), level and rise (ramps), stairs, speed limit, name, profile (lanes with stable IDs and parking style), turn rules and crossing per end (with pocket lane IDs), no-change zones, bus stops, mid-block crossings and fences, buildings (id, type, position, facing, level and name, and the player's rent, price factor, wage, for-sale flag and asking price), and the city centre marker. Keys are written in a fixed order and numbers in shortest round-trip form, so save → load → save gives an identical file. Version 2–6 files load unchanged with the defaults for what they lack; version 1 files (the POC ring) are upgraded on load; files from a newer version are rejected with a message. `tests/data/migrations/` keeps a file each milestone actually wrote (v1 POC ring, v2 and v3 demo town, v4 showcase, v5 people town, v6 city town, v7 city market); the test `migrations` loads each, checks it saves as v7 and reads back the same, has no errors, and runs. Examples are in `game/maps/` (`*_v7.json` are written by `tsim_bench --write-maps game/maps`).
 
 ## M1 gate and measurements
 
@@ -241,6 +259,19 @@ The gate is **a reference city runs 2 sim months with no runaway prices and no m
 
 Other M6 tests cover the data table, map v7 (economy settings and the centre round-trip, centre undo, bad numbers refused, v6 files load with the defaults), location prices (the factor from the centre, a moved centre, the player's rent), money flows (rent on day 1, wages, sales, stock, fares, and the city's accounts adding up), the bus pass and day pass, eviction after two rent days in debt, cars (everyone given one: 4,000 car trips in 40 hours, commuters driving out by the map edge, every car at home or with its owner in the evening, nothing stuck), bikes, the market (a cheap player listing sells with its tenants, the new owner tunes the rent and lists it, the player buys it back), households buying their home, and determinism: same seed same hash, and a golden hash of 4 city-market hours with some residents given bikes and cars (`04d04d8a98ca699d`, checked on every CI platform).
 
+## M7 gate and measurements
+
+The gate is **a new player builds a working town with a shop, homes and a bus route in 30 minutes without reading docs.** The tutorial is how they get there; it is checked by the C++ test `M7 gate` and by the M7 part of `game/tests/sim_smoke_test.gd`, which follow its steps the way a player would on the tutorial map: three townhouses and a grocery beside Loop Road, a stop on Loop Road and one on High Street, the depot at the end of Depot Lane and a loop route through both stops. The map has no errors at any step, every checklist step ticks off, and in the first sim day newcomers arrive by coach and move in (3 households), the grocery serves 360 customers and the bus serves its stops 860 times, with nothing stuck. Whether a person really finishes in 30 minutes can only be found with people; the steps are a handful of clicks each.
+
+Other M7 tests cover the lane heat (speed within the limit, waits and throughput at the junctions, kept when another road is edited, cleared on restart), junction stats (the busiest grid junction: about 1,100 vehicles an hour), the new warnings, every built-in profile building a road without errors, and save files from every milestone. The golden hashes are unchanged: the heat is counted beside the sim and is not part of the state hash.
+
+| `tsim_bench --example`, native (one core of a 2.1 GHz Xeon) | Tick | 128x needs (ms of sim a second) |
+| --- | --- | --- |
+| Demo town, showcase, people town | 3–17 µs | 4–22 |
+| Test grid (about 600 cars) | 95 µs | 122 |
+| City week (about 4,900 residents), city market, city town | 0.2–4.5 µs | 0–6 |
+| People city (2,000 vehicles, 1,000 people) | 720 µs | 921 (CPU-limited) |
+
 ## POC ring benchmark
 
 *Examples → POC ring benchmark* (or `godot --path game -- --bench`) runs the POC scene: IDM cars on a multi-lane ring road, drawn with one MultiMesh. It still checks the POC gate: **2,000 cars at 60 fps in a desktop browser, and the same seed gives an identical state hash on web and desktop.** In a browser, open the exported page with `?bench`. For each phase it reports fps, p95 frame time, sim milliseconds per frame, microseconds per tick and the speed actually achieved.
@@ -271,14 +302,16 @@ core/                 pure C++17, no Godot includes
                       people, crossings, mode choice and passengers (M4, traffic_peds.cpp),
                       residents, households, jobs, shifts and immigration (M5, traffic_city.cpp),
                       money, owners and the market (M6, traffic_economy.cpp),
-                      resident car and bike trips (M6, traffic_drive.cpp)
+                      resident car and bike trips (M6, traffic_drive.cpp),
+                      lane heat and junction stats (M7, traffic_insight.cpp)
     city_data.h       building types, offerings and needs from city_data.json (M5)
     buildings.h       lot shapes, snapping lots to streets, overlap checks (M5)
     traffic_run.h     keeps network and sim in step with the map; M2 golden scenario
     demo_maps.h       demo town, the gate test grid, the M2 test maps, the M3 showcase,
-                      the M4 people town and people city, the M5 cities, the M6 city market
+                      the M4 people town and people city, the M5 cities, the M6 city market,
+                      the M7 tutorial
     map.h, sim.h      POC runtime lane network and IDM simulation
-extension/src/        GDExtension: RoadEditor (editor + sim bridge, road_editor_m5.cpp for the city, road_editor_m6.cpp for the economy), TrafficSim (POC)
+extension/src/        GDExtension: RoadEditor (editor + sim bridge, road_editor_m5.cpp for the city, road_editor_m6.cpp for the economy, road_editor_m7.cpp for heatmaps and stats), TrafficSim (POC)
 game/                 Godot 4.7 project (Compatibility renderer)
   editor/             main scene, map view, sim controller, overlay, tools/, ui/, file I/O
   poc/                ring benchmark scene
@@ -286,7 +319,7 @@ game/                 Godot 4.7 project (Compatibility renderer)
   data/               city_data.json: building types, offerings, needs, jobs
   maps/               example maps (v7, a few v2) and the POC ring (v1)
   tests/              headless smoke tests (editor, sim, POC)
-tests/                C++ unit tests (doctest)
+tests/                C++ unit tests (doctest); data/migrations: a save file from every milestone
 tools/                headless sim benchmark (tsim_bench)
 third_party/          doctest 2.4.12, nlohmann/json 3.12.0 (MIT), Clipper2 2.0.1 (Boost)
 godot-cpp/            submodule, godot-cpp v10 (master @ 507ed9d), api_version 4.7
@@ -310,6 +343,7 @@ Other checks:
 
 ```sh
 build/native/tsim_bench                                          # golden scenario: PASS/FAIL
+build/native/tsim_bench --example people_city                    # what 128x costs on an example map
 godot --headless --path game --script res://tests/editor_smoke_test.gd
 godot --headless --path game --script res://tests/sim_smoke_test.gd
 godot --headless --path game --script res://tests/poc_smoke_test.gd
@@ -342,7 +376,9 @@ CI (`.github/workflows/ci.yml`) builds Linux, Windows (MSVC) and macOS (Apple Si
 * When the map is edited while people are out, they are carried over by position, stop and spawn point, and anyone on a crossing or path that changed starts again from the nearest node.
 * Route lines on the map are the free-flow routes; running buses re-route with traffic.
 * A lane change is instant in the sim and drawn as a 3 s sideways slide. There are no U-turns, and cars never turn around at a dead end: routes only lead to spawn points.
-* The sim is single-threaded. At 128x a 2,000-car map may be CPU-limited; the status bar then shows the speed actually reached.
+* The sim is single-threaded. At 128x a 2,000-car map may be CPU-limited (the people city stress map reaches about 45x in the browser); the status bar then shows the speed actually reached. Frame rates in the browser were only measured with software rendering (about 22 fps on every map); real-GPU numbers are still to be taken.
+* Heatmaps show the level being edited, one colour per lane, smoothed over a few minutes; people's waits at crossings and stops are in the stop and crossing numbers, not on the heatmap.
+* The tutorial checks what is on the map, not how it got there, and is in English only.
 * Roads that cross mid-segment don't join automatically; a junction is made by snapping an end onto a road or node. Crossings are flagged in the problems panel.
 * The whole map's geometry is rebuilt after each edit (about 10 ms on the 56-junction grid). Incremental rebuilds can come later if bigger maps need them.
 * The bridge tool needs the two roads to cross mid-segment, away from junctions; ramps can't end in a junction. Only one level up or down per bridge or tunnel.

@@ -131,6 +131,23 @@ std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom) {
 				out.push_back(p);
 			}
 		}
+		// A roundabout needs room between its entries: about 22 m of ring per leg (M7).
+		if (rn && rn->roundabout.enabled && g.legs.size() >= 3) {
+			const double per_leg = 22.0;
+			const double circumference = 2.0 * 3.14159265358979 * rn->roundabout.radius;
+			if (static_cast<double>(g.legs.size()) * per_leg > circumference + 1e-9) {
+				Problem p;
+				p.severity = Severity::Warning;
+				p.code = "roundabout_small";
+				p.message = "Roundabout is small for " + std::to_string(g.legs.size()) + " legs: entries are close together. Use a radius of at least " +
+						fmt_m(std::ceil(static_cast<double>(g.legs.size()) * per_leg / (2.0 * 3.14159265358979))) + " (it has " +
+						fmt_m(rn->roundabout.radius) + ").";
+				p.pos = g.pos;
+				p.level = g.level;
+				p.nodes = { g.id };
+				out.push_back(p);
+			}
+		}
 		if (g.kind == NodeKind::Junction && g.legs.size() > 6) {
 			Problem p;
 			p.severity = Severity::Error;
@@ -203,6 +220,21 @@ std::vector<Problem> validate(const RoadMap &map, const RoadGeometry &geom) {
 			p.level = s.level;
 			p.segments = { s.id };
 			out.push_back(p);
+		}
+		// Parking beside a mid-block crossing (M7): no bays within 10 m of it.
+		bool parking = false;
+		for (const LaneSpec &l : s.profile.lanes) parking |= l.type == LaneType::Parking;
+		if (parking) {
+			for (const Crossing &cr : s.crossings) {
+				Problem p;
+				p.severity = Severity::Warning;
+				p.code = "parking_crossing";
+				p.message = "Parking next to a crossing: no bays within 10 m of it, so drivers can see people crossing.";
+				p.pos = sg->curve.point(cr.u);
+				p.level = s.level;
+				p.segments = { s.id };
+				out.push_back(p);
+			}
 		}
 		for (int e = 0; e < 2; ++e) {
 			const EndRules &r = s.ends[e];

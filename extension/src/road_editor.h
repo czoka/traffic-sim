@@ -148,6 +148,13 @@ public:
 	Array sim_market(); // [{id, name, label, by_city, owner, asking, value, days}]
 	bool sim_buy_building(int64_t id); // the player buys an NPC owner's listing
 
+	// --- M7: insight -------------------------------------------------------------
+	Dictionary sim_lane_lines(int level); // {lines: [PackedVector2Array], lanes: PackedInt32Array, lane_count}
+	// Per sim lane: speed (of the limit, 0-1), wait (s per vehicle) or flow
+	// (vehicles an hour); -1 where there was no traffic lately.
+	PackedFloat32Array sim_lane_heat(const String &mode);
+	Dictionary sim_junction_stats(int64_t node);
+
 	// --- Profiles --------------------------------------------------------------
 	Array presets() const; // [{name, params}]
 	Dictionary params_of_profile(const Dictionary &profile) const;
@@ -203,6 +210,7 @@ protected:
 	static void bind_m4_methods();
 	static void bind_m5_methods();
 	static void bind_m6_methods();
+	static void bind_m7_methods();
 
 private:
 	void ensure_geometry();

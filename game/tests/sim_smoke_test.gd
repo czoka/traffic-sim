@@ -162,6 +162,7 @@ func _run() -> void:
 	await _m4(ed, road)
 	await _m5(ed, road)
 	await _m6(ed, road)
+	await _m7(ed, road)
 
 	# Errors block Play.
 	road.new_map()
@@ -509,6 +510,116 @@ func _m6(ed: MapEditor, road) -> void:
 	var r: Dictionary = road.load_json(text)
 	_check(r.ok and road.save_json() == text, "economy settings survive save -> load -> save")
 	ed.clear_selection()
+
+
+## M7: the tutorial as a new player would follow it (the gate: a working town
+## with a shop, homes and a bus route), heatmaps, junction stats, the profile
+## library and the new warnings.
+func _m7(ed: MapEditor, road) -> void:
+	var t0 := Time.get_ticks_msec()
+	ed.start_tutorial()
+	await _frames(2)
+	var guide: Guide = ed.ui.guide
+	_check(guide.visible and guide.active and int(road.get_stats().errors) == 0, "the tutorial starts on a map with no errors")
+	var loop_bottom := 0
+	var high := 0
+	var depot_lane := 0
+	for id in road.segment_ids():
+		var sg: Dictionary = road.get_segment(id)
+		if sg.name == "High Street" and absf(road.get_node(sg.from).pos.x + 100.0) < 1.0:
+			high = id # between the two ends of Loop Road
+		elif sg.name == "Depot Lane":
+			depot_lane = id
+		elif sg.name == "Loop Road" and absf(road.segment_point(id, 0.5).y - 220.0) < 1.0:
+			loop_bottom = id
+	_check(high != 0 and loop_bottom != 0 and depot_lane != 0, "High Street, Loop Road and Depot Lane")
+	# 1. A street off Loop Road.
+	road.add_road([{"pos": Vector2(-100, 120), "segment": _seg_at(road, Vector2(-100, 120))}, {"pos": Vector2(-200, 120)}], {"preset": "Street 1+1"}, 0, 50.0)
+	# 2-3. Three homes and a grocery beside Loop Road.
+	var placed := 0
+	for spot in [Vector2(-85, 60), Vector2(-85, 100), Vector2(-85, 160), Vector2(-60, 205)]:
+		var kind := "grocery" if placed == 3 else "townhouse"
+		var snap: Dictionary = road.snap_building(kind, spot, 0)
+		if snap.ok and not snap.blocked and road.add_building(kind, snap.pos, snap.dir, 0) != 0:
+			placed += 1
+	_check(placed == 4, "3 homes and a shop placed (%d)" % placed)
+	# 4. Two stops: Loop Road's bottom and High Street.
+	var a: int = road.add_stop(loop_bottom, 0.5, "forward", "kerbside", "Loop Road")
+	var b: int = road.add_stop(high, 0.3, "backward", "kerbside", "High Street")
+	# 5-6. The depot at Depot Lane's end and a route through both stops.
+	var end_node: int = road.get_segment(depot_lane).to
+	road.set_depot(end_node, {"enabled": true, "name": "Depot", "capacity": 4, "routes": [
+		{"id": 0, "name": "1", "color": 0x2f7fd8, "stops": [a, b], "headway": 300.0, "loop": true}]})
+	await _frames(2)
+	guide.refresh()
+	for st in ["street", "homes", "shop", "stops", "depot", "route"]:
+		_check(guide.done.get(st, false), "tutorial step done: %s" % st)
+	var errors := 0
+	for pr in road.get_problems():
+		if pr.severity == "error":
+			errors += 1
+			print("    error: ", pr.message)
+	_check(errors == 0, "no errors before Play")
+	# 7-9. Play: people move in and ride the bus.
+	_check(ed.sim.play(), "Play is allowed")
+	var riders := false
+	for h in 12:
+		road.sim_step(36000)
+		ed.sim._refresh_stats()
+		guide.refresh()
+		if guide.done.get("bus", false) and guide.done.get("residents", false):
+			break
+	var c: Dictionary = road.sim_city_stats()
+	print("    tutorial town after %s: %d residents, %d households, %d bus trips, %d stops served, %d shifts" % [SimController.clock_text(ed.sim.stats.clock_day, ed.sim.stats.clock_minute), c.residents, c.households, c.trips_bus, ed.sim.stats.bus_stops_served, c.shifts])
+	_check(guide._title.text == "Tutorial: done", "the tutorial is done")
+	for st in ["play", "residents", "bus"]:
+		_check(guide.done.get(st, false), "tutorial step done: %s" % st)
+	ed.sim.pause()
+	print("    the tutorial run took %d ms" % (Time.get_ticks_msec() - t0))
+	# Heatmaps and the junction inspector.
+	ed.ui.set_heatmap("speed")
+	await _frames(2)
+	var heat: PackedFloat32Array = road.sim_lane_heat("speed")
+	var seen := 0
+	for v in heat:
+		if v >= 0.0:
+			seen += 1
+	_check(ed.heat.visible and seen > 0 and ed.heat._lines.size() > 0, "speed heatmap: %d lanes with traffic" % seen)
+	ed.ui.set_heatmap("flow")
+	ed.ui.cycle_heatmap()
+	_check(ed.heat.mode == "off" and not ed.heat.visible, "M cycles the heatmaps back to off")
+	var junction := int(road.get_segment(loop_bottom).from)
+	var js: Dictionary = road.sim_junction_stats(junction)
+	_check(js.found and int(js.approaches) > 0, "junction stats: %d approaches, %.0f an hour, %d through" % [js.approaches, js.flow, js.passed])
+	# The profile library: import a file of profiles, delete one.
+	var before: int = ed.user_presets.size()
+	var prof: Dictionary = road.get_segment(high).profile
+	var n: int = ed.import_user_presets_text(JSON.stringify({"format": "traffic-sim-profiles", "version": 1, "profiles": [
+		{"name": "smoke import", "profile": prof}, {"name": "broken", "profile": {"lanes": []}}]}))
+	_check(n == 1 and ed.user_presets.size() == before + 1, "profiles import (the broken one is skipped)")
+	ed.delete_user_preset("smoke import")
+	_check(ed.user_presets.size() == before, "a saved profile deleted")
+	_check(road.presets().size() >= 15, "%d built-in profiles" % road.presets().size())
+	# New warnings: a small roundabout with four legs.
+	ed.load_demo("grid")
+	await _frames(1)
+	var centre := 0
+	for id in road.node_ids():
+		if road.get_node(id).segments.size() == 4:
+			centre = id
+			break
+	road.set_roundabout(centre, {"enabled": true, "radius": 12.0, "lanes": 1})
+	var small := false
+	for pr in road.get_problems():
+		small = small or pr.code == "roundabout_small"
+	_check(small, "a 12 m roundabout with four legs gets a warning")
+	ed.clear_selection()
+	ed.ui.guide.stop()
+
+
+func _seg_at(road, pos: Vector2) -> int:
+	var p: Dictionary = road.pick(pos, 3.0, 0)
+	return int(p.id) if p.type == "segment" else 0
 
 
 func void_ok(_x) -> void:
