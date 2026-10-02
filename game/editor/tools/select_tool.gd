@@ -1,7 +1,9 @@
 class_name SelectTool
 extends EditorTool
 ## V: click to select, shift-click to add, drag nodes / roads / curve handles.
-## Dropping a node on another node joins them. Delete removes the selection.
+## Dropping a node on another node joins them. Dragging a building moves its lot
+## along the streets (it snaps like the building tool; red where it can't go).
+## Delete removes the selection.
 
 var _hover := {}
 var _drag := "" # "", "move", "handle"
@@ -12,10 +14,14 @@ var _drag_node := 0 # the node under the cursor when dragging one node
 var _merge_target := 0
 var _handle_seg := 0
 var _handle_index := -1
+var _bld := 0 # building being dragged
+var _bld_type := ""
+var _bld_offset := Vector2.ZERO # from the cursor to the building's door (front edge)
+var _bld_snap := {}
 
 
 func hint() -> String:
-	return "Click to select (cars too) · Shift-click to add · Drag to move · Drag handles to bend · Delete removes"
+	return "Click to select (cars too) · Shift-click to add · Drag to move (buildings too) · Drag handles to bend · Delete removes"
 
 
 func deactivate() -> void:
@@ -64,6 +70,8 @@ func input(event: InputEvent) -> bool:
 		var building: int = editor.road.pick_building(mouse, editor.level)
 		if building != 0 and hit.type != "node":
 			editor.select("buildings", building, mb.shift_pressed)
+			if not mb.shift_pressed:
+				_start_building_move(building, mouse)
 			return true
 		if hit.type == "none":
 			if not mb.shift_pressed:
@@ -78,6 +86,15 @@ func input(event: InputEvent) -> bool:
 		_start_move(hit)
 		return true
 	if is_left_release(event) and _drag != "":
+		if _drag == "building":
+			if _moved:
+				editor.road.commit()
+				editor.ui.set_status("Building moved" if not _bld_snap.get("blocked", true) else "Building stays where it last fitted")
+			else:
+				editor.road.cancel()
+			_drag = ""
+			_bld_snap = {}
+			return true
 		if _drag == "move" and _merge_target != 0 and _drag_node != 0:
 			editor.road.merge_nodes(_drag_node, _merge_target)
 			editor.clear_selection()
@@ -110,7 +127,32 @@ func _start_move(hit: Dictionary) -> void:
 	_drag = "move"
 
 
+func _start_building_move(id: int, mouse: Vector2) -> void:
+	var b: Dictionary = editor.road.get_building(id)
+	if b.is_empty():
+		return
+	_bld = id
+	_bld_type = String(b.type)
+	var door := mouse
+	for x in editor.road.get_buildings(editor.level):
+		if int(x.id) == id:
+			door = x.door
+	_bld_offset = door - mouse
+	_bld_snap = {}
+	editor.road.begin("Move building")
+	_drag = "building"
+
+
 func _drag_update(mouse: Vector2) -> void:
+	if _drag == "building":
+		# The lot snaps to the street edge nearest its door; it only moves where it fits.
+		_bld_snap = editor.road.snap_building(_bld_type, mouse + _bld_offset, editor.level, _bld)
+		if _bld_snap.get("ok", false) and not _bld_snap.blocked:
+			editor.road.move_building(_bld, _bld_snap.pos, _bld_snap.dir)
+			editor.ui.set_status("Release to place the building here")
+		else:
+			editor.ui.set_status("The building doesn't fit there (a road or another lot is in the way)" if _bld_snap.get("ok", false) else "Move it beside a street")
+		return
 	if _drag == "handle":
 		var p := mouse.snapped(Vector2.ONE) if editor.snap_grid else mouse
 		editor.road.set_control_point(_handle_seg, _handle_index, p)
@@ -164,6 +206,10 @@ func _handle_at(mouse: Vector2) -> Dictionary:
 
 
 func draw(o: EditorOverlay) -> void:
+	if _drag == "building" and _bld_snap.get("ok", false) and _bld_snap.blocked:
+		var c: PackedVector2Array = _bld_snap.corners
+		o.draw_colored_polygon(c, Color(EditorOverlay.ERROR, 0.3))
+		o.draw_outline(c, EditorOverlay.ERROR, 2.0)
 	if _drag == "" and not _hover.is_empty():
 		if _hover.type == "segment" and not editor.selection.segments.has(_hover.id):
 			o.draw_outline(editor.road.segment_outline(_hover.id), EditorOverlay.HOVER, 1.5)
