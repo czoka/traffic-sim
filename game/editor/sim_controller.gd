@@ -126,7 +126,7 @@ func speed() -> float:
 
 
 func speed_label(i: int) -> String:
-	return "%s× (%dx)" % [str(MULTIPLIERS[i]), int(BASE_SPEED * MULTIPLIERS[i])]
+	return "%sx" % str(MULTIPLIERS[i]).trim_suffix(".0")
 
 
 ## Returns false (and says why) when errors block Play.
