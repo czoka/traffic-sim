@@ -727,6 +727,38 @@ void build_new_city(Document &doc) {
 	doc.commit();
 }
 
+void build_tutorial(Document &doc) {
+	doc.begin("Tutorial");
+	RoadMap scratch;
+	const Profile street = preset_profile("Street 1+1", scratch);
+	const CityBase base = city_base(doc, 450.0, -150.0, 6.0);
+	// Loop Road: from High Street south, along the bottom and back, so buses
+	// can go round; Depot Lane: a dead end off its corner for the bus depot.
+	PointRef a, b, c, e;
+	a.pos = Vec2{ -100.0, 0.0 };
+	a.segment = base.main;
+	b.pos = Vec2{ -100.0, 220.0 };
+	c.pos = Vec2{ 100.0, 220.0 };
+	e.pos = Vec2{ 100.0, 0.0 };
+	e.segment = base.main;
+	const std::vector<SegmentId> loop = doc.add_road({ a, b, c, e }, street, 0, 50.0 / 3.6);
+	for (SegmentId id : loop) doc.set_name(id, "Loop Road");
+	NodeId corner = kNoId;
+	for (const auto &kv : doc.map().nodes()) {
+		if (std::fabs(kv.second.pos.x - 100.0) < 1e-6 && std::fabs(kv.second.pos.y - 220.0) < 1e-6) corner = kv.first;
+	}
+	PointRef from, to;
+	from.node = corner;
+	from.pos = Vec2{ 100.0, 220.0 };
+	to.pos = Vec2{ 200.0, 220.0 };
+	const SegmentId lane = doc.add_road({ from, to }, street, 0, 30.0 / 3.6).front();
+	doc.set_name(lane, "Depot Lane");
+	RoadGeometry geom;
+	geom.build(doc.map());
+	place_building(doc, geom, "city_offices", Vec2{ 250.0, -20.0 });
+	doc.commit();
+}
+
 void build_city_town(Document &doc) {
 	doc.begin("City town");
 	RoadMap scratch;

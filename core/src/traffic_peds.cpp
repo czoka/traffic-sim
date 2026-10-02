@@ -1246,6 +1246,11 @@ std::vector<StopStats> Traffic::stop_stats() const {
 			st.alighted = a.alighted;
 			st.left_behind = a.left_behind;
 			st.mean_wait = a.boarded ? a.wait_sum / static_cast<double>(a.boarded) : 0.0;
+			const double hours = static_cast<double>(tick_) * config_.dt / 3600.0;
+			if (hours > 0.0) {
+				st.boarded_per_hour = static_cast<double>(a.boarded) / hours;
+				st.left_behind_per_hour = static_cast<double>(a.left_behind) / hours;
+			}
 		}
 		for (const Pedestrian &p : peds_) {
 			if (p.state == PedState::WaitingForBus && p.board == static_cast<int32_t>(s)) ++st.waiting;

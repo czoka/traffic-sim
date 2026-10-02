@@ -288,6 +288,9 @@ Array RoadEditor::sim_stop_stats() {
 		d["alighted"] = static_cast<int64_t>(s.alighted);
 		d["left_behind"] = static_cast<int64_t>(s.left_behind);
 		d["mean_wait"] = s.mean_wait;
+		d["kind"] = stop_kind_name(ns.kind);
+		d["boarded_per_hour"] = s.boarded_per_hour;
+		d["left_behind_per_hour"] = s.left_behind_per_hour;
 		out.push_back(d);
 	}
 	return out;

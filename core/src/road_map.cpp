@@ -624,6 +624,18 @@ const std::vector<ProfilePreset> &profile_presets() {
 		b.bike_left = b.bike_right = true;
 		v.push_back({ "Street 1+1, bike lanes", b });
 
+		ProfileParams pb = q;
+		pb.bike_left = pb.bike_right = true;
+		v.push_back({ "Street 1+1, parking, bike lanes", pb });
+
+		ProfileParams r;
+		r.backward = 0;
+		r.forward = 1;
+		r.lane_width = 3.5;
+		r.sidewalk_left = r.sidewalk_right = true;
+		r.parking_right = true;
+		v.push_back({ "Residential one-way, parking", r });
+
 		ProfileParams a;
 		a.backward = 2;
 		a.forward = 2;
@@ -639,6 +651,23 @@ const std::vector<ProfilePreset> &profile_presets() {
 		bus.bus_left = bus.bus_right = true;
 		bus.parking_left = bus.parking_right = true;
 		v.push_back({ "Avenue 2+2, bus lanes, parking", bus });
+
+		ProfileParams ab = a;
+		ab.bike_left = ab.bike_right = true;
+		v.push_back({ "Avenue 2+2, median, bike lanes", ab });
+
+		ProfileParams bv = a;
+		bv.median_width = 6.0;
+		bv.parking_left = bv.parking_right = true;
+		bv.bike_left = bv.bike_right = true;
+		bv.sidewalk_width = 4.0;
+		v.push_back({ "Boulevard 2+2, wide median, parking, bike lanes", bv });
+
+		ProfileParams a3 = a;
+		a3.backward = 3;
+		a3.forward = 3;
+		a3.median_width = 3.0;
+		v.push_back({ "Avenue 3+3, median", a3 });
 
 		ProfileParams o;
 		o.backward = 0;
@@ -663,6 +692,11 @@ const std::vector<ProfilePreset> &profile_presets() {
 		h.lane_width = 3.5;
 		h.median = MedianType::Raised;
 		h.median_width = 3.0;
+		ProfileParams h2 = h;
+		h2.backward = 2;
+		h2.forward = 2;
+		v.push_back({ "Highway 2+2", h2 });
+
 		v.push_back({ "Highway 3+3", h });
 		return v;
 	}();

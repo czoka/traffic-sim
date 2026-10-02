@@ -29,6 +29,8 @@ var _title: Label
 var _empty: Label
 var _segment_box: VBoxContainer
 var _node_box: VBoxContainer
+var _junction_live_box: VBoxContainer # M7
+var _junction_live: Label
 var _multi_box: VBoxContainer
 var _multi_label: Label
 
@@ -255,6 +257,12 @@ func _build_segment(outer: VBoxContainer) -> void:
 	save.tooltip_text = "Save this road's cross-section as a profile for new roads"
 	save.pressed.connect(_save_preset)
 	pr.add_child(save)
+	var manage := Button.new()
+	manage.text = "…"
+	manage.focus_mode = Control.FOCUS_NONE
+	manage.tooltip_text = "Your saved profiles: delete, export or import them"
+	manage.pressed.connect(_manage_presets)
+	pr.add_child(manage)
 	box.add_child(pr)
 	_forward = _spin(_row(box, "Lanes forward"), 0, 6, 1, "", func(v: float) -> void: _set_param("forward", int(v)))
 	_backward = _spin(_row(box, "Lanes back"), 0, 4, 1, "", func(v: float) -> void: _set_param("backward", int(v)))
@@ -357,6 +365,14 @@ func _build_node(outer: VBoxContainer) -> void:
 	_node_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_node_info.custom_minimum_size = Vector2(280, 0)
 	_node_box.add_child(_node_info)
+	_junction_live_box = VBoxContainer.new()
+	_junction_live_box.add_child(EditorUI.section("Traffic here"))
+	_junction_live = Label.new()
+	_junction_live.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_junction_live.custom_minimum_size = Vector2(280, 0)
+	_junction_live_box.add_child(_junction_live)
+	_junction_live_box.visible = false
+	_node_box.add_child(_junction_live_box)
 
 	_control_box = VBoxContainer.new()
 	_control_box.add_child(EditorUI.section("Junction control"))
@@ -851,6 +867,7 @@ func _refresh_ped() -> void:
 ## Live numbers while the sim runs (stop stats on the selected road, a building's state).
 func refresh_live() -> void:
 	refresh_building_live()
+	refresh_junction_live()
 	if _seg == 0 or not _segment_box.visible or not _stops_box.visible:
 		return
 	var seg: Dictionary = editor.road.get_segment(_seg)
@@ -862,10 +879,32 @@ func refresh_live() -> void:
 	var lines: Array = []
 	for st in editor.sim.stop_stats:
 		if ids.has(int(st.id)):
-			lines.append("%s: %d waiting · %d boarded, %d got off · mean wait %s · %d left behind" % [
-				st.name, st.waiting, st.boarded, st.alighted, EditorUI.clock(st.mean_wait), st.left_behind])
+			lines.append("%s: %d waiting · %d boarded (%.0f an hour), %d got off · mean wait %s · %d left behind by a full %s (%.1f an hour)" % [
+				st.name, st.waiting, st.boarded, st.get("boarded_per_hour", 0.0), st.alighted, EditorUI.clock(st.mean_wait),
+				st.left_behind, "coach" if String(st.get("kind", "")) == "main_station" else "bus", st.get("left_behind_per_hour", 0.0)])
 	_stop_stats.text = "\n".join(lines)
 	_stop_stats.visible = not lines.is_empty()
+
+
+## M7: the selected junction's numbers while the sim has run.
+func refresh_junction_live() -> void:
+	if _node == 0 or not _node_box.visible:
+		_junction_live_box.visible = false
+		return
+	var js: Dictionary = editor.road.sim_junction_stats(_node)
+	if js.is_empty() or not js.found or int(js.approaches) == 0 or (int(js.passed) == 0 and int(js.queued) == 0):
+		_junction_live_box.visible = false
+		return
+	_junction_live_box.visible = true
+	var lines := [
+		"%.0f vehicles an hour · mean wait %.1f s (last few minutes)" % [js.flow, js.mean_wait],
+		"%d queued now%s" % [js.queued, (" · longest wait %.0f s" % js.longest_wait) if int(js.queued) > 0 else ""],
+		"%d through since the start · mean wait %.1f s" % [js.passed, js.total_mean_wait],
+	]
+	if int(js.worst_segment) != 0 and float(js.worst_wait) >= 1.0:
+		var name := String(js.get("worst_name", ""))
+		lines.append("Longest waits on %s: %.1f s a vehicle" % [name if name != "" else "road %d" % js.worst_segment, js.worst_wait])
+	_junction_live.text = "\n".join(lines)
 
 
 func _fill_segment(id: int) -> void:
@@ -1045,6 +1084,64 @@ func _save_preset() -> void:
 	add_child(d)
 	d.popup_centered()
 	edit.grab_focus()
+
+
+## M7: the profile library - the profiles you saved, with delete, export and import.
+func _manage_presets() -> void:
+	var d := AcceptDialog.new()
+	d.title = "Your profiles"
+	d.ok_button_text = "Close"
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(360, 0)
+	d.add_child(box)
+	var list := VBoxContainer.new()
+	box.add_child(list)
+	var fill := func() -> void:
+		for c in list.get_children():
+			c.queue_free()
+		if editor.user_presets.is_empty():
+			var l := Label.new()
+			l.text = "No saved profiles yet. Use Save as… on a road to keep its cross-section."
+			l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			l.custom_minimum_size = Vector2(340, 0)
+			list.add_child(l)
+		for p in editor.user_presets:
+			var row := HBoxContainer.new()
+			var l := Label.new()
+			l.text = String(p.name)
+			l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			row.add_child(l)
+			var del := Button.new()
+			del.text = "Delete"
+			del.focus_mode = Control.FOCUS_NONE
+			var pname := String(p.name)
+			del.pressed.connect(func() -> void:
+				editor.delete_user_preset(pname)
+				row.queue_free())
+			row.add_child(del)
+			list.add_child(row)
+	fill.call()
+	var buttons := HBoxContainer.new()
+	var ex := Button.new()
+	ex.text = "Export…"
+	ex.focus_mode = Control.FOCUS_NONE
+	ex.disabled = editor.user_presets.is_empty()
+	ex.pressed.connect(editor.export_user_presets)
+	buttons.add_child(ex)
+	var im := Button.new()
+	im.text = "Import…"
+	im.focus_mode = Control.FOCUS_NONE
+	im.pressed.connect(func() -> void:
+		editor.file_io.open_text(func(text: String) -> void:
+			editor.import_user_presets_text(text)
+			if is_instance_valid(list):
+				fill.call()))
+	buttons.add_child(im)
+	box.add_child(buttons)
+	d.confirmed.connect(d.queue_free)
+	d.canceled.connect(d.queue_free)
+	add_child(d)
+	d.popup_centered()
 
 
 # --- M3: roundabout, signal, depot, stops, coaches -------------------------------

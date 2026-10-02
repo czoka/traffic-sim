@@ -27,6 +27,7 @@ var user_presets: Array = [] # [{name, profile}]
 
 var view: MapView
 var sim: SimController
+var heat: HeatLayer
 var overlay: EditorOverlay
 var camera: CameraController
 var ui: EditorUI
@@ -40,6 +41,9 @@ var _saved_revision := -1
 var _autosave_timer := 0.0
 var _template_width := 10.0
 var _screenshot_path := ""
+var _perf_log := false
+var _perf_timer := 0.0
+var _perf_frames := 0
 var _screenshot_frames := 0
 
 
@@ -54,6 +58,11 @@ func _ready() -> void:
 	view = MapView.new()
 	view.name = "MapView"
 	add_child(view)
+	heat = HeatLayer.new()
+	heat.name = "Heat"
+	heat.editor = self
+	heat.visible = false
+	add_child(heat)
 	sim = SimController.new()
 	sim.name = "Sim"
 	sim.editor = self
@@ -143,7 +152,10 @@ func _load_startup_map() -> void:
 		if r.ok:
 			return
 		push_warning("Autosave could not be loaded: %s" % r.error)
-	road.load_demo_town()
+	# First run: a new city, and the welcome (tutorial or explore).
+	road.new_city()
+	if DisplayServer.get_name() != "headless" and args.is_empty():
+		ui.show_welcome.call_deferred()
 
 
 func _apply_cmdline() -> void:
@@ -170,6 +182,16 @@ func _apply_cmdline() -> void:
 			sim._refresh_stats()
 		elif arg.begins_with("--select-ped="):
 			sim.select_ped.call_deferred(int(arg.trim_prefix("--select-ped=")))
+		elif arg == "--welcome":
+			ui.show_welcome.call_deferred()
+		elif arg == "--tutorial":
+			start_tutorial.call_deferred()
+		elif arg.begins_with("--speed="):
+			sim.set_speed_index(int(arg.trim_prefix("--speed=")))
+		elif arg == "--perf-log":
+			_perf_log = true
+		elif arg.begins_with("--heatmap="):
+			ui.set_heatmap.call_deferred(arg.trim_prefix("--heatmap="))
 		elif arg == "--level-filter":
 			set_level_filter(true)
 		elif arg.begins_with("--level="):
@@ -194,12 +216,35 @@ func _process(delta: float) -> void:
 	if _autosave_timer >= AUTOSAVE_INTERVAL:
 		_autosave_timer = 0.0
 		autosave()
+	if _perf_log:
+		_perf_timer += delta
+		_perf_frames += 1
+		if _perf_timer >= 5.0:
+			var st: Dictionary = sim.stats
+			print("perf: %.0f fps · sim %.0fx of %.0fx%s · %.0f us a tick · %.1f ms of sim a frame · %d vehicles, %d people, %d residents" % [
+				_perf_frames / _perf_timer, st.get("effective_speed", 0.0), sim.speed(), " (CPU-limited)" if st.get("behind", false) else "",
+				st.get("tick_us", 0.0), st.get("frame_sim_ms", 0.0), st.get("vehicles", 0), int(st.get("pedestrians", 0)) + int(st.get("riding", 0)),
+				st.get("residents", 0)])
+			_perf_timer = 0.0
+			_perf_frames = 0
 	if _screenshot_frames > 0:
 		_screenshot_frames -= 1
 		if _screenshot_frames == 0:
 			get_viewport().get_texture().get_image().save_png(_screenshot_path)
 			print("Screenshot saved to %s" % _screenshot_path)
 			get_tree().quit()
+
+
+## M7: a PNG of the map as it is on screen, without the editor panels.
+func export_screenshot() -> void:
+	ui.visible = false
+	await RenderingServer.frame_post_draw
+	await RenderingServer.frame_post_draw
+	var img := get_viewport().get_texture().get_image()
+	ui.visible = true
+	var stamp := Time.get_datetime_string_from_system().replace(":", "-").replace("T", "_")
+	file_io.save_bytes(img.save_png_to_buffer(), "traffic-sim-%s.png" % stamp, "image/png", "*.png ; PNG images")
+	notify("Screenshot taken (%d x %d)." % [img.get_width(), img.get_height()])
 
 
 func _notification(what: int) -> void:
@@ -310,6 +355,7 @@ func set_level_filter(on: bool) -> void:
 func _apply_level_style() -> void:
 	view.apply_level_style(level, level_filter)
 	sim.apply_level_style(level, level_filter)
+	heat.refresh()
 	ui.refresh()
 	overlay.queue_redraw()
 
@@ -421,6 +467,20 @@ func new_map() -> void:
 	notify("New city: the main station and the city offices. Press H to place homes, shops and offices.")
 
 
+## M7: the tutorial - a new city and the step-by-step checklist.
+func start_tutorial() -> void:
+	sim.pause()
+	road.load_example("tutorial")
+	sim.city_prefill = 0.0
+	clear_selection()
+	_refresh_map()
+	sim.reset()
+	fit_view()
+	set_tool("select")
+	ui.guide.start()
+	notify("Tutorial: follow the steps at the top of the screen.")
+
+
 ## "town", "grid", "t_junction", "lane_drop" or "one_way_pair".
 func load_demo(which: String) -> void:
 	if which == "empty":
@@ -495,11 +555,59 @@ func save_user_preset(preset_name: String, profile: Dictionary) -> void:
 			user_presets.remove_at(i)
 			break
 	user_presets.append({"name": preset_name, "profile": clean})
+	_store_user_presets()
+	notify("Saved profile \"%s\"." % preset_name)
+
+
+func delete_user_preset(preset_name: String) -> void:
+	for i in user_presets.size():
+		if user_presets[i].name == preset_name:
+			user_presets.remove_at(i)
+			_store_user_presets()
+			notify("Deleted profile \"%s\"." % preset_name)
+			return
+
+
+## The saved profiles as a file, to move them to another browser or computer.
+func export_user_presets() -> void:
+	file_io.save_text(JSON.stringify({"format": "traffic-sim-profiles", "version": 1, "profiles": user_presets}, "  "),
+		"traffic-sim-profiles.json")
+
+
+## Adds the profiles from a file (same names are replaced). Returns how many.
+func import_user_presets_text(text: String) -> int:
+	var data = JSON.parse_string(text)
+	var list = data.get("profiles", null) if typeof(data) == TYPE_DICTIONARY else data
+	if typeof(list) != TYPE_ARRAY:
+		notify("That isn't a profiles file.")
+		return 0
+	var n := 0
+	for p in list:
+		if typeof(p) != TYPE_DICTIONARY or not p.has("name") or typeof(p.get("profile")) != TYPE_DICTIONARY:
+			continue
+		if String(road.validate_profile(p.profile)) != "":
+			continue
+		for i in user_presets.size():
+			if user_presets[i].name == p.name:
+				user_presets.remove_at(i)
+				break
+		user_presets.append({"name": String(p.name), "profile": p.profile})
+		n += 1
+	_store_user_presets()
+	notify("Imported %d profile%s." % [n, "" if n == 1 else "s"])
+	return n
+
+
+func import_user_presets() -> void:
+	file_io.open_text(func(text: String) -> void: import_user_presets_text(text))
+
+
+func _store_user_presets() -> void:
 	var f := FileAccess.open(PRESETS_PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(user_presets, "  "))
-	notify("Saved profile \"%s\"." % preset_name)
 	ui.refresh_presets()
+	ui.refresh_inspector()
 
 
 func _load_user_presets() -> void:
@@ -540,6 +648,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			export_map()
 		KEY_O when mod:
 			import_map()
+		KEY_P when mod and k.shift_pressed:
+			export_screenshot()
 		KEY_V:
 			set_tool("select")
 		KEY_R:
@@ -572,6 +682,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			set_tool("centre")
 		KEY_J:
 			set_level_filter(not level_filter)
+		KEY_M:
+			ui.cycle_heatmap()
 		KEY_SPACE:
 			sim.toggle()
 		KEY_PERIOD:

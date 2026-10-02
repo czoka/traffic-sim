@@ -32,6 +32,7 @@ CORE_SOURCES = [
     "core/src/traffic_city.cpp",
     "core/src/traffic_drive.cpp",
     "core/src/traffic_economy.cpp",
+    "core/src/traffic_insight.cpp",
     "core/src/traffic_peds.cpp",
     "core/src/traffic_run.cpp",
     "core/src/sim.cpp",
@@ -103,7 +104,7 @@ def make_program_env():
                         RANLIB="emranlib", PROGSUFFIX=".js", OBJSUFFIX=".o")
         t.Append(CXXFLAGS=["-std=c++17", "-O2", "-fno-exceptions"])
         t.Append(LINKFLAGS=["-sENVIRONMENT=node", "-sALLOW_MEMORY_GROWTH=1", "-sEXIT_RUNTIME=1",
-                            "-sSINGLE_FILE=1", "-sSTACK_SIZE=1048576"])
+                            "-sSINGLE_FILE=1", "-sSTACK_SIZE=1048576", "-sNODERAWFS=1"])
         add_determinism_flags(t, False)
         return t, "node "
     t = Environment(ENV=os.environ)
