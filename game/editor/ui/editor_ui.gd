@@ -109,6 +109,7 @@ func _process(delta: float) -> void:
 		_scale.zoom = editor.camera.zoom.x
 	# Keep the inspector pinned to the right edge as the window resizes.
 	var vp := get_viewport().get_visible_rect().size
+	inspector.fit_height(vp.y - 12.0 - 112.0) # above the sim and bottom bars
 	inspector.position = Vector2(vp.x - inspector.size.x - 12, 12)
 	# The palette scrolls when the window is too short for it (above the bottom bars).
 	if _palette_scroll:

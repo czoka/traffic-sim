@@ -26,6 +26,9 @@ var _params := {}
 var _profile := {}
 
 var _title: Label
+var _scroll: ScrollContainer # the body below the title; scrolls when taller than the window allows
+var _body: VBoxContainer
+var _max_height := 0.0
 var _empty: Label
 var _segment_box: VBoxContainer
 var _node_box: VBoxContainer
@@ -127,12 +130,20 @@ var _econ_buy: Button
 func _ready() -> void:
 	custom_minimum_size = Vector2(300, 0)
 	add_theme_stylebox_override("panel", EditorUI._panel_style(EditorUI.PANEL_BG))
-	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 6)
-	add_child(outer)
+	var frame := VBoxContainer.new()
+	frame.add_theme_constant_override("separation", 6)
+	add_child(frame)
 	_title = Label.new()
 	_title.add_theme_font_size_override("font_size", 16)
-	outer.add_child(_title)
+	frame.add_child(_title)
+	_scroll = ScrollContainer.new()
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	frame.add_child(_scroll)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 6)
+	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(outer)
+	_body = outer
 	_empty = Label.new()
 	_empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_empty.custom_minimum_size = Vector2(280, 0)
@@ -635,6 +646,20 @@ func _build_car(outer: VBoxContainer) -> void:
 
 
 # --- refresh --------------------------------------------------------------------------
+
+## Caps the panel at `max_height` (the room above the bottom bars): the body
+## scrolls instead of running off the window. Called every frame by the UI.
+func fit_height(max_height: float) -> void:
+	_max_height = max_height
+	var content := _body.get_combined_minimum_size().y
+	var room := maxf(120.0, max_height - _title.size.y - 6.0 - 20.0) # title, separation, panel margins
+	var h := minf(content, room)
+	# Room for the scroll bar beside the content when it scrolls.
+	var w := _body.get_combined_minimum_size().x + (_scroll.get_v_scroll_bar().size.x + 4.0 if content > room else 0.0)
+	if not is_equal_approx(_scroll.custom_minimum_size.y, h) or not is_equal_approx(_scroll.custom_minimum_size.x, w):
+		_scroll.custom_minimum_size = Vector2(w, h)
+		reset_size()
+
 
 func refresh() -> void:
 	if editor == null or editor.road == null or _segment_box == null:

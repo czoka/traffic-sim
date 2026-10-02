@@ -65,6 +65,12 @@ func _run() -> void:
 	ed.select("segments", ids[0], false)
 	await _frames(1)
 	_check(ed.ui.inspector._segment_box.visible, "inspector shows the selected road")
+	# A road's inspector is taller than a small window: it scrolls instead of running off the bottom.
+	var insp: Inspector = ed.ui.inspector
+	insp.fit_height(300.0)
+	await _frames(2)
+	_check(insp.size.y <= 300.0 + 1.0 and insp._scroll.get_v_scroll_bar().max_value > insp._scroll.size.y,
+		"inspector capped at 300 px (%.0f) and scrolls" % insp.size.y)
 	var p: Dictionary = road.get_segment(ids[0]).params
 	p["forward"] = 2
 	_check(road.set_profile_params(ids[0], p) == "", "set lanes via inspector params")
