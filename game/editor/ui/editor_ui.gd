@@ -61,6 +61,11 @@ var _toast_time := 0.0
 
 # Simulation bar
 var _play: Button
+var _transport: PanelContainer # play / step / restart, icons at the top centre (#16)
+const ICON_PLAY := preload("res://editor/icons/play.svg")
+const ICON_PAUSE := preload("res://editor/icons/pause.svg")
+const ICON_STEP := preload("res://editor/icons/step.svg")
+const ICON_RESTART := preload("res://editor/icons/restart.svg")
 var _speed_opt: OptionButton
 var _seed: SpinBox
 var _demand: HSlider
@@ -117,8 +122,13 @@ func _process(delta: float) -> void:
 	if _palette_scroll:
 		_palette_scroll.custom_minimum_size.y = minf(_palette_box.size.y, maxf(200.0, vp.y - 140.0))
 		guide.position = Vector2(_palette.position.x + _palette.size.x + 12, 12)
-	# The toast stays clear of the tutorial checklist.
-	_toast.position = Vector2(maxf(vp.x * 0.5 - 240.0, guide.position.x + guide.size.x + 12.0) if guide.visible else vp.x * 0.5 - 240.0, 14)
+	# Play / step / restart at the top centre, clear of the tutorial checklist;
+	# the toast goes under them.
+	var left := guide.position.x + guide.size.x + 12.0 if guide.visible else 0.0
+	if _transport:
+		_transport.position = Vector2(maxf(vp.x * 0.5 - _transport.size.x * 0.5, left), 12)
+	var below := (_transport.position.y + _transport.size.y + 8.0) if _transport else 14.0
+	_toast.position = Vector2(maxf(vp.x * 0.5 - 240.0, left), below)
 
 
 ## True where a panel or bar covers the screen at `pos`: the wheel there
@@ -413,14 +423,7 @@ func _build_sim_bar(root: Control) -> void:
 	var bar := HBoxContainer.new()
 	bar.add_theme_constant_override("separation", 8)
 	panel.add_child(bar)
-	_play = _button("Play", sim.toggle, bar)
-	_play.custom_minimum_size = Vector2(90, 0)
-	_play.tooltip_text = "Play / pause (Space). Editing pauses; Play resumes with the changes."
-	var step := _button("Step", sim.step, bar)
-	step.tooltip_text = "One sim second (.)"
-	var restart := _button("Restart", sim.reset, bar)
-	restart.tooltip_text = "Remove every car and start again with the seed"
-	bar.add_child(VSeparator.new())
+	_build_transport(root)
 	var sl := Label.new()
 	sl.text = "Speed"
 	bar.add_child(sl)
@@ -519,10 +522,40 @@ func cycle_heatmap() -> void:
 	set_heatmap(HeatLayer.MODES[(HeatLayer.MODES.find(editor.heat.mode) + 1) % HeatLayer.MODES.size()])
 
 
+## Play / pause, step and restart: icon buttons at the top centre; the text
+## shows on hover (#16).
+func _build_transport(root: Control) -> void:
+	var sim := editor.sim
+	_transport = PanelContainer.new()
+	var style := _panel_style(PANEL_BG)
+	style.set_content_margin_all(6)
+	_transport.add_theme_stylebox_override("panel", style)
+	root.add_child(_transport)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	_transport.add_child(row)
+	_play = _icon_button(ICON_PLAY, "Play (Space)", sim.toggle, row)
+	_icon_button(ICON_STEP, "Step: one sim second (.)", sim.step, row)
+	_icon_button(ICON_RESTART, "Restart: remove every car and start again with the seed", sim.reset, row)
+
+
+func _icon_button(icon: Texture2D, tip: String, action: Callable, parent: Control) -> Button:
+	var b := Button.new()
+	b.icon = icon
+	b.tooltip_text = tip
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(42, 36)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.pressed.connect(action)
+	parent.add_child(b)
+	return b
+
+
 func _refresh_sim_buttons() -> void:
 	if _play == null:
 		return
-	_play.text = "Pause" if editor.sim.playing else "Play"
+	_play.icon = ICON_PAUSE if editor.sim.playing else ICON_PLAY
+	_play.tooltip_text = ("Pause" if editor.sim.playing else "Play") + " (Space). Editing pauses; Play resumes with the changes."
 	_speed_opt.select(editor.sim.speed_index)
 
 

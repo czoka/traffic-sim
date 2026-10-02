@@ -61,7 +61,13 @@ func _run() -> void:
 	_check(ed.sim.play(), "Play starts the sim")
 	await _frames(5)
 	_check(ed.sim.playing, "sim is running")
+	# Play / step / restart are icon buttons at the top centre; the text is in the tooltip (#16).
+	var ui: EditorUI = ed.ui
+	_check(ui._play.icon == EditorUI.ICON_PAUSE and ui._play.text == "" and ui._play.tooltip_text.begins_with("Pause"),
+		"the play button shows the pause icon while running")
+	_check(ui._transport.get_child(0).get_child_count() == 3 and ui._transport.position.y < 40.0, "play, step and restart at the top")
 	ed.sim.pause()
+	_check(ui._play.icon == EditorUI.ICON_PLAY and ui._play.tooltip_text.begins_with("Play"), "and the play icon when paused")
 	road.sim_step(1800) # 3 sim minutes
 	var s1: Dictionary = road.sim_stats()
 	_check(s1.vehicles > 100 and s1.arrived > 50, "after 3 min: %d cars, %d trips, %.0f km/h" % [s1.vehicles, s1.arrived, s1.mean_speed_kmh])
