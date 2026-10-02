@@ -944,8 +944,9 @@ void RoadGeometry::build(const RoadMap &map) {
 				MeshSet::thick(mesh.get(sg.level, Layer::Markings), mr, sg.n, 0.2, kWhite);
 			} else {
 				MeshSet::strip(mesh.get(sg.level, Layer::Asphalt), ml, mr, kAsphalt);
-				MeshSet::thick(mesh.get(sg.level, Layer::Markings), ml, sg.n, kLineWidth, kYellow);
-				MeshSet::thick(mesh.get(sg.level, Layer::Markings), mr, sg.n, kLineWidth, kYellow);
+				// European markings: a painted median is outlined in white (#14).
+				MeshSet::thick(mesh.get(sg.level, Layer::Markings), ml, sg.n, kLineWidth, kWhite);
+				MeshSet::thick(mesh.get(sg.level, Layer::Markings), mr, sg.n, kLineWidth, kWhite);
 				// Hatching every 4 m.
 				MeshBatch &mb = mesh.get(sg.level, Layer::Markings);
 				for (size_t k = 0; k + 1 < ns; ++k) {
@@ -984,7 +985,7 @@ void RoadGeometry::build(const RoadMap &map) {
 						const double d = e == 1 ? c.length - c.trim[1] - s : s - c.trim[0];
 						if (d < solid_before_stop) st = kSolid;
 					}
-					return { st, kYellow };
+					return { st, kWhite }; // European centre lines are white (#14)
 				}
 				if (A.type == LaneType::Parking || B.type == LaneType::Parking) {
 					return { A.type == B.type ? kNone : kSolid, kWhite };
@@ -993,7 +994,7 @@ void RoadGeometry::build(const RoadMap &map) {
 				if (A.type == LaneType::Bike && B.type == LaneType::Bike && A.dir != B.dir) return { kDashed, kWhite }; // two-way path
 				if (A.type == LaneType::Bike || B.type == LaneType::Bike) return { kSolid, kWhite };
 				Style st = kDashed;
-				const Color col = center ? kYellow : kWhite;
+				const Color col = kWhite;
 				// Solid near stop lines of the end these lanes drive towards.
 				for (int e = 0; e < 2; ++e) {
 					if (!c.stop_at[e]) continue;
