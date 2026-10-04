@@ -159,8 +159,8 @@ How it works:
 
 | Input | Action |
 | --- | --- |
-| Wheel / pinch | Zoom at the cursor |
-| Right- or middle-drag / arrows / trackpad | Pan |
+| Wheel / pinch (trackpad or two fingers on a touch screen) | Zoom at the cursor, or between the fingers |
+| Right- or middle-drag / arrows / trackpad / two-finger drag | Pan |
 | `F` | Fit the map in view |
 | Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y) | Undo, redo |
 | Ctrl/Cmd+S, Ctrl/Cmd+O | Export, open a map file |
