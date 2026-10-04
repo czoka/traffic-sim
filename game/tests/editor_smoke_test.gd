@@ -92,6 +92,40 @@ func _run() -> void:
 	await _wheel(vp, free, true)
 	_check(not ed.ui.over_ui(free) and ed.camera.zoom.x > z0, "wheel over the map zooms (%.2f -> %.2f)" % [z0, ed.camera.zoom.x])
 	ed.camera.zoom = Vector2.ONE * z0
+	# Touch screens: two fingers pinch-zoom about their midpoint and pan; one finger leaves the camera alone (#24).
+	var cam: CameraController = ed.camera
+	var p0 := cam.position
+	var tc := free - Vector2(160, 0) # well clear of the inspector
+	var a := tc + Vector2(-40, 0)
+	var b := tc + Vector2(40, 0)
+	_touch(cam, 0, a, true)
+	_drag(cam, 0, a + Vector2(10, 0))
+	_check(cam.position == p0 and is_equal_approx(cam.zoom.x, z0) and not cam.is_pinching(), "one finger does not move the camera")
+	_drag(cam, 0, a)
+	_touch(cam, 1, b, true)
+	_check(cam.is_pinching(), "two fingers down = pinching")
+	var mid_world := cam.position + (tc - cam.get_viewport_rect().size * 0.5) / cam.zoom.x
+	_drag(cam, 1, tc + Vector2(80, 0))
+	_drag(cam, 0, tc + Vector2(-80, 0))
+	_check(cam.zoom.x > z0 * 1.9 and cam.zoom.x < z0 * 2.1, "spreading the fingers to twice the gap zooms in 2x (%.2f -> %.2f)" % [z0, cam.zoom.x])
+	var mid_after := cam.position + (tc - cam.get_viewport_rect().size * 0.5) / cam.zoom.x
+	_check(mid_world.distance_to(mid_after) < 0.01, "the point between the fingers stays put")
+	var p1 := cam.position
+	_drag(cam, 0, tc + Vector2(-80, 50))
+	_drag(cam, 1, tc + Vector2(80, 50))
+	_check(cam.position.y < p1.y - 1.0, "moving both fingers down pans the map with them")
+	_touch(cam, 0, tc, false)
+	_touch(cam, 1, tc, false)
+	_check(not cam.is_pinching(), "lifting the fingers ends the pinch")
+	var z1 := cam.zoom.x
+	_touch(cam, 0, over, true)
+	_touch(cam, 1, over + Vector2(20, 0), true)
+	_drag(cam, 1, over + Vector2(60, 0))
+	_check(is_equal_approx(cam.zoom.x, z1), "a pinch that starts on a panel leaves the map alone")
+	_touch(cam, 0, over, false)
+	_touch(cam, 1, over, false)
+	cam.zoom = Vector2.ONE * z0
+	cam.position = p0
 
 	# A road's inspector is taller than a small window: it scrolls instead of running off the bottom.
 	var insp: Inspector = ed.ui.inspector
@@ -170,3 +204,18 @@ func _run() -> void:
 
 	print("%d check(s) failed" % _failures)
 	quit(_failures)
+
+
+func _touch(cam: CameraController, index: int, pos: Vector2, pressed: bool) -> void:
+	var t := InputEventScreenTouch.new()
+	t.index = index
+	t.position = pos
+	t.pressed = pressed
+	cam._unhandled_input(t)
+
+
+func _drag(cam: CameraController, index: int, pos: Vector2) -> void:
+	var d := InputEventScreenDrag.new()
+	d.index = index
+	d.position = pos
+	cam._unhandled_input(d)

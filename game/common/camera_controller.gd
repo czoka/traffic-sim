@@ -1,13 +1,17 @@
 class_name CameraController
 extends Camera2D
-## Pan with middle/right mouse drag, arrow keys or a trackpad; zoom with
-## the wheel or pinch, anchored at the cursor. World units are metres.
+## Pan with middle/right mouse drag, arrow keys, a trackpad or two fingers;
+## zoom with the wheel or pinch (trackpad or touch screen), anchored at the
+## cursor or between the fingers. World units are metres.
 
 const MIN_ZOOM := 0.05
 const MAX_ZOOM := 40.0
 const KEY_PAN_SPEED := 900.0 # screen pixels per second
 
 var _dragging := false
+## Touch screens (phones, tablets) send raw touches, not pinch or pan gestures:
+## finger index -> screen position for each finger down (#24).
+var _touches: Dictionary = {}
 ## Optional: (screen position) -> true where the UI covers the map (set by the editor).
 var ui_hit: Callable
 
@@ -46,7 +50,15 @@ func _over_ui(pos: Vector2) -> bool:
 	return get_viewport().gui_get_hovered_control() != null
 
 
+## True while two fingers are on the map (pinching or panning).
+func is_pinching() -> bool:
+	return _touches.size() >= 2
+
+
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		_touch(event)
+		return
 	if event is InputEventGesture and _over_ui((event as InputEventGesture).position):
 		return
 	if event is InputEventMouseButton:
@@ -71,6 +83,34 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventMagnifyGesture:
 		var g := event as InputEventMagnifyGesture
 		zoom_at(g.factor, g.position)
+
+
+## Two fingers: the gap between them zooms and their midpoint pans, so the
+## map stays under the fingers. A finger that lands on a panel is ignored.
+func _touch(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed and not _over_ui(t.position):
+			_touches[t.index] = t.position
+		elif not t.pressed:
+			_touches.erase(t.index)
+		return
+	var d := event as InputEventScreenDrag
+	if not _touches.has(d.index):
+		return
+	if _touches.size() < 2:
+		_touches[d.index] = d.position
+		return
+	var keys := _touches.keys()
+	var other: Vector2 = _touches[keys[1] if keys[0] == d.index else keys[0]]
+	var old_mid: Vector2 = (_touches[d.index] + other) * 0.5
+	var old_gap: float = (_touches[d.index] as Vector2).distance_to(other)
+	_touches[d.index] = d.position
+	var mid := (d.position + other) * 0.5
+	var gap := d.position.distance_to(other)
+	position -= (mid - old_mid) / zoom.x
+	if old_gap > 1.0 and gap > 1.0:
+		zoom_at(gap / old_gap, mid)
 
 
 func _process(delta: float) -> void:
