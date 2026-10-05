@@ -626,6 +626,10 @@ func _load_user_presets() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if road == null:
 		return
+	# The first finger of a pinch also arrives as a mouse drag; it moves the
+	# camera, not the tool (#24).
+	if event is InputEventMouseMotion and camera.is_pinching():
+		return
 	if tool and tool.input(event):
 		get_viewport().set_input_as_handled()
 		overlay.queue_redraw()

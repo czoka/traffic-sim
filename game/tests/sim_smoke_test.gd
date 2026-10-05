@@ -65,7 +65,26 @@ func _run() -> void:
 	var ui: EditorUI = ed.ui
 	_check(ui._play.icon == EditorUI.ICON_PAUSE and ui._play.text == "" and ui._play.tooltip_text.begins_with("Pause"),
 		"the play button shows the pause icon while running")
-	_check(ui._transport.get_child(0).get_child_count() == 3 and ui._transport.position.y < 40.0, "play, step and restart at the top")
+	_check(ui._play.get_parent() == ui._transport.get_child(0) and ui._transport.position.y < 40.0, "play, step and restart at the top")
+	# Speed sits before play: slower, the current speed, faster; no dropdown (#22).
+	var row: Node = ui._transport.get_child(0)
+	_check(ui._slower.get_index() < ui._speed_label.get_index() and ui._speed_label.get_index() < ui._faster.get_index()
+		and ui._faster.get_index() < ui._play.get_index(), "slower, speed and faster come before play")
+	_check(ui._speed_label.text == "1x", "default speed shows 1x (got %s)" % ui._speed_label.text)
+	ui._faster.pressed.emit()
+	_check(ed.sim.speed_index == 3 and ui._speed_label.text == "2x", "faster steps to 2x (got %s)" % ui._speed_label.text)
+	ui._slower.pressed.emit()
+	ui._slower.pressed.emit()
+	ui._slower.pressed.emit()
+	_check(ui._speed_label.text == "0.25x" and ui._slower.disabled and not ui._faster.disabled, "slower stops at 0.25x")
+	for i in 6:
+		ui._faster.pressed.emit()
+	_check(ui._speed_label.text == "8x" and ui._faster.disabled, "faster stops at 8x")
+	ed.sim.set_speed_index(2)
+	var no_dropdown := true
+	for n in row.get_children():
+		no_dropdown = no_dropdown and not (n is OptionButton)
+	_check(no_dropdown, "no speed dropdown")
 	ed.sim.pause()
 	_check(ui._play.icon == EditorUI.ICON_PLAY and ui._play.tooltip_text.begins_with("Play"), "and the play icon when paused")
 	road.sim_step(1800) # 3 sim minutes

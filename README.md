@@ -142,7 +142,7 @@ The inspector shows a building's state (open, closed or closed unexpectedly, sta
 
 ## The simulation (M2)
 
-Icon buttons at the top centre run the sim (hover for their names): **Play/Pause** (`Space`), **Step** one sim second (`.`) and **Restart** (remove all cars and start again with the seed). The bar above the bottom bar sets **Speed** (16x real time by default, multipliers 0.25–8 for 4x–128x), **Seed**, **Density** (multiplies every spawn rate) **Max cars** (spawning pauses at that many cars) and **Max people** (new trips on foot pause at that many people, 1,000 by default). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
+Icon buttons at the top centre run the sim (hover for their names): **Slower** and **Faster** either side of the current **speed** (0.25x–8x, 1x = 16x real time), then **Play/Pause** (`Space`), **Step** one sim second (`.`) and **Restart** (remove all cars and start again with the seed). The bar above the bottom bar sets **Seed**, **Density** (multiplies every spawn rate) **Max cars** (spawning pauses at that many cars) and **Max people** (new trips on foot pause at that many people, 1,000 by default). The status shows the sim clock, cars, trips, mean speed and stopped cars; its tooltip has the tick cost. Cars are coloured by speed, red when stopped to green at their desired speed. Click a car to see its state (driving, queued, yielding, waiting for the junction to clear, exit full, all-way stop…), speed, origin and destination, trip time and the car it waits for; its route is drawn on the map.
 
 How it works:
 
@@ -159,8 +159,8 @@ How it works:
 
 | Input | Action |
 | --- | --- |
-| Wheel / pinch | Zoom at the cursor |
-| Right- or middle-drag / arrows / trackpad | Pan |
+| Wheel / pinch (trackpad or two fingers on a touch screen) | Zoom at the cursor, or between the fingers |
+| Right- or middle-drag / arrows / trackpad / two-finger drag | Pan |
 | `F` | Fit the map in view |
 | Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z (or Ctrl+Y) | Undo, redo |
 | Ctrl/Cmd+S, Ctrl/Cmd+O | Export, open a map file |
