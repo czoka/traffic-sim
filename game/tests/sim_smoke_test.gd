@@ -249,6 +249,9 @@ func _m3(ed: MapEditor, road) -> void:
 	await _frames(1)
 	var insp: Inspector = ed.ui.inspector
 	_check(insp._signal_box.visible and insp._phases_box.get_child_count() >= 4, "inspector shows the phase editor")
+	# One state at a time (#19): a signal junction shows the roundabout checkbox only, not the ring's settings.
+	_check(not insp._ring_details.visible and insp._ring_box.visible and not insp._ring_on.button_pressed,
+		"signal junction: no roundabout settings beside the signal plan")
 	insp._plan.phases[0]["green"] = 33.0
 	insp._send_plan()
 	_check(is_equal_approx(float(road.get_node(sig_node).signal.phases[0].green), 33.0), "phase green time edited")
@@ -257,7 +260,8 @@ func _m3(ed: MapEditor, road) -> void:
 	# Roundabout section.
 	ed.select("nodes", ring_node, false)
 	await _frames(1)
-	_check(insp._ring_box.visible and insp._ring_on.button_pressed, "inspector shows the roundabout")
+	_check(insp._ring_box.visible and insp._ring_on.button_pressed and insp._ring_details.visible and not insp._signal_box.visible,
+		"inspector shows the roundabout (its settings, no signal plan)")
 	insp._ring_radius.value = 30.0
 	_check(is_equal_approx(float(road.get_node(ring_node).roundabout.radius), 30.0), "roundabout radius edited")
 	ed.undo()

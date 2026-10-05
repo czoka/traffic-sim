@@ -84,6 +84,7 @@ var _coach_list: VBoxContainer
 
 # M3 node widgets
 var _ring_box: VBoxContainer
+var _ring_details: VBoxContainer # radius, lanes, turbo, slips: only for a roundabout
 var _ring_on: CheckBox
 var _ring_radius: SpinBox
 var _ring_lanes: SpinBox
@@ -1201,18 +1202,22 @@ func _build_roundabout(outer: VBoxContainer) -> void:
 		if not _updating:
 			_set_roundabout())
 	_ring_box.add_child(_ring_on)
-	_ring_radius = _spin(_row(_ring_box, "Radius"), 12, 40, 1, "m", func(_v: float) -> void: _set_roundabout())
-	_ring_lanes = _spin(_row(_ring_box, "Ring lanes"), 1, 3, 1, "", func(_v: float) -> void: _set_roundabout())
+	# The ring's settings only show once the junction is a roundabout (#19): a
+	# signal or priority junction shows just the checkbox.
+	_ring_details = VBoxContainer.new()
+	_ring_box.add_child(_ring_details)
+	_ring_radius = _spin(_row(_ring_details, "Radius"), 12, 40, 1, "m", func(_v: float) -> void: _set_roundabout())
+	_ring_lanes = _spin(_row(_ring_details, "Ring lanes"), 1, 3, 1, "", func(_v: float) -> void: _set_roundabout())
 	_ring_turbo = CheckBox.new()
 	_ring_turbo.text = "Turbo (spiral lanes: the entry lane decides the exit)"
 	_ring_turbo.focus_mode = Control.FOCUS_NONE
 	_ring_turbo.toggled.connect(func(_on: bool) -> void:
 		if not _updating:
 			_set_roundabout())
-	_ring_box.add_child(_ring_turbo)
-	_hint(_ring_box, "Slip lanes (right turn bypasses the ring):")
+	_ring_details.add_child(_ring_turbo)
+	_hint(_ring_details, "Slip lanes (right turn bypasses the ring):")
 	_ring_slips = VBoxContainer.new()
-	_ring_box.add_child(_ring_slips)
+	_ring_details.add_child(_ring_slips)
 	outer.add_child(_ring_box)
 
 
@@ -1226,13 +1231,10 @@ func _build_signal(outer: VBoxContainer) -> void:
 	_amber = _spin(_row(_signal_box, "Amber"), 2, 6, 0.5, "s", func(_v: float) -> void: _set_plan())
 	_all_red = _spin(_row(_signal_box, "All red"), 0, 6, 0.5, "s", func(_v: float) -> void: _set_plan())
 	_offset = _spin(_row(_signal_box, "Offset"), 0, 300, 1, "s", func(_v: float) -> void: _set_plan())
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(280, 240)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# The phases are listed in full: the whole inspector scrolls (no scroll area inside it, #19).
 	_phases_box = VBoxContainer.new()
 	_phases_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_phases_box)
-	_signal_box.add_child(scroll)
+	_signal_box.add_child(_phases_box)
 	var buttons := HBoxContainer.new()
 	_small_button(buttons, "Add phase", func() -> void:
 		var phases: Array = _plan.get("phases", [])
@@ -1319,6 +1321,7 @@ func _fill_m3_node(n: Dictionary) -> void:
 	var r: Dictionary = n.roundabout
 	_ring_box.visible = n.junction or r.enabled
 	_ring_on.button_pressed = r.enabled
+	_ring_details.visible = r.enabled
 	_ring_radius.value = r.radius
 	_ring_lanes.value = r.lanes
 	_ring_turbo.button_pressed = r.turbo
@@ -1425,6 +1428,7 @@ func _fill_phases() -> void:
 		g.min_value = 1
 		g.max_value = 180
 		g.suffix = "s green"
+		g.custom_minimum_size = Vector2(120, 0) # room for the value next to the suffix
 		g.value = ph.green
 		g.value_changed.connect(func(v: float) -> void:
 			if _updating:
