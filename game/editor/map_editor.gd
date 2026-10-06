@@ -711,6 +711,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			if ui.run_dialog_open():
 				ui.close_run_dialog()
 				return
+			if ui.stats_open():
+				ui.close_stats()
+				return
 			clear_selection()
 			sim.select_car(0)
 			sim.select_ped(0)

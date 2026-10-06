@@ -553,7 +553,15 @@ func _m6(ed: MapEditor, road) -> void:
 	_check(int(c.listed) > 0, "%d buildings on the market" % c.listed)
 	ed.sim._refresh_stats()
 	ed.ui.refresh_sim(ed.sim.stats)
-	_check(ed.ui._sim_label.tooltip_text.contains("city income"), "the sim tooltip has the finances")
+	_check(ed.ui._clock.text == SimController.clock_text(int(ed.sim.stats.clock_day), int(ed.sim.stats.clock_minute)), "the top bar starts with the day and time: %s" % ed.ui._clock.text)
+	var tip: String = ed.ui._clock.tooltip_text
+	_check(tip.contains("residents") and tip.contains("vehicles") and tip.contains("km/h"), "hovering the clock shows residents, vehicles, speed: %s" % tip.get_slice("\n", 0))
+	_check(not ed.ui.stats_open(), "the stats panel starts closed")
+	ed.ui.toggle_stats()
+	await _frames(2)
+	_check(ed.ui.stats_open() and ed.ui.stats_details_text().contains("city income"), "clicking the clock opens the details with the finances")
+	ed.ui.toggle_stats()
+	_check(not ed.ui.stats_open(), "clicking again closes it")
 	# A listed city building in the inspector, and its settings.
 	var listed := 0
 	var home := 0
