@@ -90,6 +90,9 @@ func _run() -> void:
 	restart_btn.pressed.emit()
 	_check(ui.run_dialog_open() and ui._seed.visible and ui._run_ok.text == "Restart", "restart opens the New run dialog with the seed")
 	_check(not ed.sim.has_cars() or ed.sim.playing, "opening it does not restart yet")
+	# New, Open, Export and Examples moved here from the left panel (#30).
+	_check(ui._map_section.visible and ui._examples.get_popup().item_count > 10 and ui._map_section.is_ancestor_of(ui._examples), "the New run dialog has New, Open, Export and Examples")
+	_check(not ui._palette.is_ancestor_of(ui._examples), "they are no longer in the left panel")
 	ui._seed.value = seed0 + 7
 	ui._max_cars.value = cars0 + 50
 	_check(ed.sim.seed_value == seed0 and ed.sim.max_cars == cars0, "New run edits wait for Restart")
@@ -103,6 +106,7 @@ func _run() -> void:
 	_check(not ui.run_dialog_open() and ed.sim.seed_value == seed0 + 7 and is_equal_approx(ed.sim.demand, 1.5), "Restart applies the seed and density")
 	ui._settings_btn.pressed.emit()
 	_check(ui.run_dialog_open() and not ui._seed.visible and ui._run_ok.text == "Close", "settings shows everything but the seed")
+	_check(not ui._map_section.visible, "settings leaves out the map actions")
 	ui._max_people.value = 700
 	ui._demand.value = 1.0
 	_check(ed.sim.max_people == 700 and is_equal_approx(ed.sim.demand, 1.0), "settings apply at once")

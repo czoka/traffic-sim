@@ -85,6 +85,8 @@ var _run_cancel: Button
 var _run_live := false # true in Settings: changes apply at once
 var _settings_btn: Button
 var _clock: Button # day and time at the start of the top bar; summary on hover, details on click (#28)
+var _map_section: VBoxContainer # New city, Open, Export, Examples in the New run dialog (#30)
+var _examples: MenuButton
 var _stats_panel: PanelContainer
 var _stats_box: GridContainer
 var _stats_sections: Array = [] # [[title, [lines]]], refreshed with the sim stats
@@ -236,32 +238,6 @@ func _build_palette(root: Control) -> void:
 	box.add_child(speed_row)
 
 	box.add_child(section("Map"))
-	var files := HBoxContainer.new()
-	_button("New", _confirm_new, files)
-	_button("Open…", editor.import_map, files)
-	_button("Export…", editor.export_map, files)
-	box.add_child(files)
-	var demos := MenuButton.new()
-	demos.text = "Examples"
-	demos.flat = false
-	demos.focus_mode = Control.FOCUS_NONE
-	demos.get_popup().add_item("Demo town", 0)
-	demos.get_popup().add_item("Test grid (56 junctions, M2 gate)", 1)
-	demos.get_popup().add_item("T junction (priority road)", 3)
-	demos.get_popup().add_item("Lane drop", 4)
-	demos.get_popup().add_item("One-way pair", 5)
-	demos.get_popup().add_item("Showcase (M3: signals, roundabout, buses, bikes, parking)", 6)
-	demos.get_popup().add_item("People town (M4: crossings, bridge, overpass, passengers)", 7)
-	demos.get_popup().add_item("People city (M4 gate: 2,000 vehicles, 1,000 people)", 8)
-	demos.get_popup().add_item("City town (M5: homes, shops, offices, residents)", 9)
-	demos.get_popup().add_item("City week (M5 gate: 5,000 residents)", 10)
-	demos.get_popup().add_item("City market (M6: money, rent, owners, cars and bikes)", 12)
-	demos.get_popup().add_item("Tutorial (a new city and a checklist)", 13)
-	demos.get_popup().add_item("Empty map", 11)
-	demos.get_popup().add_separator()
-	demos.get_popup().add_item("POC ring benchmark", 2)
-	demos.get_popup().id_pressed.connect(_on_example)
-	box.add_child(demos)
 	var learn := HBoxContainer.new()
 	var tut := _button("Tutorial", editor.start_tutorial, learn)
 	tut.tooltip_text = "A new city and a checklist: build a street, homes, a shop and a bus route, then press Play"
@@ -611,6 +587,15 @@ func _build_run_dialog(root: Control) -> void:
 		if _run_live:
 			sim.set_max_people(int(v)))
 	grid.add_child(_max_people)
+	_map_section = VBoxContainer.new()
+	_map_section.add_theme_constant_override("separation", 6)
+	box.add_child(_map_section)
+	_map_section.add_child(HSeparator.new())
+	var map_label := Label.new()
+	map_label.text = "Or change the map"
+	map_label.add_theme_color_override("font_color", Color(0.7, 0.74, 0.8))
+	_map_section.add_child(map_label)
+	_build_map_row(_map_section)
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_END
 	buttons.add_theme_constant_override("separation", 8)
@@ -625,6 +610,45 @@ func _build_run_dialog(root: Control) -> void:
 	_run_ok.pressed.connect(_confirm_run_dialog)
 	buttons.add_child(_run_ok)
 
+
+## New, Open, Export and Examples live in the New run dialog (#30); each
+## closes the dialog before it acts.
+func _build_map_row(parent: Control) -> void:
+	var files := HBoxContainer.new()
+	files.add_theme_constant_override("separation", 6)
+	parent.add_child(files)
+	_button("New city", _run_dialog_action.bind(_confirm_new), files).tooltip_text = "Start a new city (asks first)"
+	_button("Open…", _run_dialog_action.bind(editor.import_map), files).tooltip_text = "Load a map file"
+	_button("Export…", _run_dialog_action.bind(editor.export_map), files).tooltip_text = "Save the map to a file"
+	var demos := MenuButton.new()
+	demos.text = "Examples"
+	demos.flat = false
+	demos.focus_mode = Control.FOCUS_NONE
+	demos.get_popup().add_item("Demo town", 0)
+	demos.get_popup().add_item("Test grid (56 junctions, M2 gate)", 1)
+	demos.get_popup().add_item("T junction (priority road)", 3)
+	demos.get_popup().add_item("Lane drop", 4)
+	demos.get_popup().add_item("One-way pair", 5)
+	demos.get_popup().add_item("Showcase (M3: signals, roundabout, buses, bikes, parking)", 6)
+	demos.get_popup().add_item("People town (M4: crossings, bridge, overpass, passengers)", 7)
+	demos.get_popup().add_item("People city (M4 gate: 2,000 vehicles, 1,000 people)", 8)
+	demos.get_popup().add_item("City town (M5: homes, shops, offices, residents)", 9)
+	demos.get_popup().add_item("City week (M5 gate: 5,000 residents)", 10)
+	demos.get_popup().add_item("City market (M6: money, rent, owners, cars and bikes)", 12)
+	demos.get_popup().add_item("Tutorial (a new city and a checklist)", 13)
+	demos.get_popup().add_item("Empty map", 11)
+	demos.get_popup().add_separator()
+	demos.get_popup().add_item("POC ring benchmark", 2)
+	demos.get_popup().id_pressed.connect(func(id: int) -> void:
+		close_run_dialog()
+		_on_example(id))
+	files.add_child(demos)
+	_examples = demos
+
+
+func _run_dialog_action(action: Callable) -> void:
+	close_run_dialog()
+	action.call()
 
 ## Restart opens the New run dialog: set the seed, density and caps, then restart.
 func open_new_run() -> void:
@@ -650,6 +674,7 @@ func _open_run_dialog(live: bool) -> void:
 	_seed_label.visible = not live
 	_seed.visible = not live
 	_run_cancel.visible = not live
+	_map_section.visible = not live
 	_run_ok.text = "Close" if live else "Restart"
 	_run_ok.tooltip_text = "" if live else "Remove every car and person and start again with these settings"
 	_run_dialog.visible = true
@@ -709,7 +734,7 @@ func _build_transport(root: Control) -> void:
 	row.add_child(VSeparator.new())
 	_play = _icon_button(ICON_PLAY, "Play (Space)", sim.toggle, row)
 	_icon_button(ICON_STEP, "Step: one sim second (.)", sim.step, row)
-	_icon_button(ICON_RESTART, "Restart: set up a new run (seed, density, max cars and people)", open_new_run, row)
+	_icon_button(ICON_RESTART, "Restart: set up a new run (seed, density, max cars and people), or start a new city, open, export or load an example", open_new_run, row)
 	_settings_btn = _icon_button(ICON_SETTINGS, "Settings: density, max cars and max people, without restarting", open_settings, row)
 
 
