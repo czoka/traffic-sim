@@ -84,7 +84,10 @@ var _run_ok: Button
 var _run_cancel: Button
 var _run_live := false # true in Settings: changes apply at once
 var _settings_btn: Button
-var _sim_label: Label
+var _clock: Button # day and time at the start of the top bar; summary on hover, details on click (#28)
+var _stats_panel: PanelContainer
+var _stats_box: GridContainer
+var _stats_sections: Array = [] # [[title, [lines]]], refreshed with the sim stats
 
 
 func _ready() -> void:
@@ -129,7 +132,7 @@ func _process(delta: float) -> void:
 		_scale.zoom = editor.camera.zoom.x
 	# Keep the inspector pinned to the right edge as the window resizes.
 	var vp := get_viewport().get_visible_rect().size
-	inspector.fit_height(vp.y - 12.0 - 112.0) # above the sim and bottom bars
+	inspector.fit_height(vp.y - 12.0 - 64.0) # above the bottom bar
 	inspector.position = Vector2(vp.x - inspector.size.x - 12, 12)
 	# The palette scrolls when the window is too short for it (above the bottom bars).
 	if _palette_scroll:
@@ -425,29 +428,16 @@ func _toggle_problems() -> void:
 # --- Simulation bar ------------------------------------------------------------------
 
 func _build_sim_bar(root: Control) -> void:
-	var sim := editor.sim
-	# Only the run's status stays at the bottom; its settings live in the
-	# New run (Restart) and Settings dialogs (#26).
-	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	panel.offset_top = -96
-	panel.offset_bottom = -52
-	panel.add_theme_stylebox_override("panel", _panel_style(PANEL_BG))
-	root.add_child(panel)
+	# The run's stats live on the clock at the start of the top bar (#28) and its
+	# settings in the New run / Settings dialogs (#26): no bar at the bottom.
 	_build_transport(root)
-	_sim_label = Label.new()
-	_sim_label.custom_minimum_size = Vector2(460, 0)
-	_sim_label.clip_text = true
-	_sim_label.mouse_filter = Control.MOUSE_FILTER_PASS # for the tooltip
-	_sim_label.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
-	panel.add_child(_sim_label)
+	_build_stats_panel(root)
 	_build_run_dialog(root)
 	_heat_legend = Label.new()
 	_heat_legend.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_heat_legend.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_heat_legend.offset_top = -124
-	_heat_legend.offset_bottom = -100
+	_heat_legend.offset_top = -80
+	_heat_legend.offset_bottom = -56
 	_heat_legend.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_heat_legend.add_theme_font_size_override("font_size", 13)
 	_heat_legend.add_theme_color_override("font_color", Color(0.92, 0.94, 0.97))
@@ -455,7 +445,7 @@ func _build_sim_bar(root: Control) -> void:
 	_heat_legend.add_theme_constant_override("outline_size", 4)
 	_heat_legend.visible = false
 	root.add_child(_heat_legend)
-	sim.state_changed.connect(_refresh_sim_buttons)
+	editor.sim.state_changed.connect(_refresh_sim_buttons)
 	_refresh_sim_buttons()
 
 
@@ -472,6 +462,82 @@ func set_heatmap(mode: String) -> void:
 
 func cycle_heatmap() -> void:
 	set_heatmap(HeatLayer.MODES[(HeatLayer.MODES.find(editor.heat.mode) + 1) % HeatLayer.MODES.size()])
+
+
+## The run's details, opened from the clock: one titled block per topic (#28).
+func _build_stats_panel(root: Control) -> void:
+	_stats_panel = PanelContainer.new()
+	var style := _panel_style(Color(PANEL_BG, 1.0)) # it opens over the inspector
+	style.set_content_margin_all(14)
+	_stats_panel.add_theme_stylebox_override("panel", style)
+	_stats_panel.visible = false
+	root.add_child(_stats_panel)
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.name = "Scroll"
+	_stats_panel.add_child(scroll)
+	_stats_box = GridContainer.new()
+	_stats_box.columns = 2
+	_stats_box.add_theme_constant_override("h_separation", 28)
+	_stats_box.add_theme_constant_override("v_separation", 12)
+	scroll.add_child(_stats_box)
+
+
+func toggle_stats() -> void:
+	if stats_open():
+		close_stats()
+		return
+	close_run_dialog()
+	_stats_panel.visible = true
+	_stats_panel.move_to_front() # over the inspector and the palette
+	_fill_stats()
+
+
+func close_stats() -> void:
+	_stats_panel.visible = false
+
+
+func stats_open() -> bool:
+	return _stats_panel != null and _stats_panel.visible
+
+
+## Every section as plain text, for tests.
+func stats_details_text() -> String:
+	var out := PackedStringArray()
+	for sec in _stats_sections:
+		out.append(sec[0])
+		out.append("\n".join(sec[1]))
+	return "\n".join(out)
+
+
+func _fill_stats() -> void:
+	if not stats_open():
+		return
+	for c in _stats_box.get_children():
+		_stats_box.remove_child(c)
+		c.queue_free()
+	for sec in _stats_sections:
+		var box := VBoxContainer.new()
+		box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		box.add_theme_constant_override("separation", 2)
+		var title := Label.new()
+		title.text = sec[0]
+		title.add_theme_font_size_override("font_size", 15)
+		title.add_theme_color_override("font_color", Color(0.62, 0.78, 1.0))
+		box.add_child(title)
+		var body := Label.new()
+		body.text = "\n".join(sec[1])
+		body.add_theme_font_size_override("font_size", 13)
+		body.add_theme_color_override("font_color", Color(0.86, 0.89, 0.94))
+		box.add_child(body)
+		_stats_box.add_child(box)
+	var scroll: ScrollContainer = _stats_panel.get_node("Scroll")
+	var vp := get_viewport().get_visible_rect().size
+	var top := _transport.position.y + _transport.size.y + 8.0
+	scroll.custom_minimum_size = Vector2(_stats_box.get_combined_minimum_size().x + 12.0,
+		minf(_stats_box.get_combined_minimum_size().y, maxf(160.0, vp.y - top - 70.0)))
+	_stats_panel.reset_size()
+	_stats_panel.position = Vector2(vp.x * 0.5 - _stats_panel.size.x * 0.5, top)
 
 
 ## One dialog for the run's settings, shown two ways (#26):
@@ -572,6 +638,7 @@ func open_settings() -> void:
 
 func _open_run_dialog(live: bool) -> void:
 	var sim := editor.sim
+	close_stats()
 	_run_live = false # loading the current values must not apply anything
 	_seed.value = sim.seed_value
 	_demand.value = sim.demand
@@ -611,8 +678,9 @@ func _confirm_run_dialog() -> void:
 	close_run_dialog()
 
 
-## Slower, the current speed, faster, then play / pause, step, restart and
-## settings: icon buttons at the top centre; the text shows on hover (#16, #22, #26).
+## The clock (#28), then slower, the current speed, faster, play / pause, step,
+## restart and settings: icon buttons at the top centre; the text shows on
+## hover (#16, #22, #26).
 func _build_transport(root: Control) -> void:
 	var sim := editor.sim
 	_transport = PanelContainer.new()
@@ -623,6 +691,14 @@ func _build_transport(root: Control) -> void:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	_transport.add_child(row)
+	_clock = Button.new()
+	_clock.flat = true
+	_clock.focus_mode = Control.FOCUS_NONE
+	_clock.custom_minimum_size = Vector2(96, 36)
+	_clock.text = "0:00:00"
+	_clock.pressed.connect(toggle_stats)
+	row.add_child(_clock)
+	row.add_child(VSeparator.new())
 	_slower = _icon_button(ICON_SLOWER, "Slower", func() -> void: sim.set_speed_index(sim.speed_index - 1), row)
 	_speed_label = Label.new()
 	_speed_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -667,13 +743,15 @@ static func clock(seconds: float) -> String:
 
 
 func refresh_sim(st: Dictionary) -> void:
-	if _sim_label == null or st.is_empty():
+	if _clock == null or st.is_empty():
 		return
-	var text := "%s · %d vehicles · %d trips · %.0f km/h · %d stopped" % [
-		clock(st.sim_time), st.vehicles, st.arrived, st.mean_speed_kmh, st.stopped]
-	if st.get("city_on", false):
-		text = "%s · %d residents · %d vehicles · %.0f km/h" % [SimController.clock_text(st.clock_day, st.clock_minute),
-			st.residents, st.vehicles, st.mean_speed_kmh]
+	var city_on: bool = st.get("city_on", false)
+	_clock.text = SimController.clock_text(st.clock_day, st.clock_minute) if city_on else clock(st.sim_time)
+	# Hover: what the run looks like now. Click: everything, by topic (#28).
+	var now := PackedStringArray()
+	if city_on:
+		now.append("%d residents" % st.residents)
+	now.append("%d vehicles" % st.vehicles)
 	var extra: Array = []
 	if int(st.buses) + int(st.coaches) > 0:
 		extra.append("%d bus%s" % [int(st.buses) + int(st.coaches), "" if int(st.buses) + int(st.coaches) == 1 else "es"])
@@ -682,16 +760,18 @@ func refresh_sim(st: Dictionary) -> void:
 	if int(st.parked) > 0:
 		extra.append("%d parked" % st.parked)
 	if not extra.is_empty():
-		text += " (" + ", ".join(extra) + ")"
+		now[now.size() - 1] += " (" + ", ".join(extra) + ")"
+	now.append("%.0f km/h mean speed" % st.mean_speed_kmh)
+	if not city_on:
+		now.append("%d trips done" % st.arrived)
+		now.append("%d stopped" % st.stopped)
 	if int(st.trips) > 0:
-		text += " · %d people (%d on buses)" % [int(st.pedestrians) + int(st.riding), st.riding]
+		now.append("%d people (%d on buses)" % [int(st.pedestrians) + int(st.riding), st.riding])
 	if int(st.waiting_to_enter) > 0:
-		text += " · %d waiting to enter" % st.waiting_to_enter
+		now.append("%d waiting to enter" % st.waiting_to_enter)
 	if editor.sim.playing:
-		text += " · %.0fx" % st.effective_speed
-		if st.behind:
-			text += " (CPU-limited)"
-	_sim_label.text = text
+		now.append("%.0fx real time%s" % [st.effective_speed, " (CPU-limited)" if st.behind else ""])
+	_clock.tooltip_text = " · ".join(now) + "\nClick for details"
 	var cs: Dictionary = editor.sim.city
 	if not cs.is_empty():
 		_market_button.text = "Market (%d)" % int(cs.listed)
@@ -699,28 +779,55 @@ func refresh_sim(st: Dictionary) -> void:
 	if _market_time >= 10.0:
 		_market_time = 0.0
 		_refresh_market()
-	_sim_label.tooltip_text = "Sim %.0f µs per tick, %.1f ms per frame · %d lane changes · %d re-routes · longest stop %.0f s · %d cars taken off (stuck)\n%d cars, %d taxis, %d buses, %d coaches, %d bikes · %d bus runs, %d stops served, %d coach calls · %d parkings (%d found no bay) · %d right turns on red" % [
-		st.tick_us, st.frame_sim_ms, st.lane_changes, st.reroutes, st.max_stopped, st.removed_stuck,
-		st.cars, st.taxis, st.buses, st.coaches, st.bikes, st.bus_runs, st.bus_stops_served, st.coach_calls,
-		st.parkings, st.parking_failed, st.right_on_red]
+	var secs: Array = [["Now", now]]
+	secs.append(["Simulation", [
+		"%.0f µs per tick, %.1f ms per frame" % [st.tick_us, st.frame_sim_ms],
+		"%d lane changes, %d re-routes" % [st.lane_changes, st.reroutes],
+		"Longest stop %.0f s" % st.max_stopped,
+		"%d cars taken off (stuck)" % st.removed_stuck]])
+	secs.append(["Vehicles", [
+		"%d cars, %d taxis, %d bikes" % [st.cars, st.taxis, st.bikes],
+		"%d buses, %d coaches" % [st.buses, st.coaches],
+		"%d bus runs, %d stops served, %d coach calls" % [st.bus_runs, st.bus_stops_served, st.coach_calls],
+		"%d parkings (%d found no bay)" % [st.parkings, st.parking_failed],
+		"%d right turns on red" % st.right_on_red]])
 	var c: Dictionary = editor.sim.city
 	if not c.is_empty():
-		_sim_label.tooltip_text += "\nCity: %d residents in %d households (%d of %d units vacant), %d visitors · %d asleep, %d at work, %d travelling, %d outside the map\nJobs: %d local, %d outside, %d looking · %d shifts (%d late), %d left to visitors · %d of %d businesses open, %d closed unexpectedly, %d late openings\n%d meals out, %d at home, %d grocery trips · %d immigrants · mean hunger %.0f, energy %.0f, money %.0f" % [
-			c.residents, c.households, c.vacant_units, c.units, c.visitors, c.sleeping, c.working, c.travelling, c.outside,
-			c.employed, c.employed_outside, c.unemployed, c.shifts, c.late_shifts, c.unfilled_shifts, c.open, c.businesses,
-			c.closed_unexpectedly, c.late_openings, c.meals_out, c.home_meals, c.groceries, c.immigrants, c.mean_hunger,
-			c.mean_energy, c.mean_money]
-		_sim_label.tooltip_text += "\nMonth %d, day %d · city income %s, spending %s this month (%s / %s in all): rent %s, sales %s, passes and fares %s, buildings sold %s; wages %s, goods %s, buildings bought %s\nOwnership: %d city, %d NPC, %d listed, %d homes owned by residents · %d sold, %d bought · %d evictions, %d households in debt · %d bikes, %d cars, %d bus passes" % [
-			int(c.month) + 1, int(c.day_of_month) + 1, Inspector.money(c.month_income), Inspector.money(c.month_spending),
-			Inspector.money(c.treasury_income), Inspector.money(c.treasury_spending), Inspector.money(c.income_rent),
-			Inspector.money(c.income_sales), Inspector.money(c.income_passes), Inspector.money(c.income_buildings),
-			Inspector.money(c.spending_wages), Inspector.money(c.spending_goods), Inspector.money(c.spending_buildings),
-			c.city_owned, c.npc_owned, c.listed, c.homes_owned, c.buildings_sold, c.buildings_bought, c.evictions, c.in_debt,
-			c.bikes, c.cars, c.passes]
+		secs.append(["City", [
+			"%d residents in %d households" % [c.residents, c.households],
+			"%d of %d units vacant, %d visitors" % [c.vacant_units, c.units, c.visitors],
+			"%d asleep, %d at work, %d travelling" % [c.sleeping, c.working, c.travelling],
+			"%d outside the map, %d immigrants" % [c.outside, c.immigrants]]])
+		secs.append(["Jobs and needs", [
+			"%d local jobs, %d outside, %d looking" % [c.employed, c.employed_outside, c.unemployed],
+			"%d shifts (%d late), %d left to visitors" % [c.shifts, c.late_shifts, c.unfilled_shifts],
+			"%d of %d businesses open, %d closed unexpectedly, %d late openings" % [c.open, c.businesses, c.closed_unexpectedly, c.late_openings],
+			"%d meals out, %d at home, %d grocery trips" % [c.meals_out, c.home_meals, c.groceries],
+			"Mean hunger %.0f, energy %.0f, money %.0f" % [c.mean_hunger, c.mean_energy, c.mean_money]]])
+		secs.append(["Money", [
+			"Month %d, day %d" % [int(c.month) + 1, int(c.day_of_month) + 1],
+			"This month: city income %s, spending %s" % [Inspector.money(c.month_income), Inspector.money(c.month_spending)],
+			"In all: %s in, %s out" % [Inspector.money(c.treasury_income), Inspector.money(c.treasury_spending)],
+			"Income: rent %s, sales %s, passes and fares %s, buildings sold %s" % [Inspector.money(c.income_rent),
+				Inspector.money(c.income_sales), Inspector.money(c.income_passes), Inspector.money(c.income_buildings)],
+			"Spending: wages %s, goods %s, buildings bought %s" % [Inspector.money(c.spending_wages),
+				Inspector.money(c.spending_goods), Inspector.money(c.spending_buildings)]]])
+		secs.append(["Ownership", [
+			"%d city, %d NPC, %d listed" % [c.city_owned, c.npc_owned, c.listed],
+			"%d homes owned by residents" % c.homes_owned,
+			"%d sold, %d bought" % [c.buildings_sold, c.buildings_bought],
+			"%d evictions, %d households in debt" % [c.evictions, c.in_debt],
+			"Residents own %d bikes, %d cars, %d bus passes" % [c.bikes, c.cars, c.passes]]])
 	if int(st.trips) > 0:
-		_sim_label.tooltip_text += "\n%d people trips: %d walk, %d bus, %d bike, %d car, %d coach · %d arrived\n%d boarded, %d got off, %d left behind, mean wait at stops %.0f s · %d crossings, mean wait at the kerb %.1f s, %d times cars gave way" % [
-			st.trips, st.trips_walk, st.trips_bus, st.trips_bike, st.trips_car, st.trips_coach, st.people_arrived,
-			st.boarded, st.alighted, st.left_behind, st.mean_wait, st.crossings, st.mean_crossing_wait, st.cars_yielded]
+		secs.append(["People", [
+			"%d trips: %d walk, %d bus, %d bike, %d car, %d coach" % [st.trips, st.trips_walk, st.trips_bus, st.trips_bike, st.trips_car, st.trips_coach],
+			"%d arrived" % st.people_arrived,
+			"%d boarded, %d got off, %d left behind" % [st.boarded, st.alighted, st.left_behind],
+			"Mean wait at stops %.0f s" % st.mean_wait,
+			"%d crossings, mean wait at the kerb %.1f s" % [st.crossings, st.mean_crossing_wait],
+			"%d times cars gave way" % st.cars_yielded]])
+	_stats_sections = secs
+	_fill_stats()
 
 
 func _build_problems(root: Control) -> void:
