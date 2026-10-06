@@ -708,6 +708,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_DELETE, KEY_BACKSPACE:
 			delete_selection()
 		KEY_ESCAPE:
+			if ui.run_dialog_open():
+				ui.close_run_dialog()
+				return
 			clear_selection()
 			sim.select_car(0)
 			sim.select_ped(0)
