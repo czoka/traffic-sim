@@ -66,6 +66,7 @@ const ICON_PLAY := preload("res://editor/icons/play.svg")
 const ICON_PAUSE := preload("res://editor/icons/pause.svg")
 const ICON_STEP := preload("res://editor/icons/step.svg")
 const ICON_RESTART := preload("res://editor/icons/restart.svg")
+const ICON_SETTINGS := preload("res://editor/icons/settings.svg")
 const ICON_SLOWER := preload("res://editor/icons/slower.svg")
 const ICON_FASTER := preload("res://editor/icons/faster.svg")
 var _speed_label: Label # current sim speed between the slower / faster buttons (#22)
@@ -75,6 +76,14 @@ var _seed: SpinBox
 var _demand: HSlider
 var _demand_label: Label
 var _max_cars: SpinBox
+var _max_people: SpinBox
+var _run_dialog: PanelContainer # New run (Restart) / Settings (#26)
+var _run_title: Label
+var _seed_label: Label
+var _run_ok: Button
+var _run_cancel: Button
+var _run_live := false # true in Settings: changes apply at once
+var _settings_btn: Button
 var _sim_label: Label
 
 
@@ -417,6 +426,8 @@ func _toggle_problems() -> void:
 
 func _build_sim_bar(root: Control) -> void:
 	var sim := editor.sim
+	# Only the run's status stays at the bottom; its settings live in the
+	# New run (Restart) and Settings dialogs (#26).
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -424,67 +435,14 @@ func _build_sim_bar(root: Control) -> void:
 	panel.offset_bottom = -52
 	panel.add_theme_stylebox_override("panel", _panel_style(PANEL_BG))
 	root.add_child(panel)
-	var bar := HBoxContainer.new()
-	bar.add_theme_constant_override("separation", 8)
-	panel.add_child(bar)
 	_build_transport(root)
-	var seed_label := Label.new()
-	seed_label.text = "Seed"
-	bar.add_child(seed_label)
-	_seed = SpinBox.new()
-	_seed.min_value = 0
-	_seed.max_value = 999999
-	_seed.value = sim.seed_value
-	_seed.tooltip_text = "Same map + same seed = same run. Restart to apply."
-	_seed.value_changed.connect(func(v: float) -> void: sim.seed_value = int(v))
-	bar.add_child(_seed)
-	bar.add_child(VSeparator.new())
-	_demand_label = Label.new()
-	_demand_label.custom_minimum_size = Vector2(92, 0)
-	bar.add_child(_demand_label)
-	_demand = HSlider.new()
-	_demand.min_value = 0.0
-	_demand.max_value = 3.0
-	_demand.step = 0.05
-	_demand.value = sim.demand
-	_demand.custom_minimum_size = Vector2(110, 0)
-	_demand.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_demand.focus_mode = Control.FOCUS_NONE
-	_demand.tooltip_text = "Multiplies every spawn point's rate"
-	_demand.value_changed.connect(func(v: float) -> void:
-		sim.set_demand(v)
-		_demand_label.text = "Density ×%.2f" % v)
-	_demand_label.text = "Density ×%.2f" % sim.demand
-	bar.add_child(_demand)
-	var cap_label := Label.new()
-	cap_label.text = "Max cars"
-	bar.add_child(cap_label)
-	_max_cars = SpinBox.new()
-	_max_cars.min_value = 0
-	_max_cars.max_value = 20000
-	_max_cars.step = 50
-	_max_cars.value = sim.max_cars
-	_max_cars.tooltip_text = "Spawning pauses while this many cars are on the map (0 = no limit)"
-	_max_cars.value_changed.connect(func(v: float) -> void: sim.set_max_cars(int(v)))
-	bar.add_child(_max_cars)
-	var people_label := Label.new()
-	people_label.text = "Max people"
-	bar.add_child(people_label)
-	var max_people := SpinBox.new()
-	max_people.min_value = 0
-	max_people.max_value = 20000
-	max_people.step = 100
-	max_people.value = sim.max_people
-	max_people.tooltip_text = "New trips on foot pause while this many people are on the map (0 = no limit)"
-	max_people.value_changed.connect(func(v: float) -> void: sim.set_max_people(int(v)))
-	bar.add_child(max_people)
-	bar.add_child(VSeparator.new())
 	_sim_label = Label.new()
-	_sim_label.custom_minimum_size = Vector2(200, 0)
+	_sim_label.custom_minimum_size = Vector2(460, 0)
 	_sim_label.clip_text = true
 	_sim_label.mouse_filter = Control.MOUSE_FILTER_PASS # for the tooltip
 	_sim_label.add_theme_color_override("font_color", Color(0.8, 0.84, 0.9))
-	bar.add_child(_sim_label)
+	panel.add_child(_sim_label)
+	_build_run_dialog(root)
 	_heat_legend = Label.new()
 	_heat_legend.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_heat_legend.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -516,8 +474,145 @@ func cycle_heatmap() -> void:
 	set_heatmap(HeatLayer.MODES[(HeatLayer.MODES.find(editor.heat.mode) + 1) % HeatLayer.MODES.size()])
 
 
-## Slower, the current speed, faster, then play / pause, step and restart:
-## icon buttons at the top centre; the text shows on hover (#16, #22).
+## One dialog for the run's settings, shown two ways (#26):
+## "new run" (from Restart) has the seed too and applies everything when the
+## run restarts; "settings" leaves out the seed and applies each change at once.
+func _build_run_dialog(root: Control) -> void:
+	var sim := editor.sim
+	_run_dialog = PanelContainer.new()
+	var style := _panel_style(PANEL_BG)
+	style.set_content_margin_all(14)
+	_run_dialog.add_theme_stylebox_override("panel", style)
+	_run_dialog.visible = false
+	root.add_child(_run_dialog)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	_run_dialog.add_child(box)
+	_run_title = Label.new()
+	_run_title.add_theme_font_size_override("font_size", 18)
+	box.add_child(_run_title)
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 6)
+	box.add_child(grid)
+	_seed_label = Label.new()
+	_seed_label.text = "Seed"
+	grid.add_child(_seed_label)
+	_seed = SpinBox.new()
+	_seed.min_value = 0
+	_seed.max_value = 999999
+	_seed.custom_minimum_size = Vector2(140, 0)
+	_seed.tooltip_text = "Same map + same seed = same run"
+	grid.add_child(_seed)
+	_demand_label = Label.new()
+	_demand_label.custom_minimum_size = Vector2(110, 0)
+	grid.add_child(_demand_label)
+	_demand = HSlider.new()
+	_demand.min_value = 0.0
+	_demand.max_value = 3.0
+	_demand.step = 0.05
+	_demand.custom_minimum_size = Vector2(140, 0)
+	_demand.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_demand.focus_mode = Control.FOCUS_NONE
+	_demand.tooltip_text = "Multiplies every spawn point's rate"
+	_demand.value_changed.connect(func(v: float) -> void:
+		_demand_label.text = "Density ×%.2f" % v
+		if _run_live:
+			sim.set_demand(v))
+	grid.add_child(_demand)
+	var cap_label := Label.new()
+	cap_label.text = "Max cars"
+	grid.add_child(cap_label)
+	_max_cars = SpinBox.new()
+	_max_cars.min_value = 0
+	_max_cars.max_value = 20000
+	_max_cars.step = 50
+	_max_cars.tooltip_text = "Spawning pauses while this many cars are on the map (0 = no limit)"
+	_max_cars.value_changed.connect(func(v: float) -> void:
+		if _run_live:
+			sim.set_max_cars(int(v)))
+	grid.add_child(_max_cars)
+	var people_label := Label.new()
+	people_label.text = "Max people"
+	grid.add_child(people_label)
+	_max_people = SpinBox.new()
+	_max_people.min_value = 0
+	_max_people.max_value = 20000
+	_max_people.step = 100
+	_max_people.tooltip_text = "New trips on foot pause while this many people are on the map (0 = no limit)"
+	_max_people.value_changed.connect(func(v: float) -> void:
+		if _run_live:
+			sim.set_max_people(int(v)))
+	grid.add_child(_max_people)
+	var buttons := HBoxContainer.new()
+	buttons.alignment = BoxContainer.ALIGNMENT_END
+	buttons.add_theme_constant_override("separation", 8)
+	box.add_child(buttons)
+	_run_cancel = Button.new()
+	_run_cancel.text = "Cancel"
+	_run_cancel.focus_mode = Control.FOCUS_NONE
+	_run_cancel.pressed.connect(close_run_dialog)
+	buttons.add_child(_run_cancel)
+	_run_ok = Button.new()
+	_run_ok.focus_mode = Control.FOCUS_NONE
+	_run_ok.pressed.connect(_confirm_run_dialog)
+	buttons.add_child(_run_ok)
+
+
+## Restart opens the New run dialog: set the seed, density and caps, then restart.
+func open_new_run() -> void:
+	_open_run_dialog(false)
+
+
+## The settings button: change density and caps while the run goes on.
+func open_settings() -> void:
+	_open_run_dialog(true)
+
+
+func _open_run_dialog(live: bool) -> void:
+	var sim := editor.sim
+	_run_live = false # loading the current values must not apply anything
+	_seed.value = sim.seed_value
+	_demand.value = sim.demand
+	_demand_label.text = "Density ×%.2f" % sim.demand
+	_max_cars.value = sim.max_cars
+	_max_people.value = sim.max_people
+	_run_live = live
+	_run_title.text = "Settings" if live else "New run"
+	_seed_label.visible = not live
+	_seed.visible = not live
+	_run_cancel.visible = not live
+	_run_ok.text = "Close" if live else "Restart"
+	_run_ok.tooltip_text = "" if live else "Remove every car and person and start again with these settings"
+	_run_dialog.visible = true
+	_run_dialog.reset_size()
+	var vp := get_viewport().get_visible_rect().size
+	_run_dialog.position = Vector2(vp.x * 0.5 - _run_dialog.size.x * 0.5, _transport.position.y + _transport.size.y + 8.0)
+
+
+func close_run_dialog() -> void:
+	_run_dialog.visible = false
+	_run_live = false
+
+
+func run_dialog_open() -> bool:
+	return _run_dialog != null and _run_dialog.visible
+
+
+func _confirm_run_dialog() -> void:
+	var sim := editor.sim
+	if not _run_live:
+		sim.seed_value = int(_seed.value)
+		sim.set_demand(_demand.value)
+		sim.set_max_cars(int(_max_cars.value))
+		sim.set_max_people(int(_max_people.value))
+		sim.reset()
+	close_run_dialog()
+
+
+## Slower, the current speed, faster, then play / pause, step, restart and
+## settings: icon buttons at the top centre; the text shows on hover (#16, #22, #26).
 func _build_transport(root: Control) -> void:
 	var sim := editor.sim
 	_transport = PanelContainer.new()
@@ -538,7 +633,8 @@ func _build_transport(root: Control) -> void:
 	row.add_child(VSeparator.new())
 	_play = _icon_button(ICON_PLAY, "Play (Space)", sim.toggle, row)
 	_icon_button(ICON_STEP, "Step: one sim second (.)", sim.step, row)
-	_icon_button(ICON_RESTART, "Restart: remove every car and start again with the seed", sim.reset, row)
+	_icon_button(ICON_RESTART, "Restart: set up a new run (seed, density, max cars and people)", open_new_run, row)
+	_settings_btn = _icon_button(ICON_SETTINGS, "Settings: density, max cars and max people, without restarting", open_settings, row)
 
 
 func _icon_button(icon: Texture2D, tip: String, action: Callable, parent: Control) -> Button:

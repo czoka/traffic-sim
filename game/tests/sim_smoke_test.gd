@@ -81,6 +81,35 @@ func _run() -> void:
 		ui._faster.pressed.emit()
 	_check(ui._speed_label.text == "8x" and ui._faster.disabled, "faster stops at 8x")
 	ed.sim.set_speed_index(2)
+	# Restart opens a New run dialog with the seed and the run settings; a settings
+	# button after it changes all but the seed live; no settings bar at the bottom (#26).
+	_check(ui._settings_btn.get_index() == ui._play.get_index() + 3, "a settings button follows restart")
+	var restart_btn: Button = row.get_child(ui._play.get_index() + 2)
+	var seed0: int = ed.sim.seed_value
+	var cars0: int = ed.sim.max_cars
+	restart_btn.pressed.emit()
+	_check(ui.run_dialog_open() and ui._seed.visible and ui._run_ok.text == "Restart", "restart opens the New run dialog with the seed")
+	_check(not ed.sim.has_cars() or ed.sim.playing, "opening it does not restart yet")
+	ui._seed.value = seed0 + 7
+	ui._max_cars.value = cars0 + 50
+	_check(ed.sim.seed_value == seed0 and ed.sim.max_cars == cars0, "New run edits wait for Restart")
+	ui._run_cancel.pressed.emit()
+	_check(not ui.run_dialog_open() and ed.sim.seed_value == seed0 and ed.sim.max_cars == cars0, "Cancel drops them")
+	restart_btn.pressed.emit()
+	_check(int(ui._seed.value) == seed0, "the dialog reopens with the current seed")
+	ui._seed.value = seed0 + 7
+	ui._demand.value = 1.5
+	ui._run_ok.pressed.emit()
+	_check(not ui.run_dialog_open() and ed.sim.seed_value == seed0 + 7 and is_equal_approx(ed.sim.demand, 1.5), "Restart applies the seed and density")
+	ui._settings_btn.pressed.emit()
+	_check(ui.run_dialog_open() and not ui._seed.visible and ui._run_ok.text == "Close", "settings shows everything but the seed")
+	ui._max_people.value = 700
+	ui._demand.value = 1.0
+	_check(ed.sim.max_people == 700 and is_equal_approx(ed.sim.demand, 1.0), "settings apply at once")
+	ui._run_ok.pressed.emit()
+	_check(not ui.run_dialog_open(), "Close closes it")
+	ed.sim.seed_value = seed0
+	ed.sim.set_max_people(1000)
 	var no_dropdown := true
 	for n in row.get_children():
 		no_dropdown = no_dropdown and not (n is OptionButton)
